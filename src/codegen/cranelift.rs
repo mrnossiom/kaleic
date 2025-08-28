@@ -11,7 +11,8 @@ use crate::{
 	ast::{self, BinaryOp},
 	bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
-	hir, lexer,
+	hir::{self, Enum, Struct},
+	lexer,
 	session::{PrintKind, SessionCtx, Symbol},
 	tbir,
 	ty::{self, TyCtx},
@@ -255,7 +256,8 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					function_ids.insert(func.name.sym, func_id);
 				}
 
-				hir::ItemKind::Adt { .. }
+				hir::ItemKind::Struct(Struct { .. })
+				| hir::ItemKind::Enum(Enum())
 				| hir::ItemKind::Type(_)
 				| hir::ItemKind::Trait { .. }
 				| hir::ItemKind::TraitImpl { .. } => todo!(),
@@ -278,7 +280,8 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					self.define_function(*func_id, &decl, &body).unwrap();
 				}
 
-				hir::ItemKind::Adt { .. }
+				hir::ItemKind::Struct(Struct { .. })
+				| hir::ItemKind::Enum(Enum())
 				| hir::ItemKind::Type(_)
 				| hir::ItemKind::Trait { .. }
 				| hir::ItemKind::TraitImpl { .. } => todo!(),

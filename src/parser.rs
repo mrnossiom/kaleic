@@ -41,7 +41,19 @@ macro_rules! debug_parser {
 	}
 }
 
-pub type PResult<T> = std::result::Result<T, Diagnostic>;
+pub fn parse_root(scx: &SessionCtx, source: &SourceFile) -> Root {
+	let mut p = Parser::new(scx, source);
+	match Root::parse(&mut p) {
+		Ok(ast) => ast,
+		Err(diag) => scx.dcx().emit_fatal(&diag),
+	}
+}
+
+trait Parse: Sized + fmt::Debug {
+	fn parse(p: &mut Parser) -> Result<Self, Diagnostic>;
+}
+
+type PResult<T> = std::result::Result<T, Diagnostic>;
 
 #[derive(Debug)]
 enum AssocOp {
@@ -73,9 +85,23 @@ impl AssocOp {
 		};
 		Some(kind)
 	}
+
+	fn precedence(&self) -> u32 {
+		match self {
+			Self::Binary(op) => match op {
+				BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => 48,
+				BinaryOp::Minus | BinaryOp::Plus => 40,
+				BinaryOp::Shl | BinaryOp::Shr => 32,
+				BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => 24,
+				BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Lt | BinaryOp::Le => 16,
+				BinaryOp::Ne | BinaryOp::EqEq => 8,
+			},
+			Self::Assign => 0,
+		}
+	}
 }
 
-pub struct Parser<'scx> {
+struct Parser<'scx> {
 	scx: &'scx SessionCtx,
 
 	lexer: Lexer<'scx, 'scx>,
@@ -87,7 +113,7 @@ pub struct Parser<'scx> {
 }
 
 impl<'scx> Parser<'scx> {
-	pub fn new(scx: &'scx SessionCtx, file: &'scx SourceFile) -> Self {
+	fn new(scx: &'scx SessionCtx, file: &'scx SourceFile) -> Self {
 		let mut parser = Self {
 			scx,
 
@@ -177,7 +203,15 @@ impl Parser<'_> {
 		Ok(seq)
 	}
 
-	fn parse_while<T>(
+	fn parse_until<T: Parse>(&mut self, end: TokenKind) -> PResult<Vec<T>> {
+		let mut many = Vec::new();
+		while !self.eat(end) {
+			many.push(T::parse(self)?);
+		}
+		Ok(many)
+	}
+
+	fn parse_until_func<T>(
 		&mut self,
 		end: TokenKind,
 		mut parse: impl FnMut(&mut Self) -> PResult<T>,
@@ -189,7 +223,20 @@ impl Parser<'_> {
 		Ok(many)
 	}
 
+	fn parse_while<T>(
+		&mut self,
+		sep: TokenKind,
+		mut parse: impl FnMut(&mut Self) -> PResult<T>,
+	) -> PResult<Vec<T>> {
+		let mut many = Vec::new();
+		while self.eat(sep) {
+			many.push(parse(self)?);
+		}
+		Ok(many)
+	}
+
 	/// Looks one token ahead
+	#[expect(dead_code)]
 	fn look_ahead(&self) -> TokenKind {
 		self.lexer.clone().next().map_or(Eof, |tkn| tkn.kind)
 	}
@@ -247,23 +294,21 @@ impl Parser<'_> {
 
 	fn eat_assoc_token_with_precedence(
 		&mut self,
-		precedence: Option<u32>,
+		prev_prec: Option<u32>,
 	) -> Option<Spanned<AssocOp>> {
-		let op = match AssocOp::from_token_kind(self.token.kind) {
-			Some(AssocOp::Binary(bin_op))
-				if precedence.is_none_or(|prec| prec <= bin_op.precedence()) =>
-			{
-				AssocOp::Binary(bin_op)
-			}
-			// assign has maximum precedence
-			Some(AssocOp::Assign) if precedence.is_none() => AssocOp::Assign,
-			_ => return None,
-		};
+		debug_parser!(self);
 
-		// eat assoc op
-		self.bump();
+		if let Some(op) = AssocOp::from_token_kind(self.token.kind)
+			// only continue if next op precedence higher
+			&& prev_prec.is_none_or(|prev| prev <= op.precedence())
+		{
+			// eat assoc op
+			self.bump();
 
-		Some(Spanned::new(op, self.last_token.span))
+			Some(Spanned::new(op, self.last_token.span))
+		} else {
+			None
+		}
 	}
 
 	/// Parse a single expression with postfix constructs
@@ -463,74 +508,99 @@ impl Parser<'_> {
 	}
 }
 
-/// Items
-impl Parser<'_> {
-	pub fn parse_root(&mut self) -> PResult<Root> {
-		debug_parser!(self);
+impl Parse for Root {
+	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
+		debug_parser!(p);
 
-		let items = self.parse_while(Eof, Self::parse_item)?;
+		let items = p.parse_until::<Item>(Eof)?;
 
-		Ok(Root { items })
+		Ok(Self { items })
 	}
+}
 
-	/// Parse [`Item`]
-	fn parse_item(&mut self) -> PResult<Item> {
-		debug_parser!(self);
+impl Parse for Item {
+	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
+		debug_parser!(p);
 
-		let lo = self.token.span;
+		let lo = p.token.span;
 
-		let kind = if self.eat(Keyword(Fn)) {
-			ItemKind::Function(self.parse_item_fn()?)
-		} else if self.eat(Keyword(Extern)) {
-			self.parse_item_extern()?
-		} else if self.eat(Keyword(Struct)) {
-			self.parse_item_struct()?
-		} else if self.eat(Keyword(Enum)) {
-			self.parse_item_enum()?
-		} else if self.eat(Keyword(Trait)) {
-			self.parse_item_trait()?
-		} else if self.eat(Keyword(For)) {
-			self.parse_item_trait_impl()?
-		} else if self.eat(Keyword(Type)) {
-			ItemKind::Type(self.parse_item_type()?)
+		let kind = if p.eat(Keyword(Fn)) {
+			ItemKind::Function(Parse::parse(p)?)
+		} else if p.eat(Keyword(Extern)) {
+			p.parse_item_extern()?
+		} else if p.eat(Keyword(Struct)) {
+			p.parse_item_struct()?
+		} else if p.eat(Keyword(Enum)) {
+			p.parse_item_enum()?
+		} else if p.eat(Keyword(Trait)) {
+			p.parse_item_trait()?
+		} else if p.eat(Keyword(For)) {
+			p.parse_item_trait_impl()?
+		} else if p.eat(Keyword(Type)) {
+			ItemKind::Type(Type::parse(p)?)
 		} else {
-			let report = errors::parser::expected_construct_no_match("an item", self.token);
+			let report = errors::parser::expected_construct_no_match("an item", p.token);
 			return Err(Diagnostic::new(report));
 		};
 
-		Ok(Item {
+		Ok(Self {
 			kind,
-			span: self.close_span(lo),
-			id: self.make_node_id(),
+			span: p.close_span(lo),
+			id: p.make_node_id(),
 		})
 	}
+}
 
-	/// Parse [`Function`]
-	fn parse_item_fn(&mut self) -> PResult<Function> {
-		debug_parser!(self);
-		debug_assert_eq!(self.last_token.kind, Keyword(Fn));
+impl Parse for Function {
+	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
+		debug_parser!(p);
+		debug_assert_eq!(p.last_token.kind, Keyword(Fn));
 
-		let (name, decl) = self.parse_fn_decl()?;
-		let body = if self.check(OpenBrace) {
-			Some(Box::new(self.parse_block()?))
-		} else if self.eat(Semi) {
+		let (name, decl) = p.parse_fn_decl()?;
+		let body = if p.check(OpenBrace) {
+			Some(Box::new(p.parse_block()?))
+		} else if p.eat(Semi) {
 			None
 		} else {
 			let report = errors::parser::expected_construct_no_match(
 				"a function body or a semicolon",
-				self.token,
+				p.token,
 			);
 			return Err(Diagnostic::new(report));
 		};
 
-		Ok(Function {
+		Ok(Self {
 			name,
 			decl,
 			body,
 			abi: None,
 		})
 	}
+}
 
+impl Parse for Type {
+	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
+		debug_parser!(p);
+		debug_assert_eq!(p.last_token.kind, Keyword(Type));
+
+		let name = p.expect_ident()?;
+		let alias = if p.eat(Eq) {
+			let ty = Some(Box::new(p.parse_ty()?));
+			p.expect(Semi)?;
+			ty
+		} else if p.eat(Semi) {
+			None
+		} else {
+			let report = errors::parser::expected_construct_no_match("a type alias body", p.token);
+			return Err(Diagnostic::new(report));
+		};
+
+		Ok(Self { name, alias })
+	}
+}
+
+/// Items
+impl Parser<'_> {
 	/// Parse [`Function`] with [`Function::externess`] set to some ABI.
 	fn parse_item_extern(&mut self) -> PResult<ItemKind> {
 		debug_parser!(self);
@@ -538,7 +608,7 @@ impl Parser<'_> {
 
 		let abi = self.parse_expr()?;
 		self.expect(Keyword(Fn))?;
-		let mut func = self.parse_item_fn()?;
+		let mut func = Function::parse(self)?;
 
 		func.abi = Some(abi);
 
@@ -608,7 +678,7 @@ impl Parser<'_> {
 		let generics = self.parse_generics_def()?;
 
 		self.expect(OpenBrace)?;
-		let members = self.parse_while(CloseBrace, Self::parse_trait_member)?;
+		let members = self.parse_until_func(CloseBrace, Self::parse_trait_member)?;
 
 		Ok(ItemKind::Trait {
 			name,
@@ -626,34 +696,13 @@ impl Parser<'_> {
 		self.expect(Keyword(Impl))?;
 		let trait_ = self.parse_path()?;
 		self.expect(OpenBrace)?;
-		let members = self.parse_while(CloseBrace, Self::parse_trait_member)?;
+		let members = self.parse_until_func(CloseBrace, Self::parse_trait_member)?;
 
 		Ok(ItemKind::TraitImpl {
 			type_,
 			trait_,
 			members,
 		})
-	}
-
-	/// Parse [`Type`]
-	fn parse_item_type(&mut self) -> PResult<Type> {
-		debug_parser!(self);
-		debug_assert_eq!(self.last_token.kind, Keyword(Type));
-
-		let name = self.expect_ident()?;
-		let alias = if self.eat(Eq) {
-			let ty = Some(Box::new(self.parse_ty()?));
-			self.expect(Semi)?;
-			ty
-		} else if self.eat(Semi) {
-			None
-		} else {
-			let report =
-				errors::parser::expected_construct_no_match("a type alias body", self.token);
-			return Err(Diagnostic::new(report));
-		};
-
-		Ok(Type { name, alias })
 	}
 
 	/// Parse [`FieldDef`]
@@ -703,7 +752,7 @@ impl Parser<'_> {
 	fn parse_trait_member(&mut self) -> PResult<TraitItem> {
 		debug_parser!(self);
 
-		let Item { kind, span, .. } = self.parse_item()?;
+		let Item { kind, span, .. } = Item::parse(self)?;
 
 		let kind = match kind {
 			ItemKind::Type(type_) => TraitItemKind::Type(type_),
@@ -752,10 +801,7 @@ impl Parser<'_> {
 
 		let mut segments = Vec::new();
 		segments.push(self.expect_ident()?);
-
-		while self.eat(PathSep) {
-			segments.push(self.expect_ident()?);
-		}
+		segments.extend(self.parse_while(ColonColon, Self::expect_ident)?);
 
 		let generics = if self.check(Lt) {
 			self.parse_ty_generics()?
@@ -949,7 +995,7 @@ impl Parser<'_> {
 
 		let lo = self.token.span;
 		self.expect(OpenBrace)?;
-		let stmts = self.parse_while(CloseBrace, Self::parse_stmt)?;
+		let stmts = self.parse_until_func(CloseBrace, Self::parse_stmt)?;
 
 		Ok(Block {
 			stmts,

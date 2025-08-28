@@ -22,6 +22,7 @@ impl Default for Backend {
 		return Self::Cranelift;
 		#[cfg(feature = "llvm")]
 		return Self::Llvm;
+		todo!()
 	}
 }
 
@@ -35,5 +36,6 @@ pub trait JitBackend: CodeGenBackend {
 
 pub trait ObjectBackend: CodeGenBackend {
 	// TODO: change to common object
+	#[cfg(feature = "cranelift")]
 	fn get_object(self) -> cranelift_object::ObjectProduct;
 }

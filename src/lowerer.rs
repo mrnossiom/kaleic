@@ -6,8 +6,8 @@ use crate::{
 	ast::{self, Spanned},
 	errors,
 	hir::{
-		self, AdtFieldDef, AdtVariant, Block, Expr, ExprKind, FnDecl, Function, Item, ItemKind,
-		NodeId, Root, Stmt, StmtKind, TraitItem, TraitItemKind, Type,
+		Block, Enum, EnumVariant, Expr, ExprKind, FieldDef, FnDecl, Function, Item, ItemKind,
+		NodeId, Root, Stmt, StmtKind, Struct, TraitItem, TraitItemKind, Type,
 	},
 	session::{SessionCtx, Span},
 };
@@ -105,33 +105,26 @@ impl Lowerer<'_> {
 				name,
 				generics,
 				fields,
-			} => {
-				let struct_variant = AdtVariant {
-					name: *name,
-					fields: fields
-						.iter()
-						.map(|field| self.lower_field_def(field))
-						.collect(),
-					span: item.span,
-				};
-				ItemKind::Adt {
-					name: *name,
-					generics: generics.clone(),
-					variants: vec![struct_variant],
-				}
-			}
+			} => ItemKind::Struct(Struct {
+				name: *name,
+				generics: generics.clone(),
+				fields: fields
+					.iter()
+					.map(|field| self.lower_field_def(field))
+					.collect(),
+			}),
 			ast::ItemKind::Enum {
 				name,
 				generics,
 				variants,
-			} => ItemKind::Adt {
+			} => ItemKind::Enum(Enum {
 				name: *name,
 				generics: generics.clone(),
 				variants: variants
 					.iter()
 					.map(|variant| self.lower_variant(variant))
 					.collect(),
-			},
+			}),
 
 			// TODO
 			ast::ItemKind::Trait {
@@ -169,14 +162,16 @@ impl Lowerer<'_> {
 	fn lower_trait_member(&self, member: &ast::TraitItem) -> TraitItem {
 		let kind = match &member.kind {
 			ast::TraitItemKind::Type(ty) => TraitItemKind::Type(Type(ty.name, ty.alias.clone())),
-			ast::TraitItemKind::Function(func) => TraitItemKind::Function(Function {
-				name: func.name,
-				decl: Box::new(self.lower_fn_decl(&func.decl)),
-				body: func
-					.body
-					.as_ref()
-					.map(|block| Box::new(self.lower_block(block))),
-				abi: func.abi.as_ref().map(|abi| Box::new(self.lower_expr(abi))),
+			ast::TraitItemKind::Function(ast::Function {
+				name,
+				decl,
+				body,
+				abi,
+			}) => TraitItemKind::Function(Function {
+				name: *name,
+				decl: Box::new(self.lower_fn_decl(&decl)),
+				body: body.as_ref().map(|block| Box::new(self.lower_block(block))),
+				abi: abi.as_ref().map(|abi| Box::new(self.lower_expr(abi))),
 			}),
 		};
 		TraitItem {
@@ -197,20 +192,20 @@ impl Lowerer<'_> {
 		}
 	}
 
-	fn lower_field_def(&self, field: &ast::FieldDef) -> AdtFieldDef {
-		AdtFieldDef {
+	fn lower_field_def(&self, field: &ast::FieldDef) -> FieldDef {
+		FieldDef {
 			name: field.name,
 			ty: field.ty.clone(),
 		}
 	}
 
-	fn lower_variant(&self, variant: &ast::Variant) -> AdtVariant {
+	fn lower_variant(&self, variant: &ast::Variant) -> EnumVariant {
 		let fields = match &variant.kind {
 			ast::VariantKind::Bare => vec![],
 			ast::VariantKind::Tuple(fields) => fields
 				.iter()
 				.enumerate()
-				.map(|(i, ty)| AdtFieldDef {
+				.map(|(i, ty)| FieldDef {
 					name: ast::Ident::new(
 						self.lcx.scx.symbols.intern(&format!("{i}")),
 						Span::DUMMY,
@@ -224,7 +219,7 @@ impl Lowerer<'_> {
 				.collect(),
 		};
 
-		AdtVariant {
+		EnumVariant {
 			name: variant.name,
 			fields,
 			span: variant.span,

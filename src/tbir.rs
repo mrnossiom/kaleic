@@ -1,6 +1,9 @@
 //! Typed Body IR
 //!
 //! This is what is handed to codegen
+//!
+
+// TODO: remove tbir, use queries on typeck results in codegen using exprids
 
 use crate::{
 	ast::{self, BinaryOp, Spanned, UnaryOp},

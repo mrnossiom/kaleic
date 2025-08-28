@@ -1,7 +1,7 @@
 use std::{collections::HashMap, mem};
 
 use crate::{
-	hir::{self, Function, Type},
+	hir::{self, Enum, Function, Struct, Type},
 	session::Symbol,
 	ty,
 };
@@ -66,15 +66,34 @@ impl Collector<'_> {
 					.values
 					.insert(name.sym, ty::TyKind::Fn(Box::new(decl)));
 			}
+			hir::ItemKind::TraitImpl { .. } => todo!(),
+
+			hir::ItemKind::Struct(Struct {
+				name,
+				generics,
+				fields,
+			}) => {
+				let struct_ = Struct {
+					name: *name,
+					generics: generics.clone(),
+					fields: fields.clone(),
+				};
+				self.environment
+					.types
+					.insert(name.sym, TypeValueKind::Type(todo!()));
+			}
+			hir::ItemKind::Enum(Enum {
+				name,
+				generics,
+				variants,
+			}) => {}
+			hir::ItemKind::Trait { .. } => {}
 
 			hir::ItemKind::Type(Type(name, alias)) => {
 				self.environment
 					.types
 					.insert(name.sym, TypeValueKind::Type(todo!()));
 			}
-			hir::ItemKind::Adt { .. }
-			| hir::ItemKind::Trait { .. }
-			| hir::ItemKind::TraitImpl { .. } => todo!(),
 		}
 	}
 }

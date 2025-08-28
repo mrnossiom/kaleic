@@ -32,11 +32,15 @@ impl Token {
 	fn maybe_glue_joint(&self, next: &Self) -> Option<Self> {
 		let glued_kind = match (self.kind, next.kind) {
 			(Eq, Eq) => EqEq,
+			(Not, Eq) => Ne,
+
+			(Gt, Eq) => Ge,
+			(Lt, Eq) => Le,
 
 			(Lt, Lt) => Shl,
 			(Gt, Gt) => Shr,
 
-			(Colon, Colon) => PathSep,
+			(Colon, Colon) => ColonColon,
 
 			(Ampersand, Ampersand) => todo!("for recovery, see `and` kw"),
 			(Or, Or) => todo!("for recovery, see `or` kw"),
@@ -116,7 +120,7 @@ pub enum TokenKind {
 	/// `=`
 	Eq,
 	/// `::`
-	PathSep,
+	ColonColon,
 
 	/// Fallback token for unrecognized lexeme
 	Unknown,
@@ -169,7 +173,7 @@ impl fmt::Display for TokenKind {
 
 			Eq => write!(f, "an assign sign"),
 
-			PathSep => write!(f, "a path separator"),
+			ColonColon => write!(f, "a path separator"),
 
 			Unknown => write!(f, "an unknown token"),
 			Eof => write!(f, "the end of the file"),
@@ -219,20 +223,6 @@ pub enum Keyword {
 	Return,
 	Break,
 	Continue,
-}
-
-impl BinaryOp {
-	#[must_use]
-	pub const fn precedence(self) -> u32 {
-		match self {
-			Self::Mul | Self::Div | Self::Mod => 48,
-			Self::Minus | Self::Plus => 40,
-			Self::Shl | Self::Shr => 32,
-			Self::And | Self::Or | Self::Xor => 24,
-			Self::Gt | Self::Ge | Self::Lt | Self::Le => 16,
-			Self::Ne | Self::EqEq => 8,
-		}
-	}
 }
 
 const EOF_CHAR: char = '\0';

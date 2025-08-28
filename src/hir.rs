@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-	ast::{self, BinaryOp, Spanned, UnaryOp},
+	ast::{self, BinaryOp, Ident, Spanned, UnaryOp},
 	lexer::LiteralKind,
 	session::{Span, Symbol},
 };
@@ -31,16 +31,26 @@ pub struct Item {
 }
 
 #[derive(Debug)]
+pub struct Struct {
+	pub name: Ident,
+	pub generics: Vec<Ident>,
+	pub fields: Vec<FieldDef>,
+}
+
+#[derive(Debug)]
+pub struct Enum {
+	pub name: Ident,
+	pub generics: Vec<Ident>,
+	pub variants: Vec<EnumVariant>,
+}
+
+#[derive(Debug)]
 pub enum ItemKind {
 	Type(Type),
 	Function(Function),
 
-	/// Algebraic Data Type
-	Adt {
-		name: ast::Ident,
-		generics: Vec<ast::Ident>,
-		variants: Vec<AdtVariant>,
-	},
+	Struct(Struct),
+	Enum(Enum),
 
 	Trait {
 		name: ast::Ident,
@@ -66,9 +76,9 @@ pub struct Function {
 }
 
 #[derive(Debug)]
-pub struct AdtVariant {
+pub struct EnumVariant {
 	pub name: ast::Ident,
-	pub fields: Vec<AdtFieldDef>,
+	pub fields: Vec<FieldDef>,
 	pub span: Span,
 }
 
@@ -84,8 +94,8 @@ pub enum TraitItemKind {
 	Function(Function),
 }
 
-#[derive(Debug)]
-pub struct AdtFieldDef {
+#[derive(Debug, Clone)]
+pub struct FieldDef {
 	pub name: ast::Ident,
 	pub ty: ast::Ty,
 }

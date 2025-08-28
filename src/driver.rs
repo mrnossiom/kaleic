@@ -2,7 +2,8 @@ use ariadne::ReportKind;
 
 use crate::{
 	codegen::{self, Backend, CodeGenBackend, JitBackend, ObjectBackend},
-	lowerer, parser,
+	lowerer,
+	parser::parse_root,
 	pretty_print::pretty_print_root,
 	resolve,
 	session::{Diagnostic, OutputKind, PrintKind, Report, SessionCtx, Span},
@@ -23,11 +24,7 @@ pub fn pipeline(scx: &SessionCtx) {
 		.unwrap();
 
 	// parsing source
-	let mut parser = parser::Parser::new(scx, &source);
-	let ast = match parser.parse_root() {
-		Ok(ast) => ast,
-		Err(diag) => scx.dcx().emit_fatal(&diag),
-	};
+	let ast = parse_root(scx, &source);
 	if scx.options.print.contains(&PrintKind::Ast) {
 		println!("{ast:#?}");
 	}
@@ -75,18 +72,18 @@ pub fn pipeline(scx: &SessionCtx) {
 			backend.call_main();
 		}
 		OutputKind::Object(path) => {
-			let mut backend = match scx.options.backend {
-				#[cfg(feature = "cranelift")]
-				Backend::Cranelift => codegen::CraneliftBackend::new_object(&tcx),
-				#[cfg(feature = "llvm")]
-				Backend::Llvm => todo!("no object backend for llvm"),
-			};
+			// let mut backend = match scx.options.backend {
+			// 	#[cfg(feature = "cranelift")]
+			// 	Backend::Cranelift => codegen::CraneliftBackend::new_object(&tcx),
+			// 	#[cfg(feature = "llvm")]
+			// 	Backend::Llvm => todo!("no object backend for llvm"),
+			// };
 
-			backend.codegen_root(&hir);
+			// backend.codegen_root(&hir);
 
-			let object = backend.get_object();
-			let bytes = object.emit().unwrap();
-			std::fs::write(path, bytes).unwrap();
+			// let object = backend.get_object();
+			// let bytes = object.emit().unwrap();
+			// std::fs::write(path, bytes).unwrap();
 		}
 	}
 
