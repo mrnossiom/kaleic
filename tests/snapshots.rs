@@ -1,4 +1,4 @@
-use kaleic::{lowerer, parser, session};
+use kaleic::{lowerer::lower_root, parser::parse_root, session};
 
 #[test]
 fn fibo() {
@@ -8,12 +8,10 @@ fn fibo() {
 
 	let source = scx.source_map.write().load_source("entry", source.into());
 
-	let ast = parser::Parser::new(&scx, &source).parse_root().unwrap();
+	let ast = parse_root(&scx, &source);
 	insta::assert_debug_snapshot!(ast);
 
 	// lowering to HIR
-	let lcx = lowerer::LowerCtx::new(&scx);
-	let lowerer = lowerer::Lowerer::new(&lcx);
-	let hir = lowerer.lower_items(&ast);
+	let hir = lower_root(&scx, &ast);
 	insta::assert_debug_snapshot!(hir);
 }

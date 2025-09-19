@@ -3,7 +3,7 @@
 use core::fmt;
 use std::str::Chars;
 
-use crate::ast::{BinaryOp, Ident};
+use crate::ast::Ident;
 use crate::session::{BytePos, SessionCtx, Span, Symbol};
 
 #[allow(clippy::enum_glob_use)]

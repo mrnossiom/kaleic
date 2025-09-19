@@ -135,9 +135,7 @@ pub enum StmtKind {
 	},
 
 	// move these to expr
-	Loop {
-		block: Box<Block>,
-	},
+	Loop(Box<Block>),
 }
 
 #[derive(Debug)]

@@ -142,7 +142,7 @@ impl Inferer<'_> {
 
 				self.local_env.entry(ident.sym).or_default().push(expr_ty);
 			}
-			hir::StmtKind::Loop { block } => {
+			hir::StmtKind::Loop(block) => {
 				let block_ty = self.infer_block(block);
 				self.unify(&TyKind::Primitive(PrimitiveKind::Void), &block_ty);
 			}

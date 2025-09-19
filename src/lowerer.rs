@@ -4,126 +4,113 @@ use std::sync::atomic::{self, AtomicU32};
 
 use crate::{
 	ast::{self, Spanned},
-	errors,
-	hir::{
-		Block, Enum, EnumVariant, Expr, ExprKind, FieldDef, FnDecl, Function, Item, ItemKind,
-		NodeId, Root, Stmt, StmtKind, Struct, TraitItem, TraitItemKind, Type,
-	},
+	errors, hir,
 	session::{SessionCtx, Span},
 };
 
-#[derive(Debug)]
-pub struct LowerCtx<'scx> {
-	pub scx: &'scx SessionCtx,
+pub fn lower_root(scx: &SessionCtx, source: &ast::Root) -> hir::Root {
+	let mut l = Lowerer::new(scx);
+	source.lower(&mut l)
 }
 
-impl<'scx> LowerCtx<'scx> {
-	#[must_use]
-	pub fn new(scx: &'scx SessionCtx) -> Self {
-		Self { scx }
+pub trait Lower {
+	type Out;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out;
+
+	fn lower_box(&self, l: &mut Lowerer) -> Box<Self::Out> {
+		Box::new(self.lower(l))
 	}
 }
 
-impl LowerCtx<'_> {
-	pub fn lower_root(&self, ast: &ast::Root) -> Root {
-		tracing::trace!("lower_root");
-
-		let lowerer = Lowerer::new(self);
-		lowerer.lower_items(ast)
-	}
-}
-
-// pub trait Lower {
-// 	type Out;
-// 	fn lower(&self, cx: ()) -> Self::Out;
-// }
-
-// impl Lower for ast::Root {
-// 	type Out = hir::Root;
-// 	fn lower(&self, cx: ()) -> Self::Out {}
-// }
-
 #[derive(Debug)]
-pub struct Lowerer<'lcx> {
-	lcx: &'lcx LowerCtx<'lcx>,
+pub struct Lowerer<'scx> {
+	scx: &'scx SessionCtx,
 
 	next_node_id: AtomicU32,
 }
 
-impl<'lcx> Lowerer<'lcx> {
-	pub const fn new(lcx: &'lcx LowerCtx) -> Self {
+impl<'scx> Lowerer<'scx> {
+	pub const fn new(scx: &'scx SessionCtx) -> Self {
 		Self {
-			lcx,
+			scx,
 			next_node_id: AtomicU32::new(0),
 		}
 	}
 
-	fn make_node_id(&self, aid: ast::NodeId) -> NodeId {
-		// TODO: store hid provenance
-		let _ = aid;
-
+	fn make_new_node_id(&self) -> hir::NodeId {
 		let hid = self.next_node_id.fetch_add(1, atomic::Ordering::Relaxed);
-		NodeId(hid)
+		hir::NodeId(hid)
 	}
 
-	fn make_new_node_id(&self) -> NodeId {
-		let hid = self.next_node_id.fetch_add(1, atomic::Ordering::Relaxed);
-		NodeId(hid)
+	fn lower_iter<O, T: Lower<Out = O>>(
+		&mut self,
+		iter: impl Iterator<Item = T>,
+	) -> impl Iterator<Item = O> {
+		iter.map(|item| item.lower(self))
+	}
+
+	fn lower_opt<O, L: Lower<Out = O>>(&mut self, opt: Option<&L>) -> Option<O> {
+		opt.map(|item| item.lower(self))
+	}
+
+	fn lower_opt_box<O, L: Lower<Out = O>>(&mut self, opt: Option<&L>) -> Option<Box<O>> {
+		self.lower_opt(opt).map(Box::new)
 	}
 }
 
-impl Lowerer<'_> {
-	#[must_use]
-	pub fn lower_items(&self, file: &ast::Root) -> Root {
-		let items = file
-			.items
-			.iter()
-			.map(|item| self.lower_item(item))
-			.collect();
-
-		Root { items }
+impl<O, T: Lower<Out = O>> Lower for &T {
+	type Out = O;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		(*self).lower(l)
 	}
+}
 
-	fn lower_item(&self, item: &ast::Item) -> Item {
-		let kind = match &item.kind {
-			ast::ItemKind::Function(ast::Function {
-				name,
-				decl,
-				body,
-				abi,
-			}) => ItemKind::Function(Function {
-				name: *name,
-				decl: Box::new(self.lower_fn_decl(decl)),
-				body: body.as_ref().map(|block| Box::new(self.lower_block(block))),
-				abi: abi.as_ref().map(|expr| Box::new(self.lower_expr(expr))),
-			}),
+impl Lower for ast::Root {
+	type Out = hir::Root;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { items } = &self;
+		let items = l.lower_iter(items.iter()).collect();
+		Self::Out { items }
+	}
+}
+
+impl Lower for ast::NodeId {
+	type Out = hir::NodeId;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		// TODO: store hid provenance
+		let _ = self;
+
+		l.make_new_node_id()
+	}
+}
+
+impl Lower for ast::Item {
+	type Out = hir::Item;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { kind, span, id } = &self;
+		let kind = match &kind {
+			ast::ItemKind::Function(func) => hir::ItemKind::Function(func.lower(l)),
 
 			ast::ItemKind::Type(ast::Type { name, alias }) => {
-				ItemKind::Type(Type(*name, alias.clone()))
+				hir::ItemKind::Type(hir::Type(*name, alias.clone()))
 			}
 			ast::ItemKind::Struct {
 				name,
 				generics,
 				fields,
-			} => ItemKind::Struct(Struct {
+			} => hir::ItemKind::Struct(hir::Struct {
 				name: *name,
 				generics: generics.clone(),
-				fields: fields
-					.iter()
-					.map(|field| self.lower_field_def(field))
-					.collect(),
+				fields: l.lower_iter(fields.iter()).collect(),
 			}),
 			ast::ItemKind::Enum {
 				name,
 				generics,
 				variants,
-			} => ItemKind::Enum(Enum {
+			} => hir::ItemKind::Enum(hir::Enum {
 				name: *name,
 				generics: generics.clone(),
-				variants: variants
-					.iter()
-					.map(|variant| self.lower_variant(variant))
-					.collect(),
+				variants: l.lower_iter(variants.iter()).collect(),
 			}),
 
 			// TODO
@@ -131,277 +118,310 @@ impl Lowerer<'_> {
 				name,
 				generics,
 				members,
-			} => ItemKind::Trait {
+			} => hir::ItemKind::Trait {
 				name: *name,
 				generics: generics.clone(),
-				members: members
-					.iter()
-					.map(|member| self.lower_trait_member(member))
-					.collect(),
+				members: l.lower_iter(members.iter()).collect(),
 			},
 			ast::ItemKind::TraitImpl {
 				type_,
 				trait_,
 				members,
-			} => ItemKind::TraitImpl {
+			} => hir::ItemKind::TraitImpl {
 				type_: type_.clone(),
 				trait_: trait_.clone(),
-				members: members
-					.iter()
-					.map(|member| self.lower_trait_member(member))
-					.collect(),
+				members: l.lower_iter(members.iter()).collect(),
 			},
 		};
-		Item {
+		Self::Out {
 			kind,
-			span: item.span,
-			id: self.make_node_id(item.id),
+			span: *span,
+			id: id.lower(l),
 		}
 	}
+}
 
-	fn lower_trait_member(&self, member: &ast::TraitItem) -> TraitItem {
-		let kind = match &member.kind {
-			ast::TraitItemKind::Type(ty) => TraitItemKind::Type(Type(ty.name, ty.alias.clone())),
-			ast::TraitItemKind::Function(ast::Function {
-				name,
-				decl,
-				body,
-				abi,
-			}) => TraitItemKind::Function(Function {
-				name: *name,
-				decl: Box::new(self.lower_fn_decl(&decl)),
-				body: body.as_ref().map(|block| Box::new(self.lower_block(block))),
-				abi: abi.as_ref().map(|abi| Box::new(self.lower_expr(abi))),
-			}),
+impl Lower for ast::Function {
+	type Out = hir::Function;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self {
+			name,
+			decl,
+			body,
+			abi,
+		} = &self;
+		Self::Out {
+			name: *name,
+			decl: decl.lower_box(l),
+			body: l.lower_opt_box(body.as_deref()),
+			abi: l.lower_opt_box(abi.as_ref()),
+		}
+	}
+}
+
+impl Lower for ast::Block {
+	type Out = hir::Block;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { stmts, span, id } = &self;
+
+		let mut out_stmts = Vec::new();
+		let mut ret = None;
+
+		let mut ast_stmts = &stmts[..];
+		while let [stmt, tail @ ..] = ast_stmts {
+			ast_stmts = tail;
+
+			let stmt = match stmt.lower(l) {
+				Some(StmtOrRet::Stmt(stmt)) => stmt,
+				Some(StmtOrRet::Ret(expr)) if tail.is_empty() => {
+					ret = Some(Box::new(expr));
+					continue;
+				}
+				Some(StmtOrRet::Ret(expr)) => {
+					let report = errors::lowerer::no_semicolon_mid_block(expr.span);
+					l.scx.dcx().emit_build(report);
+
+					// recover like there was a semicolon
+					hir::Stmt {
+						span: expr.span,
+						kind: hir::StmtKind::Expr(Box::new(expr)),
+						id: l.make_new_node_id(),
+					}
+				}
+				None => continue,
+			};
+
+			out_stmts.push(stmt);
+		}
+
+		Self::Out {
+			stmts: out_stmts,
+			ret,
+			span: *span,
+			id: id.lower(l),
+		}
+	}
+}
+
+pub enum StmtOrRet {
+	Stmt(hir::Stmt),
+	Ret(hir::Expr),
+}
+
+impl Lower for ast::Stmt {
+	type Out = Option<StmtOrRet>;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { kind, span, id } = &self;
+		let kind = match &kind {
+			ast::StmtKind::Loop { body } => hir::StmtKind::Loop(body.lower_box(l)),
+			ast::StmtKind::WhileLoop { check, body } => lower_while_loop(l, check, body),
+
+			ast::StmtKind::Let {
+				name: ident,
+				ty,
+				value,
+			} => hir::StmtKind::Let {
+				ident: *ident,
+				ty: Box::new(ty.as_ref().map_or_else(
+					|| ast::Ty {
+						kind: ast::TyKind::Infer,
+						span: ident.span.end(),
+					},
+					|ty| ty.as_ref().clone(),
+				)),
+				value: value.lower_box(l),
+			},
+			ast::StmtKind::Expr(expr) => hir::StmtKind::Expr(expr.lower_box(l)),
+			ast::StmtKind::ExprRet(expr) => {
+				return Some(StmtOrRet::Ret(expr.lower(l)));
+			}
+			ast::StmtKind::Empty => return None,
 		};
-		TraitItem {
+
+		Some(StmtOrRet::Stmt(hir::Stmt {
 			kind,
-			span: member.span,
-		}
+			span: *span,
+			id: id.lower(l),
+		}))
 	}
+}
 
-	fn lower_fn_decl(&self, decl: &ast::FnDecl) -> FnDecl {
-		let output = decl.ret.clone().unwrap_or_else(|| ast::Ty {
+impl Lower for ast::TraitItem {
+	type Out = hir::TraitItem;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { kind, span } = &self;
+		let kind = match &kind {
+			ast::TraitItemKind::Type(ty) => hir::TraitItemKind::Type(ty.lower(l)),
+			ast::TraitItemKind::Function(func) => hir::TraitItemKind::Function(func.lower(l)),
+		};
+		Self::Out { kind, span: *span }
+	}
+}
+
+impl Lower for ast::Type {
+	type Out = hir::Type;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { name, alias } = &self;
+		let _ = l;
+		hir::Type(*name, alias.clone())
+	}
+}
+
+impl Lower for ast::FnDecl {
+	type Out = hir::FnDecl;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { params, ret, span } = &self;
+		let _ = l;
+		let output = ret.clone().unwrap_or_else(|| ast::Ty {
 			kind: ast::TyKind::Unit,
-			span: decl.span.end(),
+			span: span.end(),
 		});
-		FnDecl {
-			inputs: decl.params.clone(),
+		hir::FnDecl {
+			inputs: params.clone(),
 			output: Box::new(output),
-			span: decl.span,
+			span: *span,
 		}
 	}
+}
 
-	fn lower_field_def(&self, field: &ast::FieldDef) -> FieldDef {
-		FieldDef {
-			name: field.name,
-			ty: field.ty.clone(),
+impl Lower for ast::FieldDef {
+	type Out = hir::FieldDef;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { name, ty, span } = &self;
+		let _ = l;
+		hir::FieldDef {
+			name: *name,
+			ty: ty.clone(),
 		}
 	}
+}
 
-	fn lower_variant(&self, variant: &ast::Variant) -> EnumVariant {
-		let fields = match &variant.kind {
+impl Lower for ast::Variant {
+	type Out = hir::EnumVariant;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { name, kind, span } = &self;
+		let fields = match &kind {
 			ast::VariantKind::Bare => vec![],
 			ast::VariantKind::Tuple(fields) => fields
 				.iter()
 				.enumerate()
-				.map(|(i, ty)| FieldDef {
-					name: ast::Ident::new(
-						self.lcx.scx.symbols.intern(&format!("{i}")),
-						Span::DUMMY,
-					),
+				.map(|(i, ty)| hir::FieldDef {
+					name: ast::Ident::new(l.scx.symbols.intern(&format!("{i}")), Span::DUMMY),
 					ty: ty.clone(),
 				})
 				.collect(),
-			ast::VariantKind::Struct(fields) => fields
-				.iter()
-				.map(|field| self.lower_field_def(field))
-				.collect(),
+			ast::VariantKind::Struct(fields) => l.lower_iter(fields.iter()).collect(),
 		};
 
-		EnumVariant {
-			name: variant.name,
+		hir::EnumVariant {
+			name: *name,
 			fields,
-			span: variant.span,
+			span: *span,
 		}
 	}
+}
 
-	fn lower_block(&self, block: &ast::Block) -> Block {
-		let mut stmts = Vec::new();
-		let mut ret = None;
+impl Lower for ast::Expr {
+	type Out = hir::Expr;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { kind, span, id } = &self;
+		let kind = match kind {
+			ast::ExprKind::Access(path) => hir::ExprKind::Access(path.clone()),
+			ast::ExprKind::Literal(lit, ident) => hir::ExprKind::Literal(*lit, *ident),
 
-		let mut ast_stmts = &block.stmts[..];
-		while let [stmt, tail @ ..] = ast_stmts {
-			ast_stmts = tail;
-
-			let kind = match &stmt.kind {
-				ast::StmtKind::Loop { body } => StmtKind::Loop {
-					block: Box::new(self.lower_block(body)),
-				},
-				ast::StmtKind::WhileLoop { check, body } => self.lower_while_loop(check, body),
-
-				ast::StmtKind::Let {
-					name: ident,
-					ty,
-					value,
-				} => StmtKind::Let {
-					ident: *ident,
-					ty: Box::new(ty.as_ref().map_or_else(
-						|| ast::Ty {
-							kind: ast::TyKind::Infer,
-							span: ident.span.end(),
-						},
-						|ty| ty.as_ref().clone(),
-					)),
-					value: Box::new(self.lower_expr(value)),
-				},
-
-				ast::StmtKind::Expr(expr) => {
-					let expr = Box::new(self.lower_expr(expr));
-					StmtKind::Expr(expr)
-				}
-
-				ast::StmtKind::ExprRet(expr) => {
-					let expr = Box::new(self.lower_expr(expr));
-
-					// correct case
-					if tail.is_empty() {
-						ret = Some(expr);
-						break;
-					}
-
-					let report = errors::lowerer::no_semicolon_mid_block(expr.span);
-					self.lcx.scx.dcx().emit_build(report);
-
-					// recover like there was a semicolon
-					StmtKind::Expr(expr)
-				}
-
-				ast::StmtKind::Empty => continue,
-			};
-
-			stmts.push(Stmt {
-				kind,
-				span: stmt.span,
-				id: self.make_node_id(stmt.id),
-			});
-		}
-
-		Block {
-			stmts,
-			ret,
-			span: block.span,
-			id: self.make_node_id(block.id),
-		}
-	}
-
-	/// Lower an AST `while cond { body }` to an HIR `loop { if cond { body } else { break } }`
-	fn lower_while_loop(&self, cond: &ast::Expr, body: &ast::Block) -> StmtKind {
-		let break_expr = Expr {
-			kind: ExprKind::Break(None),
-			span: body.span,
-			id: self.make_new_node_id(),
-		};
-		let altern_blk = Block {
-			stmts: Vec::new(),
-			ret: Some(Box::new(break_expr)),
-			span: body.span,
-			id: self.make_new_node_id(),
-		};
-
-		let if_expr = Expr {
-			kind: ExprKind::If {
-				cond: Box::new(self.lower_expr(cond)),
-				conseq: Box::new(self.lower_block(body)),
-				altern: Some(Box::new(altern_blk)),
-			},
-			span: body.span,
-			id: self.make_new_node_id(),
-		};
-		let loop_blk = Block {
-			stmts: Vec::new(),
-			ret: Some(Box::new(if_expr)),
-
-			span: body.span,
-			id: self.make_new_node_id(),
-		};
-
-		StmtKind::Loop {
-			block: Box::new(loop_blk),
-		}
-	}
-
-	fn lower_expr(&self, expr: &ast::Expr) -> Expr {
-		let kind = match &expr.kind {
-			ast::ExprKind::Access(path) => ExprKind::Access(path.clone()),
-			ast::ExprKind::Literal(lit, ident) => ExprKind::Literal(*lit, *ident),
-
-			ast::ExprKind::Paren(expr) => self.lower_expr(expr).kind,
-			ast::ExprKind::Unary { op, expr } => self.lower_unary(*op, expr),
-			ast::ExprKind::Binary { op, left, right } => self.lower_binary(*op, left, right),
-			ast::ExprKind::FnCall { expr, args } => ExprKind::FnCall {
-				expr: Box::new(self.lower_expr(expr)),
-				args: args.with_bit(args.bit.iter().map(|e| self.lower_expr(e)).collect()),
+			ast::ExprKind::Paren(expr) => expr.lower(l).kind,
+			ast::ExprKind::Unary { op, expr } => lower_unary(l, *op, expr),
+			ast::ExprKind::Binary { op, left, right } => lower_binary(l, *op, left, right),
+			ast::ExprKind::FnCall { expr, args } => hir::ExprKind::FnCall {
+				expr: Box::new(expr.lower(l)),
+				args: args.with_bit(l.lower_iter(args.bit.iter()).collect()),
 			},
 			ast::ExprKind::If {
 				cond,
 				conseq,
 				altern,
-			} => ExprKind::If {
-				cond: Box::new(self.lower_expr(cond)),
-				conseq: Box::new(self.lower_block(conseq)),
-				altern: altern.as_ref().map(|a| Box::new(self.lower_block(a))),
+			} => hir::ExprKind::If {
+				cond: cond.lower_box(l),
+				conseq: conseq.lower_box(l),
+				altern: l.lower_opt_box(altern.as_deref()),
 			},
 
-			ast::ExprKind::Method(expr, name, args) => ExprKind::Method(
-				Box::new(self.lower_expr(expr)),
+			ast::ExprKind::Method(expr, name, args) => hir::ExprKind::Method(
+				Box::new(expr.lower(l)),
 				*name,
-				args.iter().map(|e| self.lower_expr(e)).collect(),
+				l.lower_iter(args.iter()).collect(),
 			),
 			ast::ExprKind::Field(expr, name) => {
-				ExprKind::Field(Box::new(self.lower_expr(expr)), *name)
+				hir::ExprKind::Field(Box::new(expr.lower(l)), *name)
 			}
-			ast::ExprKind::Deref(expr) => ExprKind::Deref(Box::new(self.lower_expr(expr))),
+			ast::ExprKind::Deref(expr) => hir::ExprKind::Deref(expr.lower_box(l)),
 
-			ast::ExprKind::Assign { target, value } => ExprKind::Assign {
-				target: Box::new(self.lower_expr(target)),
-				value: Box::new(self.lower_expr(value)),
+			ast::ExprKind::Assign { target, value } => hir::ExprKind::Assign {
+				target: Box::new(target.lower(l)),
+				value: Box::new(value.lower(l)),
 			},
 
-			ast::ExprKind::Return(expr) => {
-				ExprKind::Return(expr.as_ref().map(|expr| Box::new(self.lower_expr(expr))))
-			}
-			ast::ExprKind::Break(expr) => {
-				ExprKind::Break(expr.as_ref().map(|expr| Box::new(self.lower_expr(expr))))
-			}
-			ast::ExprKind::Continue => ExprKind::Continue,
+			ast::ExprKind::Return(expr) => hir::ExprKind::Return(l.lower_opt_box(expr.as_deref())),
+			ast::ExprKind::Break(expr) => hir::ExprKind::Break(l.lower_opt_box(expr.as_deref())),
+			ast::ExprKind::Continue => hir::ExprKind::Continue,
 		};
 
-		Expr {
+		hir::Expr {
 			kind,
-			span: expr.span,
-			id: self.make_node_id(expr.id),
+			span: *span,
+			id: id.lower(l),
 		}
 	}
+}
 
-	fn lower_unary(&self, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> ExprKind {
-		ExprKind::Unary(op, Box::new(self.lower_expr(expr)))
-	}
+/// Lower an AST `while cond { body }` to an HIR `loop { if cond { body } else { break } }`
+fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::StmtKind {
+	let break_expr = hir::Expr {
+		kind: hir::ExprKind::Break(None),
+		span: body.span,
+		id: l.make_new_node_id(),
+	};
+	let altern_blk = hir::Block {
+		stmts: Vec::new(),
+		ret: Some(Box::new(break_expr)),
+		span: body.span,
+		id: l.make_new_node_id(),
+	};
 
-	fn lower_binary(
-		&self,
-		op: Spanned<ast::BinaryOp>,
-		left: &ast::Expr,
-		right: &ast::Expr,
-	) -> ExprKind {
-		// TODO: lower to interface call
-		// `a + b` becomes `Add.add(a, b)` or `<a as Add>.add(b)`
-		// e.g. ExprKind::FnCall { expr: to_core_func(op), args: vec![left, right] }
+	let if_expr = hir::Expr {
+		kind: hir::ExprKind::If {
+			cond: cond.lower_box(l),
+			conseq: body.lower_box(l),
+			altern: Some(Box::new(altern_blk)),
+		},
+		span: body.span,
+		id: l.make_new_node_id(),
+	};
+	let loop_blk = hir::Block {
+		stmts: Vec::new(),
+		ret: Some(Box::new(if_expr)),
 
-		ExprKind::Binary(
-			op,
-			Box::new(self.lower_expr(left)),
-			Box::new(self.lower_expr(right)),
-		)
-	}
+		span: body.span,
+		id: l.make_new_node_id(),
+	};
+
+	hir::StmtKind::Loop(Box::new(loop_blk))
+}
+
+fn lower_unary(l: &mut Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir::ExprKind {
+	// TODO: same as lower_binary
+	hir::ExprKind::Unary(op, expr.lower_box(l))
+}
+
+fn lower_binary(
+	l: &mut Lowerer,
+	op: Spanned<ast::BinaryOp>,
+	left: &ast::Expr,
+	right: &ast::Expr,
+) -> hir::ExprKind {
+	// TODO: lower to interface call
+	// `a + b` becomes `Add.add(a, b)` or `<a as Add>.add(b)`
+	// e.g. ExprKind::FnCall { expr: to_core_func(op), args: vec![left, right] }
+
+	hir::ExprKind::Binary(op, left.lower_box(l), right.lower_box(l))
 }

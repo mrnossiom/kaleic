@@ -2,340 +2,1793 @@
 source: tests/snapshots.rs
 expression: ast
 ---
-[
-    Extern {
-        ident: Ident(i#0, s#10..18),
-        decl: FnDecl {
-            args: [
-                (
-                    Ident(i#1, s#19..20),
-                    Path(
-                        [
-                            Ident(i#2, s#22..26),
+Root {
+    items: [
+        Item {
+            kind: Function(
+                Function {
+                    name: Ident(sym#1, sp#57..64),
+                    decl: FnDecl {
+                        params: [
+                            Param {
+                                name: Ident(sym#0, sp#65..66),
+                                ty: Ty {
+                                    kind: Path(
+                                        Path {
+                                            segments: [
+                                                Ident(sym#2, sp#68..72),
+                                            ],
+                                            generics: [],
+                                        },
+                                    ),
+                                    span: sp#68..72,
+                                },
+                            },
                         ],
-                        [],
+                        ret: None,
+                        span: sp#64..73,
+                    },
+                    body: None,
+                    abi: Some(
+                        Expr {
+                            kind: Literal(
+                                Str,
+                                sym#0,
+                            ),
+                            span: sp#50..53,
+                            id: aid#0,
+                        },
                     ),
-                ),
-            ],
-            ret: Unit,
-        },
-    },
-    Function {
-        ident: Ident(i#3, s#33..37),
-        decl: FnDecl {
-            args: [
-                (
-                    Ident(i#4, s#38..39),
-                    Path(
-                        [
-                            Ident(i#2, s#41..45),
-                        ],
-                        [],
-                    ),
-                ),
-            ],
-            ret: Path(
-                [
-                    Ident(i#2, s#47..51),
-                ],
-                [],
+                },
             ),
+            span: sp#43..74,
+            id: aid#1,
         },
-        body: Block {
-            stmts: [
-                Let {
-                    name: Ident(i#5, s#55..56),
-                    ty: Infer,
-                    value: Literal(
-                        Integer,
-                        i#6,
-                    ),
-                },
-                Let {
-                    name: Ident(i#7, s#64..65),
-                    ty: Infer,
-                    value: Literal(
-                        Integer,
-                        i#6,
-                    ),
-                },
-                Let {
-                    name: Ident(i#8, s#74..75),
-                    ty: Infer,
-                    value: Variable(
-                        Ident(i#4, s#79..80),
-                    ),
-                },
-                WhileLoop {
-                    check: Binary {
-                        op: Ne,
-                        left: Variable(
-                            Ident(i#4, s#89..90),
-                        ),
-                        right: Literal(
-                            Integer,
-                            i#6,
-                        ),
+        Item {
+            kind: Function(
+                Function {
+                    name: Ident(sym#3, sp#79..83),
+                    decl: FnDecl {
+                        params: [],
+                        ret: None,
+                        span: sp#83..85,
                     },
-                    body: Block {
-                        stmts: [
-                            Let {
-                                name: Ident(i#9, s#100..104),
-                                ty: Infer,
-                                value: Binary {
-                                    op: Plus,
-                                    left: Variable(
-                                        Ident(i#5, s#108..109),
-                                    ),
-                                    right: Variable(
-                                        Ident(i#7, s#112..113),
-                                    ),
-                                },
-                            },
-                            Assign {
-                                target: Ident(i#5, s#117..118),
-                                value: Variable(
-                                    Ident(i#7, s#121..122),
-                                ),
-                            },
-                            Assign {
-                                target: Ident(i#7, s#126..127),
-                                value: Variable(
-                                    Ident(i#9, s#130..134),
-                                ),
-                            },
-                            Assign {
-                                target: Ident(i#4, s#139..140),
-                                value: Binary {
-                                    op: Minus,
-                                    left: Variable(
-                                        Ident(i#4, s#143..144),
-                                    ),
-                                    right: Literal(
-                                        Integer,
-                                        i#10,
-                                    ),
-                                },
-                            },
-                        ],
-                        span: s#96..152,
-                    },
-                },
-                ExprRet(
-                    Variable(
-                        Ident(i#7, s#155..156),
-                    ),
-                ),
-            ],
-            span: s#52..158,
-        },
-    },
-    Function {
-        ident: Ident(i#11, s#337..346),
-        decl: FnDecl {
-            args: [
-                (
-                    Ident(i#4, s#347..348),
-                    Path(
-                        [
-                            Ident(i#2, s#350..354),
-                        ],
-                        [],
-                    ),
-                ),
-            ],
-            ret: Unit,
-        },
-        body: Block {
-            stmts: [
-                ExprRet(
-                    If {
-                        cond: Binary {
-                            op: EqEq,
-                            left: Variable(
-                                Ident(i#4, s#362..363),
-                            ),
-                            right: Literal(
-                                Integer,
-                                i#6,
-                            ),
-                        },
-                        conseq: Block {
+                    body: Some(
+                        Block {
                             stmts: [
-                                Expr(
-                                    FnCall {
-                                        expr: Variable(
-                                            Ident(i#0, s#373..381),
-                                        ),
-                                        args: [
-                                            FnCall {
-                                                expr: Variable(
-                                                    Ident(i#12, s#382..394),
-                                                ),
-                                                args: [
-                                                    Literal(
-                                                        Integer,
-                                                        i#6,
-                                                    ),
-                                                ],
-                                            },
-                                        ],
-                                    },
-                                ),
-                            ],
-                            span: s#369..402,
-                        },
-                        altern: Some(
-                            Block {
-                                stmts: [
-                                    WhileLoop {
-                                        check: Binary {
-                                            op: Ne,
-                                            left: Variable(
-                                                Ident(i#4, s#418..419),
-                                            ),
-                                            right: Literal(
+                                Stmt {
+                                    kind: Let {
+                                        name: Ident(sym#4, sp#93..94),
+                                        ty: None,
+                                        value: Expr {
+                                            kind: Literal(
                                                 Integer,
-                                                i#6,
+                                                sym#5,
                                             ),
+                                            span: sp#97..98,
+                                            id: aid#2,
+                                        },
+                                    },
+                                    span: sp#89..99,
+                                    id: aid#3,
+                                },
+                                Stmt {
+                                    kind: WhileLoop {
+                                        check: Expr {
+                                            kind: Binary {
+                                                op: Spanned {
+                                                    bit: Ne,
+                                                    span: sp#109..111,
+                                                },
+                                                left: Expr {
+                                                    kind: Access(
+                                                        Path {
+                                                            segments: [
+                                                                Ident(sym#4, sp#107..108),
+                                                            ],
+                                                            generics: [],
+                                                        },
+                                                    ),
+                                                    span: sp#107..108,
+                                                    id: aid#4,
+                                                },
+                                                right: Expr {
+                                                    kind: Literal(
+                                                        Integer,
+                                                        sym#6,
+                                                    ),
+                                                    span: sp#112..114,
+                                                    id: aid#5,
+                                                },
+                                            },
+                                            span: sp#109..114,
+                                            id: aid#6,
                                         },
                                         body: Block {
                                             stmts: [
-                                                Let {
-                                                    name: Ident(i#13, s#430..434),
-                                                    ty: Infer,
-                                                    value: Binary {
-                                                        op: Mod,
-                                                        left: Variable(
-                                                            Ident(i#4, s#438..439),
-                                                        ),
-                                                        right: Literal(
-                                                            Integer,
-                                                            i#14,
-                                                        ),
-                                                    },
-                                                },
-                                                Assign {
-                                                    target: Ident(i#4, s#449..450),
-                                                    value: Binary {
-                                                        op: Div,
-                                                        left: Variable(
-                                                            Ident(i#4, s#453..454),
-                                                        ),
-                                                        right: Literal(
-                                                            Integer,
-                                                            i#14,
-                                                        ),
-                                                    },
-                                                },
-                                                Expr(
-                                                    FnCall {
-                                                        expr: Variable(
-                                                            Ident(i#0, s#464..472),
-                                                        ),
-                                                        args: [
-                                                            FnCall {
-                                                                expr: Variable(
-                                                                    Ident(i#12, s#473..485),
-                                                                ),
-                                                                args: [
-                                                                    Variable(
-                                                                        Ident(i#13, s#486..490),
+                                                Stmt {
+                                                    kind: Let {
+                                                        name: Ident(sym#7, sp#123..126),
+                                                        ty: None,
+                                                        value: Expr {
+                                                            kind: FnCall {
+                                                                expr: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#8, sp#129..133),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
                                                                     ),
-                                                                ],
+                                                                    span: sp#129..133,
+                                                                    id: aid#7,
+                                                                },
+                                                                args: Spanned {
+                                                                    bit: [
+                                                                        Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#4, sp#134..135),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#134..135,
+                                                                            id: aid#8,
+                                                                        },
+                                                                    ],
+                                                                    span: sp#133..136,
+                                                                },
                                                             },
-                                                        ],
+                                                            span: sp#129..136,
+                                                            id: aid#9,
+                                                        },
                                                     },
-                                                ),
+                                                    span: sp#119..137,
+                                                    id: aid#10,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: FnCall {
+                                                                expr: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#9, sp#141..150),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#141..150,
+                                                                    id: aid#11,
+                                                                },
+                                                                args: Spanned {
+                                                                    bit: [
+                                                                        Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#7, sp#151..154),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#151..154,
+                                                                            id: aid#12,
+                                                                        },
+                                                                    ],
+                                                                    span: sp#150..155,
+                                                                },
+                                                            },
+                                                            span: sp#141..155,
+                                                            id: aid#13,
+                                                        },
+                                                    ),
+                                                    span: sp#141..156,
+                                                    id: aid#14,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: FnCall {
+                                                                expr: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#1, sp#172..179),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#172..179,
+                                                                    id: aid#15,
+                                                                },
+                                                                args: Spanned {
+                                                                    bit: [
+                                                                        Expr {
+                                                                            kind: Literal(
+                                                                                Integer,
+                                                                                sym#6,
+                                                                            ),
+                                                                            span: sp#180..182,
+                                                                            id: aid#16,
+                                                                        },
+                                                                    ],
+                                                                    span: sp#179..183,
+                                                                },
+                                                            },
+                                                            span: sp#172..183,
+                                                            id: aid#17,
+                                                        },
+                                                    ),
+                                                    span: sp#172..184,
+                                                    id: aid#18,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#4, sp#190..191),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#190..191,
+                                                                    id: aid#19,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Binary {
+                                                                        op: Spanned {
+                                                                            bit: Plus,
+                                                                            span: sp#196..197,
+                                                                        },
+                                                                        left: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#4, sp#194..195),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#194..195,
+                                                                            id: aid#20,
+                                                                        },
+                                                                        right: Expr {
+                                                                            kind: Literal(
+                                                                                Integer,
+                                                                                sym#10,
+                                                                            ),
+                                                                            span: sp#198..199,
+                                                                            id: aid#21,
+                                                                        },
+                                                                    },
+                                                                    span: sp#196..199,
+                                                                    id: aid#22,
+                                                                },
+                                                            },
+                                                            span: sp#192..199,
+                                                            id: aid#23,
+                                                        },
+                                                    ),
+                                                    span: sp#190..200,
+                                                    id: aid#24,
+                                                },
                                             ],
-                                            span: s#425..497,
+                                            span: sp#115..203,
+                                            id: aid#25,
                                         },
                                     },
-                                ],
-                                span: s#408..500,
-                            },
-                        ),
-                    },
-                ),
-            ],
-            span: s#356..502,
-        },
-    },
-    Function {
-        ident: Ident(i#15, s#507..511),
-        decl: FnDecl {
-            args: [],
-            ret: Unit,
-        },
-        body: Block {
-            stmts: [
-                Let {
-                    name: Ident(i#4, s#517..518),
-                    ty: Infer,
-                    value: Literal(
-                        Integer,
-                        i#16,
+                                    span: sp#101..203,
+                                    id: aid#26,
+                                },
+                            ],
+                            span: sp#86..205,
+                            id: aid#27,
+                        },
                     ),
+                    abi: None,
                 },
-                WhileLoop {
-                    check: Binary {
-                        op: Ne,
-                        left: Variable(
-                            Ident(i#4, s#532..533),
-                        ),
-                        right: Literal(
-                            Integer,
-                            i#6,
-                        ),
-                    },
-                    body: Block {
-                        stmts: [
-                            Let {
-                                name: Ident(i#17, s#543..546),
-                                ty: Infer,
-                                value: FnCall {
-                                    expr: Variable(
-                                        Ident(i#3, s#550..554),
+            ),
+            span: sp#76..205,
+            id: aid#28,
+        },
+        Item {
+            kind: Function(
+                Function {
+                    name: Ident(sym#11, sp#210..222),
+                    decl: FnDecl {
+                        params: [
+                            Param {
+                                name: Ident(sym#4, sp#223..224),
+                                ty: Ty {
+                                    kind: Path(
+                                        Path {
+                                            segments: [
+                                                Ident(sym#2, sp#226..230),
+                                            ],
+                                            generics: [],
+                                        },
                                     ),
-                                    args: [
-                                        Literal(
-                                            Integer,
-                                            i#16,
-                                        ),
-                                    ],
-                                },
-                            },
-                            Expr(
-                                FnCall {
-                                    expr: Variable(
-                                        Ident(i#11, s#561..570),
-                                    ),
-                                    args: [
-                                        Variable(
-                                            Ident(i#17, s#571..574),
-                                        ),
-                                    ],
-                                },
-                            ),
-                            Assign {
-                                target: Ident(i#4, s#582..583),
-                                value: Binary {
-                                    op: Minus,
-                                    left: Variable(
-                                        Ident(i#4, s#586..587),
-                                    ),
-                                    right: Literal(
-                                        Integer,
-                                        i#10,
-                                    ),
+                                    span: sp#226..230,
                                 },
                             },
                         ],
-                        span: s#539..595,
+                        ret: Some(
+                            Ty {
+                                kind: Path(
+                                    Path {
+                                        segments: [
+                                            Ident(sym#2, sp#232..236),
+                                        ],
+                                        generics: [],
+                                    },
+                                ),
+                                span: sp#232..236,
+                            },
+                        ),
+                        span: sp#222..236,
                     },
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: ExprRet(
+                                        Expr {
+                                            kind: If {
+                                                cond: Expr {
+                                                    kind: Binary {
+                                                        op: Spanned {
+                                                            bit: Le,
+                                                            span: sp#262..264,
+                                                        },
+                                                        left: Expr {
+                                                            kind: Access(
+                                                                Path {
+                                                                    segments: [
+                                                                        Ident(sym#4, sp#260..261),
+                                                                    ],
+                                                                    generics: [],
+                                                                },
+                                                            ),
+                                                            span: sp#260..261,
+                                                            id: aid#29,
+                                                        },
+                                                        right: Expr {
+                                                            kind: Literal(
+                                                                Integer,
+                                                                sym#12,
+                                                            ),
+                                                            span: sp#265..266,
+                                                            id: aid#30,
+                                                        },
+                                                    },
+                                                    span: sp#262..266,
+                                                    id: aid#31,
+                                                },
+                                                conseq: Block {
+                                                    stmts: [
+                                                        Stmt {
+                                                            kind: Let {
+                                                                name: Ident(sym#13, sp#275..289),
+                                                                ty: None,
+                                                                value: Expr {
+                                                                    kind: Literal(
+                                                                        Integer,
+                                                                        sym#14,
+                                                                    ),
+                                                                    span: sp#292..294,
+                                                                    id: aid#32,
+                                                                },
+                                                            },
+                                                            span: sp#271..295,
+                                                            id: aid#33,
+                                                        },
+                                                        Stmt {
+                                                            kind: ExprRet(
+                                                                Expr {
+                                                                    kind: Binary {
+                                                                        op: Spanned {
+                                                                            bit: Plus,
+                                                                            span: sp#343..344,
+                                                                        },
+                                                                        left: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#13, sp#328..342),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#328..342,
+                                                                            id: aid#34,
+                                                                        },
+                                                                        right: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#4, sp#345..346),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#345..346,
+                                                                            id: aid#35,
+                                                                        },
+                                                                    },
+                                                                    span: sp#343..346,
+                                                                    id: aid#36,
+                                                                },
+                                                            ),
+                                                            span: sp#328..346,
+                                                            id: aid#37,
+                                                        },
+                                                    ],
+                                                    span: sp#267..349,
+                                                    id: aid#38,
+                                                },
+                                                altern: Some(
+                                                    Block {
+                                                        stmts: [
+                                                            Stmt {
+                                                                kind: ExprRet(
+                                                                    Expr {
+                                                                        kind: Literal(
+                                                                            Integer,
+                                                                            sym#15,
+                                                                        ),
+                                                                        span: sp#369..371,
+                                                                        id: aid#39,
+                                                                    },
+                                                                ),
+                                                                span: sp#369..371,
+                                                                id: aid#40,
+                                                            },
+                                                        ],
+                                                        span: sp#355..374,
+                                                        id: aid#41,
+                                                    },
+                                                ),
+                                            },
+                                            span: sp#257..374,
+                                            id: aid#42,
+                                        },
+                                    ),
+                                    span: sp#257..374,
+                                    id: aid#43,
+                                },
+                            ],
+                            span: sp#254..376,
+                            id: aid#44,
+                        },
+                    ),
+                    abi: None,
                 },
-            ],
-            span: s#514..597,
+            ),
+            span: sp#207..376,
+            id: aid#45,
         },
-    },
-]
+        Item {
+            kind: Function(
+                Function {
+                    name: Ident(sym#16, sp#381..394),
+                    decl: FnDecl {
+                        params: [
+                            Param {
+                                name: Ident(sym#4, sp#395..396),
+                                ty: Ty {
+                                    kind: Path(
+                                        Path {
+                                            segments: [
+                                                Ident(sym#2, sp#398..402),
+                                            ],
+                                            generics: [],
+                                        },
+                                    ),
+                                    span: sp#398..402,
+                                },
+                            },
+                        ],
+                        ret: None,
+                        span: sp#394..403,
+                    },
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Expr(
+                                        Expr {
+                                            kind: If {
+                                                cond: Expr {
+                                                    kind: Binary {
+                                                        op: Spanned {
+                                                            bit: EqEq,
+                                                            span: sp#412..414,
+                                                        },
+                                                        left: Expr {
+                                                            kind: Access(
+                                                                Path {
+                                                                    segments: [
+                                                                        Ident(sym#4, sp#410..411),
+                                                                    ],
+                                                                    generics: [],
+                                                                },
+                                                            ),
+                                                            span: sp#410..411,
+                                                            id: aid#46,
+                                                        },
+                                                        right: Expr {
+                                                            kind: Literal(
+                                                                Integer,
+                                                                sym#5,
+                                                            ),
+                                                            span: sp#415..416,
+                                                            id: aid#47,
+                                                        },
+                                                    },
+                                                    span: sp#412..416,
+                                                    id: aid#48,
+                                                },
+                                                conseq: Block {
+                                                    stmts: [
+                                                        Stmt {
+                                                            kind: Expr(
+                                                                Expr {
+                                                                    kind: FnCall {
+                                                                        expr: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#1, sp#421..428),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#421..428,
+                                                                            id: aid#49,
+                                                                        },
+                                                                        args: Spanned {
+                                                                            bit: [
+                                                                                Expr {
+                                                                                    kind: FnCall {
+                                                                                        expr: Expr {
+                                                                                            kind: Access(
+                                                                                                Path {
+                                                                                                    segments: [
+                                                                                                        Ident(sym#11, sp#429..441),
+                                                                                                    ],
+                                                                                                    generics: [],
+                                                                                                },
+                                                                                            ),
+                                                                                            span: sp#429..441,
+                                                                                            id: aid#50,
+                                                                                        },
+                                                                                        args: Spanned {
+                                                                                            bit: [
+                                                                                                Expr {
+                                                                                                    kind: Literal(
+                                                                                                        Integer,
+                                                                                                        sym#5,
+                                                                                                    ),
+                                                                                                    span: sp#442..443,
+                                                                                                    id: aid#51,
+                                                                                                },
+                                                                                            ],
+                                                                                            span: sp#441..444,
+                                                                                        },
+                                                                                    },
+                                                                                    span: sp#429..444,
+                                                                                    id: aid#52,
+                                                                                },
+                                                                            ],
+                                                                            span: sp#428..445,
+                                                                        },
+                                                                    },
+                                                                    span: sp#421..445,
+                                                                    id: aid#53,
+                                                                },
+                                                            ),
+                                                            span: sp#421..446,
+                                                            id: aid#54,
+                                                        },
+                                                    ],
+                                                    span: sp#417..449,
+                                                    id: aid#55,
+                                                },
+                                                altern: Some(
+                                                    Block {
+                                                        stmts: [
+                                                            Stmt {
+                                                                kind: WhileLoop {
+                                                                    check: Expr {
+                                                                        kind: Binary {
+                                                                            op: Spanned {
+                                                                                bit: Ne,
+                                                                                span: sp#467..469,
+                                                                            },
+                                                                            left: Expr {
+                                                                                kind: Access(
+                                                                                    Path {
+                                                                                        segments: [
+                                                                                            Ident(sym#4, sp#465..466),
+                                                                                        ],
+                                                                                        generics: [],
+                                                                                    },
+                                                                                ),
+                                                                                span: sp#465..466,
+                                                                                id: aid#56,
+                                                                            },
+                                                                            right: Expr {
+                                                                                kind: Literal(
+                                                                                    Integer,
+                                                                                    sym#5,
+                                                                                ),
+                                                                                span: sp#470..471,
+                                                                                id: aid#57,
+                                                                            },
+                                                                        },
+                                                                        span: sp#467..471,
+                                                                        id: aid#58,
+                                                                    },
+                                                                    body: Block {
+                                                                        stmts: [
+                                                                            Stmt {
+                                                                                kind: Let {
+                                                                                    name: Ident(sym#17, sp#481..485),
+                                                                                    ty: None,
+                                                                                    value: Expr {
+                                                                                        kind: Binary {
+                                                                                            op: Spanned {
+                                                                                                bit: Mod,
+                                                                                                span: sp#490..491,
+                                                                                            },
+                                                                                            left: Expr {
+                                                                                                kind: Access(
+                                                                                                    Path {
+                                                                                                        segments: [
+                                                                                                            Ident(sym#4, sp#488..489),
+                                                                                                        ],
+                                                                                                        generics: [],
+                                                                                                    },
+                                                                                                ),
+                                                                                                span: sp#488..489,
+                                                                                                id: aid#59,
+                                                                                            },
+                                                                                            right: Expr {
+                                                                                                kind: Literal(
+                                                                                                    Integer,
+                                                                                                    sym#6,
+                                                                                                ),
+                                                                                                span: sp#492..494,
+                                                                                                id: aid#60,
+                                                                                            },
+                                                                                        },
+                                                                                        span: sp#490..494,
+                                                                                        id: aid#61,
+                                                                                    },
+                                                                                },
+                                                                                span: sp#477..495,
+                                                                                id: aid#62,
+                                                                            },
+                                                                            Stmt {
+                                                                                kind: Expr(
+                                                                                    Expr {
+                                                                                        kind: Assign {
+                                                                                            target: Expr {
+                                                                                                kind: Access(
+                                                                                                    Path {
+                                                                                                        segments: [
+                                                                                                            Ident(sym#4, sp#499..500),
+                                                                                                        ],
+                                                                                                        generics: [],
+                                                                                                    },
+                                                                                                ),
+                                                                                                span: sp#499..500,
+                                                                                                id: aid#63,
+                                                                                            },
+                                                                                            value: Expr {
+                                                                                                kind: Binary {
+                                                                                                    op: Spanned {
+                                                                                                        bit: Div,
+                                                                                                        span: sp#505..506,
+                                                                                                    },
+                                                                                                    left: Expr {
+                                                                                                        kind: Access(
+                                                                                                            Path {
+                                                                                                                segments: [
+                                                                                                                    Ident(sym#4, sp#503..504),
+                                                                                                                ],
+                                                                                                                generics: [],
+                                                                                                            },
+                                                                                                        ),
+                                                                                                        span: sp#503..504,
+                                                                                                        id: aid#64,
+                                                                                                    },
+                                                                                                    right: Expr {
+                                                                                                        kind: Literal(
+                                                                                                            Integer,
+                                                                                                            sym#6,
+                                                                                                        ),
+                                                                                                        span: sp#507..509,
+                                                                                                        id: aid#65,
+                                                                                                    },
+                                                                                                },
+                                                                                                span: sp#505..509,
+                                                                                                id: aid#66,
+                                                                                            },
+                                                                                        },
+                                                                                        span: sp#501..509,
+                                                                                        id: aid#67,
+                                                                                    },
+                                                                                ),
+                                                                                span: sp#499..510,
+                                                                                id: aid#68,
+                                                                            },
+                                                                            Stmt {
+                                                                                kind: Expr(
+                                                                                    Expr {
+                                                                                        kind: FnCall {
+                                                                                            expr: Expr {
+                                                                                                kind: Access(
+                                                                                                    Path {
+                                                                                                        segments: [
+                                                                                                            Ident(sym#1, sp#514..521),
+                                                                                                        ],
+                                                                                                        generics: [],
+                                                                                                    },
+                                                                                                ),
+                                                                                                span: sp#514..521,
+                                                                                                id: aid#69,
+                                                                                            },
+                                                                                            args: Spanned {
+                                                                                                bit: [
+                                                                                                    Expr {
+                                                                                                        kind: FnCall {
+                                                                                                            expr: Expr {
+                                                                                                                kind: Access(
+                                                                                                                    Path {
+                                                                                                                        segments: [
+                                                                                                                            Ident(sym#11, sp#522..534),
+                                                                                                                        ],
+                                                                                                                        generics: [],
+                                                                                                                    },
+                                                                                                                ),
+                                                                                                                span: sp#522..534,
+                                                                                                                id: aid#70,
+                                                                                                            },
+                                                                                                            args: Spanned {
+                                                                                                                bit: [
+                                                                                                                    Expr {
+                                                                                                                        kind: Access(
+                                                                                                                            Path {
+                                                                                                                                segments: [
+                                                                                                                                    Ident(sym#17, sp#535..539),
+                                                                                                                                ],
+                                                                                                                                generics: [],
+                                                                                                                            },
+                                                                                                                        ),
+                                                                                                                        span: sp#535..539,
+                                                                                                                        id: aid#71,
+                                                                                                                    },
+                                                                                                                ],
+                                                                                                                span: sp#534..540,
+                                                                                                            },
+                                                                                                        },
+                                                                                                        span: sp#522..540,
+                                                                                                        id: aid#72,
+                                                                                                    },
+                                                                                                ],
+                                                                                                span: sp#521..541,
+                                                                                            },
+                                                                                        },
+                                                                                        span: sp#514..541,
+                                                                                        id: aid#73,
+                                                                                    },
+                                                                                ),
+                                                                                span: sp#514..542,
+                                                                                id: aid#74,
+                                                                            },
+                                                                        ],
+                                                                        span: sp#472..546,
+                                                                        id: aid#75,
+                                                                    },
+                                                                },
+                                                                span: sp#459..546,
+                                                                id: aid#76,
+                                                            },
+                                                        ],
+                                                        span: sp#455..549,
+                                                        id: aid#77,
+                                                    },
+                                                ),
+                                            },
+                                            span: sp#407..549,
+                                            id: aid#78,
+                                        },
+                                    ),
+                                    span: sp#407..550,
+                                    id: aid#79,
+                                },
+                            ],
+                            span: sp#404..552,
+                            id: aid#80,
+                        },
+                    ),
+                    abi: None,
+                },
+            ),
+            span: sp#378..552,
+            id: aid#81,
+        },
+        Item {
+            kind: Function(
+                Function {
+                    name: Ident(sym#9, sp#557..566),
+                    decl: FnDecl {
+                        params: [
+                            Param {
+                                name: Ident(sym#4, sp#567..568),
+                                ty: Ty {
+                                    kind: Path(
+                                        Path {
+                                            segments: [
+                                                Ident(sym#2, sp#570..574),
+                                            ],
+                                            generics: [],
+                                        },
+                                    ),
+                                    span: sp#570..574,
+                                },
+                            },
+                        ],
+                        ret: None,
+                        span: sp#566..575,
+                    },
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Expr(
+                                        Expr {
+                                            kind: If {
+                                                cond: Expr {
+                                                    kind: Binary {
+                                                        op: Spanned {
+                                                            bit: EqEq,
+                                                            span: sp#587..589,
+                                                        },
+                                                        left: Expr {
+                                                            kind: Access(
+                                                                Path {
+                                                                    segments: [
+                                                                        Ident(sym#4, sp#585..586),
+                                                                    ],
+                                                                    generics: [],
+                                                                },
+                                                            ),
+                                                            span: sp#585..586,
+                                                            id: aid#82,
+                                                        },
+                                                        right: Expr {
+                                                            kind: Literal(
+                                                                Integer,
+                                                                sym#5,
+                                                            ),
+                                                            span: sp#590..591,
+                                                            id: aid#83,
+                                                        },
+                                                    },
+                                                    span: sp#587..591,
+                                                    id: aid#84,
+                                                },
+                                                conseq: Block {
+                                                    stmts: [
+                                                        Stmt {
+                                                            kind: Expr(
+                                                                Expr {
+                                                                    kind: FnCall {
+                                                                        expr: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#1, sp#602..609),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#602..609,
+                                                                            id: aid#85,
+                                                                        },
+                                                                        args: Spanned {
+                                                                            bit: [
+                                                                                Expr {
+                                                                                    kind: FnCall {
+                                                                                        expr: Expr {
+                                                                                            kind: Access(
+                                                                                                Path {
+                                                                                                    segments: [
+                                                                                                        Ident(sym#11, sp#610..622),
+                                                                                                    ],
+                                                                                                    generics: [],
+                                                                                                },
+                                                                                            ),
+                                                                                            span: sp#610..622,
+                                                                                            id: aid#86,
+                                                                                        },
+                                                                                        args: Spanned {
+                                                                                            bit: [
+                                                                                                Expr {
+                                                                                                    kind: Literal(
+                                                                                                        Integer,
+                                                                                                        sym#5,
+                                                                                                    ),
+                                                                                                    span: sp#623..624,
+                                                                                                    id: aid#87,
+                                                                                                },
+                                                                                            ],
+                                                                                            span: sp#622..625,
+                                                                                        },
+                                                                                    },
+                                                                                    span: sp#610..625,
+                                                                                    id: aid#88,
+                                                                                },
+                                                                            ],
+                                                                            span: sp#609..626,
+                                                                        },
+                                                                    },
+                                                                    span: sp#602..626,
+                                                                    id: aid#89,
+                                                                },
+                                                            ),
+                                                            span: sp#602..627,
+                                                            id: aid#90,
+                                                        },
+                                                        Stmt {
+                                                            kind: Expr(
+                                                                Expr {
+                                                                    kind: Return(
+                                                                        None,
+                                                                    ),
+                                                                    span: sp#636..642,
+                                                                    id: aid#91,
+                                                                },
+                                                            ),
+                                                            span: sp#636..643,
+                                                            id: aid#92,
+                                                        },
+                                                    ],
+                                                    span: sp#592..649,
+                                                    id: aid#93,
+                                                },
+                                                altern: None,
+                                            },
+                                            span: sp#582..649,
+                                            id: aid#94,
+                                        },
+                                    ),
+                                    span: sp#582..650,
+                                    id: aid#95,
+                                },
+                                Stmt {
+                                    kind: Let {
+                                        name: Ident(sym#18, sp#723..730),
+                                        ty: None,
+                                        value: Expr {
+                                            kind: Literal(
+                                                Integer,
+                                                sym#10,
+                                            ),
+                                            span: sp#733..734,
+                                            id: aid#96,
+                                        },
+                                    },
+                                    span: sp#719..735,
+                                    id: aid#97,
+                                },
+                                Stmt {
+                                    kind: Let {
+                                        name: Ident(sym#19, sp#744..748),
+                                        ty: None,
+                                        value: Expr {
+                                            kind: Access(
+                                                Path {
+                                                    segments: [
+                                                        Ident(sym#4, sp#751..752),
+                                                    ],
+                                                    generics: [],
+                                                },
+                                            ),
+                                            span: sp#751..752,
+                                            id: aid#98,
+                                        },
+                                    },
+                                    span: sp#740..753,
+                                    id: aid#99,
+                                },
+                                Stmt {
+                                    kind: WhileLoop {
+                                        check: Expr {
+                                            kind: Binary {
+                                                op: Spanned {
+                                                    bit: Ge,
+                                                    span: sp#769..771,
+                                                },
+                                                left: Expr {
+                                                    kind: Access(
+                                                        Path {
+                                                            segments: [
+                                                                Ident(sym#19, sp#764..768),
+                                                            ],
+                                                            generics: [],
+                                                        },
+                                                    ),
+                                                    span: sp#764..768,
+                                                    id: aid#100,
+                                                },
+                                                right: Expr {
+                                                    kind: Literal(
+                                                        Integer,
+                                                        sym#6,
+                                                    ),
+                                                    span: sp#772..774,
+                                                    id: aid#101,
+                                                },
+                                            },
+                                            span: sp#769..774,
+                                            id: aid#102,
+                                        },
+                                        body: Block {
+                                            stmts: [
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#19, sp#785..789),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#785..789,
+                                                                    id: aid#103,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Binary {
+                                                                        op: Spanned {
+                                                                            bit: Div,
+                                                                            span: sp#797..798,
+                                                                        },
+                                                                        left: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#19, sp#792..796),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#792..796,
+                                                                            id: aid#104,
+                                                                        },
+                                                                        right: Expr {
+                                                                            kind: Literal(
+                                                                                Integer,
+                                                                                sym#6,
+                                                                            ),
+                                                                            span: sp#799..801,
+                                                                            id: aid#105,
+                                                                        },
+                                                                    },
+                                                                    span: sp#797..801,
+                                                                    id: aid#106,
+                                                                },
+                                                            },
+                                                            span: sp#790..801,
+                                                            id: aid#107,
+                                                        },
+                                                    ),
+                                                    span: sp#785..802,
+                                                    id: aid#108,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#18, sp#811..818),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#811..818,
+                                                                    id: aid#109,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Binary {
+                                                                        op: Spanned {
+                                                                            bit: Mul,
+                                                                            span: sp#829..830,
+                                                                        },
+                                                                        left: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#18, sp#821..828),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#821..828,
+                                                                            id: aid#110,
+                                                                        },
+                                                                        right: Expr {
+                                                                            kind: Literal(
+                                                                                Integer,
+                                                                                sym#6,
+                                                                            ),
+                                                                            span: sp#831..833,
+                                                                            id: aid#111,
+                                                                        },
+                                                                    },
+                                                                    span: sp#829..833,
+                                                                    id: aid#112,
+                                                                },
+                                                            },
+                                                            span: sp#819..833,
+                                                            id: aid#113,
+                                                        },
+                                                    ),
+                                                    span: sp#811..834,
+                                                    id: aid#114,
+                                                },
+                                            ],
+                                            span: sp#775..840,
+                                            id: aid#115,
+                                        },
+                                    },
+                                    span: sp#758..840,
+                                    id: aid#116,
+                                },
+                                Stmt {
+                                    kind: Empty,
+                                    span: sp#840..841,
+                                    id: aid#117,
+                                },
+                                Stmt {
+                                    kind: Expr(
+                                        Expr {
+                                            kind: Assign {
+                                                target: Expr {
+                                                    kind: Access(
+                                                        Path {
+                                                            segments: [
+                                                                Ident(sym#19, sp#884..888),
+                                                            ],
+                                                            generics: [],
+                                                        },
+                                                    ),
+                                                    span: sp#884..888,
+                                                    id: aid#118,
+                                                },
+                                                value: Expr {
+                                                    kind: Access(
+                                                        Path {
+                                                            segments: [
+                                                                Ident(sym#4, sp#891..892),
+                                                            ],
+                                                            generics: [],
+                                                        },
+                                                    ),
+                                                    span: sp#891..892,
+                                                    id: aid#119,
+                                                },
+                                            },
+                                            span: sp#889..892,
+                                            id: aid#120,
+                                        },
+                                    ),
+                                    span: sp#884..893,
+                                    id: aid#121,
+                                },
+                                Stmt {
+                                    kind: WhileLoop {
+                                        check: Expr {
+                                            kind: Binary {
+                                                op: Spanned {
+                                                    bit: Gt,
+                                                    span: sp#968..969,
+                                                },
+                                                left: Expr {
+                                                    kind: Access(
+                                                        Path {
+                                                            segments: [
+                                                                Ident(sym#18, sp#960..967),
+                                                            ],
+                                                            generics: [],
+                                                        },
+                                                    ),
+                                                    span: sp#960..967,
+                                                    id: aid#122,
+                                                },
+                                                right: Expr {
+                                                    kind: Literal(
+                                                        Integer,
+                                                        sym#5,
+                                                    ),
+                                                    span: sp#970..971,
+                                                    id: aid#123,
+                                                },
+                                            },
+                                            span: sp#968..971,
+                                            id: aid#124,
+                                        },
+                                        body: Block {
+                                            stmts: [
+                                                Stmt {
+                                                    kind: Let {
+                                                        name: Ident(sym#20, sp#986..991),
+                                                        ty: None,
+                                                        value: Expr {
+                                                            kind: Binary {
+                                                                op: Spanned {
+                                                                    bit: Div,
+                                                                    span: sp#999..1000,
+                                                                },
+                                                                left: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#19, sp#994..998),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#994..998,
+                                                                    id: aid#125,
+                                                                },
+                                                                right: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#18, sp#1001..1008),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1001..1008,
+                                                                    id: aid#126,
+                                                                },
+                                                            },
+                                                            span: sp#999..1008,
+                                                            id: aid#127,
+                                                        },
+                                                    },
+                                                    span: sp#982..1009,
+                                                    id: aid#128,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: FnCall {
+                                                                expr: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#1, sp#1061..1068),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1061..1068,
+                                                                    id: aid#129,
+                                                                },
+                                                                args: Spanned {
+                                                                    bit: [
+                                                                        Expr {
+                                                                            kind: FnCall {
+                                                                                expr: Expr {
+                                                                                    kind: Access(
+                                                                                        Path {
+                                                                                            segments: [
+                                                                                                Ident(sym#11, sp#1069..1081),
+                                                                                            ],
+                                                                                            generics: [],
+                                                                                        },
+                                                                                    ),
+                                                                                    span: sp#1069..1081,
+                                                                                    id: aid#130,
+                                                                                },
+                                                                                args: Spanned {
+                                                                                    bit: [
+                                                                                        Expr {
+                                                                                            kind: Access(
+                                                                                                Path {
+                                                                                                    segments: [
+                                                                                                        Ident(sym#20, sp#1082..1087),
+                                                                                                    ],
+                                                                                                    generics: [],
+                                                                                                },
+                                                                                            ),
+                                                                                            span: sp#1082..1087,
+                                                                                            id: aid#131,
+                                                                                        },
+                                                                                    ],
+                                                                                    span: sp#1081..1088,
+                                                                                },
+                                                                            },
+                                                                            span: sp#1069..1088,
+                                                                            id: aid#132,
+                                                                        },
+                                                                    ],
+                                                                    span: sp#1068..1089,
+                                                                },
+                                                            },
+                                                            span: sp#1061..1089,
+                                                            id: aid#133,
+                                                        },
+                                                    ),
+                                                    span: sp#1061..1090,
+                                                    id: aid#134,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#19, sp#1153..1157),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1153..1157,
+                                                                    id: aid#135,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Binary {
+                                                                        op: Spanned {
+                                                                            bit: Mod,
+                                                                            span: sp#1165..1166,
+                                                                        },
+                                                                        left: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#19, sp#1160..1164),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#1160..1164,
+                                                                            id: aid#136,
+                                                                        },
+                                                                        right: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#18, sp#1167..1174),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#1167..1174,
+                                                                            id: aid#137,
+                                                                        },
+                                                                    },
+                                                                    span: sp#1165..1174,
+                                                                    id: aid#138,
+                                                                },
+                                                            },
+                                                            span: sp#1158..1174,
+                                                            id: aid#139,
+                                                        },
+                                                    ),
+                                                    span: sp#1153..1175,
+                                                    id: aid#140,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#18, sp#1219..1226),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1219..1226,
+                                                                    id: aid#141,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Binary {
+                                                                        op: Spanned {
+                                                                            bit: Div,
+                                                                            span: sp#1237..1238,
+                                                                        },
+                                                                        left: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#18, sp#1229..1236),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#1229..1236,
+                                                                            id: aid#142,
+                                                                        },
+                                                                        right: Expr {
+                                                                            kind: Literal(
+                                                                                Integer,
+                                                                                sym#6,
+                                                                            ),
+                                                                            span: sp#1239..1241,
+                                                                            id: aid#143,
+                                                                        },
+                                                                    },
+                                                                    span: sp#1237..1241,
+                                                                    id: aid#144,
+                                                                },
+                                                            },
+                                                            span: sp#1227..1241,
+                                                            id: aid#145,
+                                                        },
+                                                    ),
+                                                    span: sp#1219..1242,
+                                                    id: aid#146,
+                                                },
+                                            ],
+                                            span: sp#972..1248,
+                                            id: aid#147,
+                                        },
+                                    },
+                                    span: sp#954..1248,
+                                    id: aid#148,
+                                },
+                                Stmt {
+                                    kind: Empty,
+                                    span: sp#1248..1249,
+                                    id: aid#149,
+                                },
+                            ],
+                            span: sp#576..1251,
+                            id: aid#150,
+                        },
+                    ),
+                    abi: None,
+                },
+            ),
+            span: sp#554..1251,
+            id: aid#151,
+        },
+        Item {
+            kind: Function(
+                Function {
+                    name: Ident(sym#8, sp#1257..1261),
+                    decl: FnDecl {
+                        params: [
+                            Param {
+                                name: Ident(sym#4, sp#1262..1263),
+                                ty: Ty {
+                                    kind: Path(
+                                        Path {
+                                            segments: [
+                                                Ident(sym#2, sp#1265..1269),
+                                            ],
+                                            generics: [],
+                                        },
+                                    ),
+                                    span: sp#1265..1269,
+                                },
+                            },
+                        ],
+                        ret: Some(
+                            Ty {
+                                kind: Path(
+                                    Path {
+                                        segments: [
+                                            Ident(sym#2, sp#1271..1275),
+                                        ],
+                                        generics: [],
+                                    },
+                                ),
+                                span: sp#1271..1275,
+                            },
+                        ),
+                        span: sp#1261..1275,
+                    },
+                    body: Some(
+                        Block {
+                            stmts: [
+                                Stmt {
+                                    kind: Let {
+                                        name: Ident(sym#21, sp#1283..1284),
+                                        ty: None,
+                                        value: Expr {
+                                            kind: Literal(
+                                                Integer,
+                                                sym#5,
+                                            ),
+                                            span: sp#1287..1288,
+                                            id: aid#152,
+                                        },
+                                    },
+                                    span: sp#1279..1289,
+                                    id: aid#153,
+                                },
+                                Stmt {
+                                    kind: Let {
+                                        name: Ident(sym#22, sp#1295..1296),
+                                        ty: None,
+                                        value: Expr {
+                                            kind: Literal(
+                                                Integer,
+                                                sym#10,
+                                            ),
+                                            span: sp#1299..1300,
+                                            id: aid#154,
+                                        },
+                                    },
+                                    span: sp#1291..1301,
+                                    id: aid#155,
+                                },
+                                Stmt {
+                                    kind: WhileLoop {
+                                        check: Expr {
+                                            kind: Binary {
+                                                op: Spanned {
+                                                    bit: Ne,
+                                                    span: sp#1312..1314,
+                                                },
+                                                left: Expr {
+                                                    kind: Access(
+                                                        Path {
+                                                            segments: [
+                                                                Ident(sym#4, sp#1310..1311),
+                                                            ],
+                                                            generics: [],
+                                                        },
+                                                    ),
+                                                    span: sp#1310..1311,
+                                                    id: aid#156,
+                                                },
+                                                right: Expr {
+                                                    kind: Literal(
+                                                        Integer,
+                                                        sym#5,
+                                                    ),
+                                                    span: sp#1315..1316,
+                                                    id: aid#157,
+                                                },
+                                            },
+                                            span: sp#1312..1316,
+                                            id: aid#158,
+                                        },
+                                        body: Block {
+                                            stmts: [
+                                                Stmt {
+                                                    kind: Let {
+                                                        name: Ident(sym#23, sp#1325..1329),
+                                                        ty: None,
+                                                        value: Expr {
+                                                            kind: Binary {
+                                                                op: Spanned {
+                                                                    bit: Plus,
+                                                                    span: sp#1334..1335,
+                                                                },
+                                                                left: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#21, sp#1332..1333),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1332..1333,
+                                                                    id: aid#159,
+                                                                },
+                                                                right: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#22, sp#1336..1337),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1336..1337,
+                                                                    id: aid#160,
+                                                                },
+                                                            },
+                                                            span: sp#1334..1337,
+                                                            id: aid#161,
+                                                        },
+                                                    },
+                                                    span: sp#1321..1338,
+                                                    id: aid#162,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#21, sp#1341..1342),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1341..1342,
+                                                                    id: aid#163,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#22, sp#1345..1346),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1345..1346,
+                                                                    id: aid#164,
+                                                                },
+                                                            },
+                                                            span: sp#1343..1346,
+                                                            id: aid#165,
+                                                        },
+                                                    ),
+                                                    span: sp#1341..1347,
+                                                    id: aid#166,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#22, sp#1350..1351),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1350..1351,
+                                                                    id: aid#167,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#23, sp#1354..1358),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1354..1358,
+                                                                    id: aid#168,
+                                                                },
+                                                            },
+                                                            span: sp#1352..1358,
+                                                            id: aid#169,
+                                                        },
+                                                    ),
+                                                    span: sp#1350..1359,
+                                                    id: aid#170,
+                                                },
+                                                Stmt {
+                                                    kind: Expr(
+                                                        Expr {
+                                                            kind: Assign {
+                                                                target: Expr {
+                                                                    kind: Access(
+                                                                        Path {
+                                                                            segments: [
+                                                                                Ident(sym#4, sp#1363..1364),
+                                                                            ],
+                                                                            generics: [],
+                                                                        },
+                                                                    ),
+                                                                    span: sp#1363..1364,
+                                                                    id: aid#171,
+                                                                },
+                                                                value: Expr {
+                                                                    kind: Binary {
+                                                                        op: Spanned {
+                                                                            bit: Minus,
+                                                                            span: sp#1369..1370,
+                                                                        },
+                                                                        left: Expr {
+                                                                            kind: Access(
+                                                                                Path {
+                                                                                    segments: [
+                                                                                        Ident(sym#4, sp#1367..1368),
+                                                                                    ],
+                                                                                    generics: [],
+                                                                                },
+                                                                            ),
+                                                                            span: sp#1367..1368,
+                                                                            id: aid#172,
+                                                                        },
+                                                                        right: Expr {
+                                                                            kind: Literal(
+                                                                                Integer,
+                                                                                sym#10,
+                                                                            ),
+                                                                            span: sp#1371..1372,
+                                                                            id: aid#173,
+                                                                        },
+                                                                    },
+                                                                    span: sp#1369..1372,
+                                                                    id: aid#174,
+                                                                },
+                                                            },
+                                                            span: sp#1365..1372,
+                                                            id: aid#175,
+                                                        },
+                                                    ),
+                                                    span: sp#1363..1373,
+                                                    id: aid#176,
+                                                },
+                                            ],
+                                            span: sp#1317..1376,
+                                            id: aid#177,
+                                        },
+                                    },
+                                    span: sp#1304..1376,
+                                    id: aid#178,
+                                },
+                                Stmt {
+                                    kind: ExprRet(
+                                        Expr {
+                                            kind: Access(
+                                                Path {
+                                                    segments: [
+                                                        Ident(sym#22, sp#1379..1380),
+                                                    ],
+                                                    generics: [],
+                                                },
+                                            ),
+                                            span: sp#1379..1380,
+                                            id: aid#179,
+                                        },
+                                    ),
+                                    span: sp#1379..1380,
+                                    id: aid#180,
+                                },
+                            ],
+                            span: sp#1276..1382,
+                            id: aid#181,
+                        },
+                    ),
+                    abi: None,
+                },
+            ),
+            span: sp#1254..1382,
+            id: aid#182,
+        },
+    ],
+}

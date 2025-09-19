@@ -324,7 +324,7 @@ impl TbirBuilder<'_> {
 				name: *ident,
 				value: self.build_expr(value),
 			},
-			hir::StmtKind::Loop { block } => tbir::StmtKind::Loop {
+			hir::StmtKind::Loop(block) => tbir::StmtKind::Loop {
 				block: self.build_block(block),
 			},
 		};

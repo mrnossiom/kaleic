@@ -14,6 +14,7 @@ pub enum Backend {
 	Cranelift,
 	#[cfg(feature = "llvm")]
 	Llvm,
+	NoBackend,
 }
 
 impl Default for Backend {
@@ -22,7 +23,7 @@ impl Default for Backend {
 		return Self::Cranelift;
 		#[cfg(feature = "llvm")]
 		return Self::Llvm;
-		todo!()
+		Self::NoBackend
 	}
 }
 

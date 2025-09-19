@@ -2,7 +2,7 @@ use ariadne::ReportKind;
 
 use crate::{
 	codegen::{self, Backend, CodeGenBackend, JitBackend, ObjectBackend},
-	lowerer,
+	lowerer::lower_root,
 	parser::parse_root,
 	pretty_print::pretty_print_root,
 	resolve,
@@ -35,8 +35,7 @@ pub fn pipeline(scx: &SessionCtx) {
 	scx.dcx().check_sane_or_exit();
 
 	// lowering to HIR
-	let lcx = lowerer::LowerCtx::new(scx);
-	let hir = lcx.lower_root(&ast);
+	let hir = lower_root(scx, &ast);
 	if scx.options.print.contains(&PrintKind::HigherIr) {
 		println!("{hir:#?}");
 	}
@@ -66,6 +65,7 @@ pub fn pipeline(scx: &SessionCtx) {
 				Backend::Cranelift => &mut codegen::CraneliftBackend::new_jit(&tcx),
 				#[cfg(feature = "llvm")]
 				Backend::Llvm => &mut codegen::LlvmBackend::new_jit(&tcx),
+				Backend::NoBackend => panic!("cannot codegen without a backend"),
 			};
 
 			backend.codegen_root(&hir);
