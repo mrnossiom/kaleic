@@ -249,6 +249,7 @@ pub enum PrintKind {
 	BackendIr,
 
 	CollectedItems,
+	Environment,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]

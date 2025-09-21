@@ -4,7 +4,7 @@ use crate::{
 	ast::{self, Ident},
 	bug, errors, hir,
 	inference::InferTag,
-	resolve::Environment,
+	resolve::{self, Environment},
 	session::{SessionCtx, Span, Symbol},
 	tbir,
 };
@@ -13,9 +13,11 @@ use crate::{
 pub struct TyCtx<'scx> {
 	pub scx: &'scx SessionCtx,
 
-	pub environment: RefCell<Option<Environment>>,
-
+	// TODO: this is going to disappear
 	pub(crate) infer_tag_count: AtomicU32,
+
+	pub(crate) item_map: RefCell<Option<HashMap<Symbol, hir::Item>>>,
+	pub environment: RefCell<Option<Environment>>,
 }
 
 impl<'scx> TyCtx<'scx> {
@@ -23,16 +25,39 @@ impl<'scx> TyCtx<'scx> {
 	pub fn new(scx: &'scx SessionCtx) -> Self {
 		Self {
 			scx,
-			environment: RefCell::default(),
 			infer_tag_count: AtomicU32::default(),
+
+			item_map: RefCell::default(),
+			environment: RefCell::default(),
 		}
 	}
 }
 
 /// Context actions
 impl TyCtx<'_> {
+	/// Goes through the HIR and finds all items without resolving them
+	pub fn collect_root(&self, hir: &hir::Root) {
+		let mut cltr = resolve::Collector::new(self);
+		cltr.collect_items(hir);
+
+		self.item_map.replace(Some(cltr.item_map));
+	}
+
+	/// Uses the collection step to map every item to a concrete type
+	pub(crate) fn compute_env(&self, hir: &hir::Root) {
+		let mut envcp = resolve::EnvironmentComputer::new(self);
+		envcp.compute_env(hir);
+
+		self.environment.replace(Some(envcp.environment));
+	}
+
+	/// Computes inference for every body and stores the result in the `TyCtx`
+	pub(crate) fn typeck(&self) {
+		todo!()
+	}
+
 	#[must_use]
-	#[tracing::instrument(level = "trace", skip(self, decl, body,))]
+	#[tracing::instrument(level = "trace", skip(self, decl, body))]
 	pub fn typeck_fn(&self, name: Ident, decl: &FnDecl, body: &hir::Block) -> tbir::Block {
 		let env = self.environment.borrow_mut().take().unwrap();
 		// defer put back

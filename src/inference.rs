@@ -3,79 +3,15 @@ use std::sync::atomic::Ordering;
 use crate::{
 	ast::{self, UnaryOp},
 	errors, hir, lexer,
-	ty::{FnDecl, Infer, Inferer, Param, PrimitiveKind, TyCtx, TyKind},
+	ty::{Infer, Inferer, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InferTag(u32);
 
 impl TyCtx<'_> {
-	fn next_infer_tag(&self) -> InferTag {
+	pub fn next_infer_tag(&self) -> InferTag {
 		InferTag(self.infer_tag_count.fetch_add(1, Ordering::Relaxed))
-	}
-
-	fn lower_ty(&self, ty: &ast::Ty) -> TyKind<Infer> {
-		match &ty.kind {
-			ast::TyKind::Path(path) => self.lower_path_ty(path),
-			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
-			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Void),
-			ast::TyKind::Infer => TyKind::Infer(self.next_infer_tag(), Infer::Explicit),
-		}
-	}
-
-	// TODO: not pub
-	pub fn lower_fn_decl(&self, decl: &hir::FnDecl) -> FnDecl {
-		// TODO: diag no infer ty in functions
-		let inputs = decl
-			.inputs
-			.iter()
-			.map(|ast::Param { name, ty }| {
-				let ty = if let Ok(ty) = self.lower_ty(ty).as_no_infer() {
-					ty
-				} else {
-					let report = errors::ty::function_cannot_infer_signature(name.span);
-					self.scx.dcx().emit_build(report);
-					TyKind::Error
-				};
-				Param { name: *name, ty }
-			})
-			.collect();
-
-		let ty = if let Ok(ty) = self.lower_ty(&decl.output).as_no_infer() {
-			ty
-		} else {
-			let report = errors::ty::function_cannot_infer_signature(decl.output.span);
-			self.scx.dcx().emit_build(report);
-			TyKind::Error
-		};
-		FnDecl { inputs, output: ty }
-	}
-
-	fn lower_path_ty(&self, path: &ast::Path) -> TyKind<Infer> {
-		// TODO: remove these constraints
-		assert_eq!(path.segments.len(), 1);
-		assert_eq!(path.generics.len(), 0);
-
-		let path = path.segments[0];
-		match self.scx.symbols.resolve(path.sym).as_str() {
-			"_" => TyKind::Infer(self.next_infer_tag(), Infer::Explicit),
-
-			"void" => TyKind::Primitive(PrimitiveKind::Void),
-			"never" => TyKind::Primitive(PrimitiveKind::Never),
-
-			"bool" => TyKind::Primitive(PrimitiveKind::Bool),
-			"uint" => TyKind::Primitive(PrimitiveKind::UnsignedInt),
-			"sint" => TyKind::Primitive(PrimitiveKind::SignedInt),
-			"float" => TyKind::Primitive(PrimitiveKind::Float),
-
-			"str" => TyKind::Primitive(PrimitiveKind::Str),
-
-			_ => {
-				let report = errors::ty::type_unknown(path.span);
-				self.scx.dcx().emit_build(report);
-				TyKind::Error
-			}
-		}
 	}
 }
 impl Inferer<'_> {
@@ -136,7 +72,9 @@ impl Inferer<'_> {
 				self.infer_expr(expr);
 			}
 			hir::StmtKind::Let { ident, value, ty } => {
-				let explicit_ty = self.tcx.lower_ty(ty);
+				// let explicit_ty = self.tcx.resolve(ty);
+				// let explicit_ty = self.tcx.lower_ty(ty);
+				let explicit_ty = todo!();
 				let expr_ty = self.infer_expr(value);
 				self.unify(&explicit_ty, &expr_ty);
 

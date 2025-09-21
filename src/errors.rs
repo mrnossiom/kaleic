@@ -115,4 +115,11 @@ pub mod ty {
 	pub fn infer_ty_unification_mismatch(infer: Infer, ty: &TyKind<Infer>) -> ReportBuilder {
 		panic!("infer kind mismatch: expected infer {{{infer:?}}}, received ty {ty:?}")
 	}
+
+	pub fn item_name_conflict(original: Span, conflicted: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, original)
+			.with_message("distinct items have a conflicting name")
+			.with_label(Label::new(original).with_message("this is the first item encountered"))
+			.with_label(Label::new(conflicted).with_message("this item has the same name"))
+	}
 }

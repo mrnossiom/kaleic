@@ -37,6 +37,7 @@ mod options {
 		Tbir,
 		BackendIr,
 		Items,
+		Env,
 	}
 
 	impl From<PrintKind> for session::PrintKind {
@@ -48,6 +49,7 @@ mod options {
 				PrintKind::Tbir => Self::TypedBodyIr,
 				PrintKind::BackendIr => Self::BackendIr,
 				PrintKind::Items => Self::CollectedItems,
+				PrintKind::Env => Self::Environment,
 			}
 		}
 	}

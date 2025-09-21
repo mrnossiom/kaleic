@@ -730,11 +730,11 @@ impl Parser<'_> {
 
 		let name = self.expect_ident()?;
 
-		let fields = if self.check(OpenBrace) {
+		let fields = if self.eat(OpenBrace) {
 			let fields =
 				self.parse_seq_rest(OpenBrace, CloseBrace, Comma, Self::parse_field_def)?;
 			VariantKind::Struct(fields)
-		} else if self.check(OpenParen) {
+		} else if self.eat(OpenParen) {
 			let fields = self.parse_seq_rest(OpenParen, CloseParen, Comma, Self::parse_ty)?;
 			VariantKind::Tuple(fields)
 		} else {

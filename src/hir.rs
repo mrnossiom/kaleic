@@ -23,28 +23,28 @@ pub struct Root {
 	pub items: Vec<Item>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Item {
 	pub kind: ItemKind,
 	pub span: Span,
 	pub id: NodeId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Struct {
 	pub name: Ident,
 	pub generics: Vec<Ident>,
 	pub fields: Vec<FieldDef>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Enum {
 	pub name: Ident,
 	pub generics: Vec<Ident>,
 	pub variants: Vec<EnumVariant>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ItemKind {
 	Type(Type),
 	Function(Function),
@@ -64,10 +64,10 @@ pub enum ItemKind {
 	},
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Type(pub ast::Ident, pub Option<Box<ast::Ty>>);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Function {
 	pub name: ast::Ident,
 	pub decl: Box<FnDecl>,
@@ -75,20 +75,20 @@ pub struct Function {
 	pub abi: Option<Box<Expr>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EnumVariant {
 	pub name: ast::Ident,
 	pub fields: Vec<FieldDef>,
 	pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TraitItem {
 	pub kind: TraitItemKind,
 	pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TraitItemKind {
 	Type(Type),
 	Function(Function),
@@ -108,7 +108,7 @@ pub struct FnDecl {
 	pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
 	pub stmts: Vec<Stmt>,
 	pub ret: Option<Box<Expr>>,
@@ -116,14 +116,14 @@ pub struct Block {
 	pub id: NodeId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Stmt {
 	pub kind: StmtKind,
 	pub span: Span,
 	pub id: NodeId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StmtKind {
 	Expr(Box<Expr>),
 
@@ -138,14 +138,14 @@ pub enum StmtKind {
 	Loop(Box<Block>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr {
 	pub kind: ExprKind,
 	pub span: Span,
 	pub id: NodeId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind {
 	Access(ast::Path),
 	Literal(LiteralKind, Symbol),

@@ -2,10 +2,7 @@ use ariadne::ReportKind;
 
 use crate::{
 	codegen::{self, Backend, CodeGenBackend, JitBackend, ObjectBackend},
-	lowerer::lower_root,
-	parser::parse_root,
-	pretty_print::pretty_print_root,
-	resolve,
+	lowerer, parser, pretty_print,
 	session::{Diagnostic, OutputKind, PrintKind, Report, SessionCtx, Span},
 	ty,
 };
@@ -24,18 +21,18 @@ pub fn pipeline(scx: &SessionCtx) {
 		.unwrap();
 
 	// parsing source
-	let ast = parse_root(scx, &source);
+	let ast = parser::parse_root(scx, &source);
 	if scx.options.print.contains(&PrintKind::Ast) {
 		println!("{ast:#?}");
 	}
 	if scx.options.print.contains(&PrintKind::AstPretty) {
-		pretty_print_root(&ast).unwrap();
+		pretty_print::pretty_print_root(&ast).unwrap();
 	}
 
 	scx.dcx().check_sane_or_exit();
 
 	// lowering to HIR
-	let hir = lower_root(scx, &ast);
+	let hir = lowerer::lower_root(scx, &ast);
 	if scx.options.print.contains(&PrintKind::HigherIr) {
 		println!("{hir:#?}");
 	}
@@ -45,14 +42,28 @@ pub fn pipeline(scx: &SessionCtx) {
 	// type collection, inference and analysis
 	let tcx = ty::TyCtx::new(scx);
 
-	let mut cltr = resolve::Collector::new(&tcx);
-	cltr.collect_items(&hir);
+	tcx.collect_root(&hir);
 	if scx.options.print.contains(&PrintKind::CollectedItems) {
-		let env = tcx.environment.borrow();
-		for (sym, ty) in &env.as_ref().unwrap().values {
-			println!("{sym:?}: {ty:?}");
+		let item_map = tcx.item_map.borrow();
+		for (name, item) in item_map.as_ref().unwrap() {
+			let mut item_info = format!("{:?}", item.kind);
+			item_info.truncate(60);
+			println!("{name:?}: {item_info}");
 		}
+		println!();
 	}
+
+	// TODO: move in collect_root?
+	tcx.compute_env(&hir);
+	if scx.options.print.contains(&PrintKind::Environment) {
+		let env = tcx.environment.borrow();
+		for (name, ty) in &env.as_ref().unwrap().values {
+			println!("{name:?}: {ty:?}");
+		}
+		println!();
+	}
+
+	tcx.typeck();
 
 	scx.dcx().check_sane_or_exit();
 
