@@ -4,9 +4,9 @@ use crate::{
 	ast::{self, Ident},
 	bug, errors, hir,
 	inference::InferTag,
-	resolve::{self, Environment},
+	resolve::{self, NameEnvironment, TyEnvironment},
 	session::{SessionCtx, Span, Symbol},
-	tbir,
+	tbir, typeck,
 };
 
 #[derive(Debug)]
@@ -16,8 +16,9 @@ pub struct TyCtx<'scx> {
 	// TODO: this is going to disappear
 	pub(crate) infer_tag_count: AtomicU32,
 
-	pub(crate) item_map: RefCell<Option<HashMap<Symbol, hir::Item>>>,
-	pub environment: RefCell<Option<Environment>>,
+	pub(crate) name_env: RefCell<Option<NameEnvironment>>,
+	pub environment: RefCell<Option<TyEnvironment>>,
+	pub typeck_info: RefCell<Option<()>>,
 }
 
 impl<'scx> TyCtx<'scx> {
@@ -27,33 +28,43 @@ impl<'scx> TyCtx<'scx> {
 			scx,
 			infer_tag_count: AtomicU32::default(),
 
-			item_map: RefCell::default(),
+			name_env: RefCell::default(),
 			environment: RefCell::default(),
+			typeck_info: RefCell::default(),
 		}
 	}
 }
 
 /// Context actions
 impl TyCtx<'_> {
-	/// Goes through the HIR and finds all items without resolving them
+	/// Goes through the HIR and maps all items
 	pub fn collect_root(&self, hir: &hir::Root) {
 		let mut cltr = resolve::Collector::new(self);
 		cltr.collect_items(hir);
 
-		self.item_map.replace(Some(cltr.item_map));
+		self.name_env.replace(Some(cltr.name_env));
 	}
 
 	/// Uses the collection step to map every item to a concrete type
 	pub(crate) fn compute_env(&self, hir: &hir::Root) {
-		let mut envcp = resolve::EnvironmentComputer::new(self);
-		envcp.compute_env(hir);
+		let mut envcp = resolve::TypeLayoutComputer::new(self);
+
+		let binding = self.name_env.borrow();
+		let name_env = binding.as_ref().unwrap();
+		// envcp.compute_env(name_env);
+		todo!("no env computation");
 
 		self.environment.replace(Some(envcp.environment));
 	}
 
 	/// Computes inference for every body and stores the result in the `TyCtx`
-	pub(crate) fn typeck(&self) {
-		todo!()
+	pub(crate) fn typeck(&self, hir: &hir::Root) {
+		let mut ty_checker = typeck::TypeCheck::new(self);
+		ty_checker.typeck(hir);
+
+		// todo!();
+
+		// self.typeck_info.replace(Some(ty_checker.info));
 	}
 
 	#[must_use]
@@ -194,6 +205,7 @@ pub struct Variant {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TyKind<InferKind = NoInfer> {
+	// TODO: no primitive kind
 	Primitive(PrimitiveKind),
 	Pointer(Box<Self>),
 

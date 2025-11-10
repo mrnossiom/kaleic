@@ -63,7 +63,7 @@ nursery = { level = "warn", priority = -1 }
 dbg_macro = "warn"
 panic = "warn"
 todo = "warn"
-unwrap_used = "warn"
+# unwrap_used = "warn"
 # expect_used = "warn"
 # missing_docs_in_private_items = "warn"
 # print_stderr = "warn"

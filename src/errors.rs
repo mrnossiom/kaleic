@@ -116,9 +116,15 @@ pub mod ty {
 		panic!("infer kind mismatch: expected infer {{{infer:?}}}, received ty {ty:?}")
 	}
 
-	pub fn item_name_conflict(original: Span, conflicted: Span) -> ReportBuilder {
+	pub fn item_name_conflict(
+		original: Span,
+		conflicted: Span,
+		item_classifier: &'static str,
+	) -> ReportBuilder {
 		Report::build(ReportKind::Error, original)
-			.with_message("distinct items have a conflicting name")
+			.with_message(format!(
+				"distinct {item_classifier} items have a conflicting name"
+			))
 			.with_label(Label::new(original).with_message("this is the first item encountered"))
 			.with_label(Label::new(conflicted).with_message("this item has the same name"))
 	}

@@ -1,0 +1,18 @@
+fn foo<T>(arg: T) T {
+	arg
+}
+
+fn deref(bar: T) {
+	bar.mac_call().*;
+	bar.field.*;
+
+	bar.field.mac_call().*;
+	bar.mac_call().field.*;
+}
+
+fn assign(bar: T) {
+	var foo = foo;
+	val foo = foo;
+	// let foo = foo;
+	// let mut foo = foo;
+}

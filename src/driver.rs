@@ -1,3 +1,5 @@
+use std::{fmt::Write as _, fs, io::Write as _};
+
 use ariadne::ReportKind;
 
 use crate::{
@@ -8,6 +10,10 @@ use crate::{
 };
 
 pub fn pipeline(scx: &SessionCtx) {
+	let debug_output = scx.options.output.join("debug");
+	_ = fs::remove_dir_all(&debug_output);
+	fs::create_dir_all(&debug_output).unwrap();
+
 	let filename = scx.options.input.as_ref().unwrap_or_else(|| {
 		let report = Report::build(ReportKind::Error, Span::DUMMY)
 			.with_message("expected an input filename");
@@ -23,10 +29,12 @@ pub fn pipeline(scx: &SessionCtx) {
 	// parsing source
 	let ast = parser::parse_root(scx, &source);
 	if scx.options.print.contains(&PrintKind::Ast) {
-		println!("{ast:#?}");
+		let mut file = fs::File::create(debug_output.join("ast.txt")).unwrap();
+		write!(file, "{ast:#?}").unwrap();
 	}
 	if scx.options.print.contains(&PrintKind::AstPretty) {
-		pretty_print::pretty_print_root(&ast).unwrap();
+		let mut file = fs::File::create(debug_output.join("ast-pretty.txt")).unwrap();
+		pretty_print::pretty_print_root(&ast, &mut file).unwrap();
 	}
 
 	scx.dcx().check_sane_or_exit();
@@ -34,7 +42,8 @@ pub fn pipeline(scx: &SessionCtx) {
 	// lowering to HIR
 	let hir = lowerer::lower_root(scx, &ast);
 	if scx.options.print.contains(&PrintKind::HigherIr) {
-		println!("{hir:#?}");
+		let mut file = fs::File::create(debug_output.join("hir.txt")).unwrap();
+		write!(file, "{hir:#?}").unwrap();
 	}
 
 	scx.dcx().check_sane_or_exit();
@@ -44,58 +53,59 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	tcx.collect_root(&hir);
 	if scx.options.print.contains(&PrintKind::CollectedItems) {
-		let item_map = tcx.item_map.borrow();
-		for (name, item) in item_map.as_ref().unwrap() {
-			let mut item_info = format!("{:?}", item.kind);
-			item_info.truncate(60);
-			println!("{name:?}: {item_info}");
+		let item_map = tcx.name_env.borrow();
+		let name_environment = item_map.as_ref().unwrap();
+		let mut file = fs::File::create(debug_output.join("environment.txt")).unwrap();
+		writeln!(file, "> Type items:").unwrap();
+		for (name, item) in &name_environment.types {
+			writeln!(file, "{name:#?}: {item:?}").unwrap();
 		}
-		println!();
+		writeln!(file, "> Value items:").unwrap();
+		for (name, item) in &name_environment.values {
+			writeln!(file, "{name:#?}: {item:?}").unwrap();
+		}
 	}
 
 	// TODO: move in collect_root?
-	tcx.compute_env(&hir);
-	if scx.options.print.contains(&PrintKind::Environment) {
-		let env = tcx.environment.borrow();
-		for (name, ty) in &env.as_ref().unwrap().values {
-			println!("{name:?}: {ty:?}");
-		}
-		println!();
-	}
+	// tcx.compute_env(&hir);
+	// if scx.options.print.contains(&PrintKind::Environment) {
+	// 	let env = tcx.environment.borrow();
+	// 	for (name, ty) in &env.as_ref().unwrap().values {
+	// 		println!("{name:?}: {ty:?}");
+	// 	}
+	// 	println!();
+	// }
 
-	tcx.typeck();
+	tcx.typeck(&hir);
 
 	scx.dcx().check_sane_or_exit();
 
 	// lower HIR bodies to TBIR
 	// codegen TBIR bodies
-	match &scx.options.output {
-		OutputKind::Jit => {
-			let backend: &mut dyn JitBackend = match scx.options.backend {
-				#[cfg(feature = "cranelift")]
-				Backend::Cranelift => &mut codegen::CraneliftBackend::new_jit(&tcx),
-				#[cfg(feature = "llvm")]
-				Backend::Llvm => &mut codegen::LlvmBackend::new_jit(&tcx),
-				Backend::NoBackend => panic!("cannot codegen without a backend"),
-			};
+	if scx.options.jit {
+		let backend: &mut dyn JitBackend = match scx.options.backend {
+			#[cfg(feature = "cranelift")]
+			Backend::Cranelift => &mut codegen::CraneliftBackend::new_jit(&tcx),
+			#[cfg(feature = "llvm")]
+			Backend::Llvm => &mut codegen::LlvmBackend::new_jit(&tcx),
+			Backend::NoBackend => panic!("cannot codegen without a backend"),
+		};
 
-			backend.codegen_root(&hir);
-			backend.call_main();
-		}
-		OutputKind::Object(path) => {
-			// let mut backend = match scx.options.backend {
-			// 	#[cfg(feature = "cranelift")]
-			// 	Backend::Cranelift => codegen::CraneliftBackend::new_object(&tcx),
-			// 	#[cfg(feature = "llvm")]
-			// 	Backend::Llvm => todo!("no object backend for llvm"),
-			// };
+		backend.codegen_root(&hir);
+		backend.call_main();
+	} else {
+		// let mut backend = match scx.options.backend {
+		// 	#[cfg(feature = "cranelift")]
+		// 	Backend::Cranelift => codegen::CraneliftBackend::new_object(&tcx),
+		// 	#[cfg(feature = "llvm")]
+		// 	Backend::Llvm => todo!("no object backend for llvm"),
+		// };
 
-			// backend.codegen_root(&hir);
+		// backend.codegen_root(&hir);
 
-			// let object = backend.get_object();
-			// let bytes = object.emit().unwrap();
-			// std::fs::write(path, bytes).unwrap();
-		}
+		// let object = backend.get_object();
+		// let bytes = object.emit().unwrap();
+		// std::fs::write(path, bytes).unwrap();
 	}
 
 	tracing::info!("Reached pipeline end successfully!");

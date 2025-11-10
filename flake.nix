@@ -44,18 +44,13 @@
             packages = with pkgs; [
               pkg-config
               rust-toolchain
+              lldb
 
               typos
 
               llvmPackages.llvm.dev
 
               cargo-insta
-
-              libffi
-              libxml2
-              libz
-              ncurses
-              stdenv.cc.cc
             ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;

@@ -1,0 +1,18 @@
+trait Foo {
+	fn bar() uint;
+
+	fn baz() void {
+		println!("Foo");
+	}
+}
+
+struct MyType;
+
+impl Foo for MyType {
+	// choosen by a fair roll of dice
+	//
+	// notice how there is no type in impl block
+	fn bar() {
+		4
+	}
+}

@@ -9,8 +9,8 @@ use std::io::{self, Write, stdout};
 
 use crate::{
 	ast::{
-		BinaryOp, Block, Expr, ExprKind, Function, Item, ItemKind, Param, Path, Root, Stmt,
-		StmtKind, Ty, TyKind, Type, UnaryOp,
+		BinaryOp, Block, Expr, ExprKind, FieldDef, Function, Item, ItemKind, Param, Path, Root,
+		Stmt, StmtKind, Ty, TyKind, Type, UnaryOp, VariantKind,
 	},
 	lexer::LiteralKind,
 	session::Symbol,
@@ -24,7 +24,11 @@ pub struct PrettyFormatter<'fmt> {
 	ident: u32,
 }
 
-impl PrettyFormatter<'_> {
+impl<'fmt> PrettyFormatter<'fmt> {
+	fn new(inner: &'fmt mut dyn Write) -> Self {
+		Self { inner, ident: 0 }
+	}
+
 	fn with_ident(&mut self, f: impl FnOnce(&mut PrettyFormatter) -> Result<()>) -> Result<()> {
 		self.ident += 1;
 		f(self)?;
@@ -53,10 +57,25 @@ impl PrettyFormatter<'_> {
 		sep: &str,
 	) -> Result<()> {
 		for (i, elem) in elements.iter().enumerate() {
+			self.newline()?;
 			print(self, elem)?;
-			if i != elements.len() - 1 {
+			self.write(sep)?;
+		}
+		Ok(())
+	}
+
+	fn write_seq_oneline<T>(
+		&mut self,
+		elements: &[T],
+		mut print: impl FnMut(&mut Self, &T) -> Result<()>,
+		sep: &str,
+	) -> Result<()> {
+		for (i, elem) in elements.iter().enumerate() {
+			if i != 0 {
 				self.write(sep)?;
+				self.write(" ")?;
 			}
+			print(self, elem)?;
 		}
 		Ok(())
 	}
@@ -64,13 +83,16 @@ impl PrettyFormatter<'_> {
 
 // impl<'fmt> fmt::Write for PrettyFormatter<'fmt> {}
 
-pub fn pretty_print_root(root: &Root) -> Result<()> {
-	let out = stdout();
-	let mut f = PrettyFormatter {
-		inner: &mut &out,
-		ident: 0,
-	};
+pub fn pretty_print_root(root: &Root, mut output: &mut dyn Write) -> Result<()> {
+	let mut f = PrettyFormatter::new(&mut output);
 	root.pprint(&mut f)?;
+	Ok(())
+}
+
+pub fn pretty_print_item(item: &Item) -> Result<()> {
+	let mut output = &stdout();
+	let mut f = PrettyFormatter::new(&mut output);
+	item.pprint(&mut f)?;
 	Ok(())
 }
 
@@ -83,6 +105,7 @@ impl PrettyPrint for Root {
 		for item in &self.items {
 			item.pprint(f)?;
 			f.newline()?;
+
 			f.newline()?;
 		}
 		Ok(())
@@ -93,10 +116,64 @@ impl PrettyPrint for Item {
 	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
 		match &self.kind {
 			ItemKind::Function(func) => func.pprint(f)?,
-			ItemKind::Type(ty) => ty.pprint(f)?,
+			ItemKind::TypeAlias(ty) => ty.pprint(f)?,
 
-			ItemKind::Struct { .. } => todo!(),
-			ItemKind::Enum { .. } => todo!(),
+			ItemKind::Struct {
+				name,
+				generics,
+				fields,
+			} => {
+				f.write("struct ")?;
+				name.sym.pprint(f)?;
+				if !generics.is_empty() {
+					f.write("<")?;
+					f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
+					f.write(">")?;
+				}
+				f.write(" {")?;
+				f.with_ident(|f| f.write_seq(fields, |f, variant| variant.pprint(f), ","))?;
+				f.newline()?;
+				f.write("}")?;
+			}
+			ItemKind::Enum {
+				name,
+				generics,
+				variants,
+			} => {
+				f.write("enum ")?;
+				name.sym.pprint(f)?;
+				if !generics.is_empty() {
+					f.write("<")?;
+					f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
+					f.write(">")?;
+				}
+				f.write(" {")?;
+				f.with_ident(|f| {
+					f.write_seq(
+						variants,
+						|f, variant| {
+							variant.name.sym.pprint(f)?;
+							match &variant.kind {
+								VariantKind::Bare => {}
+								VariantKind::Tuple(fields) => {
+									f.write("(")?;
+									f.write_seq_oneline(fields, |f, field| field.pprint(f), ",")?;
+									f.write(")")?;
+								}
+								VariantKind::Struct(fields) => {
+									f.write(" { ")?;
+									f.write_seq_oneline(fields, |f, field| field.pprint(f), ",")?;
+									f.write(" }")?;
+								}
+							}
+							Ok(())
+						},
+						",",
+					)
+				})?;
+				f.newline()?;
+				f.write("}")?;
+			}
 			ItemKind::Trait { .. } => todo!(),
 			ItemKind::TraitImpl { .. } => todo!(),
 		}
@@ -104,26 +181,42 @@ impl PrettyPrint for Item {
 	}
 }
 
+impl PrettyPrint for FieldDef {
+	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
+		self.name.sym.pprint(f)?;
+		f.write(": ")?;
+		self.ty.pprint(f)?;
+		Ok(())
+	}
+}
+
 impl PrettyPrint for Function {
 	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		if let Some(abi) = &self.abi {
+		let Self {
+			name,
+			decl,
+			body,
+			abi,
+		} = &self;
+
+		if let Some(abi) = &abi {
 			f.write("extern ")?;
 			abi.pprint(f)?;
 			f.write(" ")?;
 		}
 
 		f.write("fn ")?;
-		self.name.sym.pprint(f)?;
+		name.sym.pprint(f)?;
 		f.write("(")?;
-		f.write_seq(&self.decl.params, |f, param| param.pprint(f), ", ")?;
+		f.write_seq_oneline(&decl.params, |f, param| param.pprint(f), ", ")?;
 		f.write(")")?;
 
-		if let Some(ret) = &self.decl.ret {
+		if let Some(ret) = &decl.ret {
 			f.write(" ")?;
 			ret.pprint(f)?;
 		}
 
-		if let Some(body) = &self.body {
+		if let Some(body) = &body {
 			f.write(" ")?;
 			body.pprint(f)?;
 		} else {
@@ -181,19 +274,69 @@ impl PrettyPrint for Expr {
 				Ok(())
 			}
 
-			ExprKind::FnCall { expr, args } => todo!(),
+			ExprKind::FnCall { expr, args } => {
+				expr.pprint(f)?;
+				f.write("(")?;
+				f.write_seq_oneline(&args.bit, |f, arg| arg.pprint(f), ",")?;
+				f.write(")")?;
+				Ok(())
+			}
 			ExprKind::If {
 				cond,
 				conseq,
 				altern,
-			} => todo!(),
-			ExprKind::Method(expr, name, args) => todo!(),
-			ExprKind::Field(expr, name) => todo!(),
-			ExprKind::Deref(expr) => todo!(),
-			ExprKind::Assign { target, value } => todo!(),
-			ExprKind::Return(expr) => todo!(),
-			ExprKind::Break(expr) => todo!(),
-			ExprKind::Continue => todo!(),
+			} => {
+				f.write("if ")?;
+				cond.pprint(f)?;
+				f.write(" ")?;
+				conseq.pprint(f)?;
+				if let Some(altern) = altern {
+					f.write(" else ")?;
+					altern.pprint(f)?;
+				}
+				Ok(())
+			}
+			ExprKind::Method(expr, name, args) => {
+				expr.pprint(f)?;
+				f.write(".")?;
+				name.sym.pprint(f)?;
+				f.write("(")?;
+				f.write_seq_oneline(args, |f, arg| arg.pprint(f), ",")?;
+				f.write(")")?;
+				Ok(())
+			}
+			ExprKind::Field(expr, name) => {
+				expr.pprint(f)?;
+				f.write(".")?;
+				name.sym.pprint(f)?;
+				Ok(())
+			}
+			ExprKind::Deref(expr) => {
+				expr.pprint(f)?;
+				f.write(".*")?;
+				Ok(())
+			}
+			ExprKind::Assign { target, value } => {
+				target.pprint(f)?;
+				f.write(" = ")?;
+				value.pprint(f)?;
+				Ok(())
+			}
+			ExprKind::Return(expr) => {
+				f.write("return")?;
+				if let Some(expr) = expr {
+					expr.pprint(f)?;
+				}
+				Ok(())
+			}
+			ExprKind::Break(expr) => {
+				f.write("break")?;
+				if let Some(expr) = expr {
+					expr.pprint(f)?;
+				}
+				Ok(())
+			}
+			ExprKind::Continue => f.write("continue"),
 		}
 	}
 }
@@ -232,10 +375,10 @@ impl PrettyPrint for Symbol {
 
 impl PrettyPrint for Path {
 	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		f.write_seq(&self.segments, |f, segment| segment.sym.pprint(f), "::")?;
+		f.write_seq_oneline(&self.segments, |f, segment| segment.sym.pprint(f), "::")?;
 		if !self.generics.is_empty() {
 			f.write("<")?;
-			f.write_seq(&self.generics, |f, generic| generic.pprint(f), ", ")?;
+			f.write_seq_oneline(&self.generics, |f, generic| generic.pprint(f), ", ")?;
 			f.write(">")?;
 		}
 		Ok(())
@@ -246,9 +389,8 @@ impl PrettyPrint for Block {
 	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
 		f.write("{")?;
 		f.with_ident(|f| {
-			f.newline()?;
-
 			for stmt in &self.stmts {
+				f.newline()?;
 				stmt.pprint(f)?;
 			}
 
@@ -256,7 +398,6 @@ impl PrettyPrint for Block {
 		})?;
 		f.newline()?;
 		f.write("}")?;
-
 		Ok(())
 	}
 }
@@ -287,8 +428,7 @@ impl PrettyPrint for Stmt {
 				f.write(";")?;
 			}
 
-			StmtKind::Empty => f.write(";")?,
-
+			StmtKind::Empty => f.write("; empty stmt")?,
 			StmtKind::Expr(expr) => {
 				expr.pprint(f)?;
 				f.write(";")?;

@@ -14,23 +14,21 @@ pub enum Namespace {
 }
 
 #[derive(Debug, Default)]
-pub struct Environment {
-	pub types: HashMap<Symbol, TypeValueKind>,
-	pub values: HashMap<Symbol, ty::TyKind>,
+pub struct NameEnvironment {
+	pub types: HashMap<Symbol, hir::Item>,
+	pub values: HashMap<Symbol, hir::Item>,
 }
 
-#[derive(Debug)]
-pub enum TypeValueKind {
-	Trait(()),
-	Type(ty::TyKind),
+#[derive(Debug, Default)]
+pub struct TyEnvironment {
+	pub types: HashMap<Symbol, ty::TyKind>,
+	pub values: HashMap<Symbol, ty::TyKind>,
 }
 
 #[derive(Debug)]
 pub struct Collector<'tcx> {
 	tcx: &'tcx ty::TyCtx<'tcx>,
-
-	// how to recover from items with the same name
-	pub(crate) item_map: HashMap<Symbol, hir::Item>,
+	pub(crate) name_env: NameEnvironment,
 }
 
 impl<'tcx> Collector<'tcx> {
@@ -38,7 +36,7 @@ impl<'tcx> Collector<'tcx> {
 	pub fn new(tcx: &'tcx ty::TyCtx) -> Self {
 		Self {
 			tcx,
-			item_map: HashMap::default(),
+			name_env: NameEnvironment::default(),
 		}
 	}
 }
@@ -50,58 +48,138 @@ impl Collector<'_> {
 		}
 	}
 
+	// TODO: replace expensive clone with nodeid with quick lookup
 	fn collect_item(&mut self, item: &hir::Item) {
-		let name = match &item.kind {
-			hir::ItemKind::TraitImpl { .. } => todo!("idk"),
-
-			hir::ItemKind::Function(Function { name, .. })
+		match &item.kind {
+			hir::ItemKind::Trait { name, .. }
 			| hir::ItemKind::Struct(Struct { name, .. })
 			| hir::ItemKind::Enum(Enum { name, .. })
-			| hir::ItemKind::Trait { name, .. }
-			| hir::ItemKind::Type(Type(name, _)) => Some(*name),
-		};
-
-		if let Some(name) = name {
-			// TODO: replace expensive clone with nodeid with quick lookup
-			match self.item_map.entry(name.sym) {
+			| hir::ItemKind::TypeAlias(Type { name, .. }) => match self.name_env.types.entry(name.sym) {
+				Entry::Vacant(vacant) => _ = vacant.insert(item.clone()),
 				Entry::Occupied(occupied) => {
-					let report = errors::ty::item_name_conflict(occupied.get().span, name.span);
+					let report =
+						errors::ty::item_name_conflict(occupied.get().span, name.span, "type");
 					self.tcx.scx.dcx().emit_build(report);
 				}
-				Entry::Vacant(vacant) => {
-					vacant.insert(item.clone());
+			},
+
+			hir::ItemKind::TraitImpl { .. } => todo!("idk how to classify"),
+
+			hir::ItemKind::Function(Function { name, .. }) => {
+				match self.name_env.values.entry(name.sym) {
+					Entry::Vacant(vacant) => _ = vacant.insert(item.clone()),
+					Entry::Occupied(occupied) => {
+						let report =
+							errors::ty::item_name_conflict(occupied.get().span, name.span, "value");
+						self.tcx.scx.dcx().emit_build(report);
+					}
 				}
 			}
 		}
 	}
 }
 
-pub struct EnvironmentComputer<'tcx> {
+pub struct TypeLayoutComputer<'tcx> {
 	tcx: &'tcx ty::TyCtx<'tcx>,
 
-	pub(crate) environment: Environment,
+	pub(crate) environment: TyEnvironment,
 }
 
-impl<'tcx> EnvironmentComputer<'tcx> {
+impl<'tcx> TypeLayoutComputer<'tcx> {
 	#[must_use]
 	pub fn new(tcx: &'tcx ty::TyCtx) -> Self {
 		Self {
 			tcx,
 
-			environment: Environment::default(),
+			environment: TyEnvironment::default(),
 		}
 	}
 }
 
-impl EnvironmentComputer<'_> {
-	pub fn compute_env(&mut self, hir: &hir::Root) {
-		for item in &hir.items {
-			self.compute_item(item);
-		}
+// approaches
+//
+// 1. recursive bruteforce
+//
+// - collect all items
+// - start from first collected item, resolve recursively
+//
+// 2. multiple passes
+//
+// - collect all items with their path
+// - compute type dependency and sort topologically
+// - resolve in order
+
+#[cfg(false)]
+impl TypeLayoutComputer<'_> {
+	pub fn compute_env(&mut self, name_env: &NameEnvironment) {
+		// for item_sym in name_env.keys() {
+		// 	self.compute_item(item_sym);
+		// }
 	}
 
-	fn compute_item(&mut self, item: &hir::Item) {
+	fn compute_item(&mut self, item_sym: &Symbol) {
 		match &item.kind {
+			hir::ItemKind::Struct(Struct {
+				name,
+				generics,
+				fields,
+			}) => {
+				let struct_ = ty::Struct {
+					name: *name,
+					generics: generics.clone(),
+					fields: fields
+						.iter()
+						.map(|field| self.lower_field_def(field))
+						.collect(),
+				};
+				match self.environment.types.entry(name.sym) {
+					Entry::Occupied(_) => todo!(),
+					Entry::Vacant(entry) => {
+						entry.insert_entry(TyKind::Struct(Box::new(struct_)));
+					}
+				}
+			}
+			hir::ItemKind::Enum(Enum {
+				name,
+				generics,
+				variants,
+			}) => {
+				let enum_ = ty::Enum {
+					name: *name,
+					generics: generics.clone(),
+					variants: variants
+						.iter()
+						.map(|variant| self.lower_variant(variant))
+						.collect(),
+				};
+				match self.environment.types.entry(name.sym) {
+					Entry::Occupied(_) => todo!("type already declared {:?}", name.sym),
+					Entry::Vacant(entry) => {
+						entry.insert_entry(TyKind::Enum(Box::new(enum_)));
+					}
+				}
+			}
+
+			hir::ItemKind::Trait { name, .. } => {
+				// self.environment
+				// 	.values
+				// 	.insert(name.sym, ty::TyKind::Fn(Box::new(decl)));
+			}
+			hir::ItemKind::TraitImpl { type_, .. } => {
+				// TODO
+				// self.environment.types.insert(type_.sym, v);
+			}
+
+			hir::ItemKind::TypeAlias(Type(name, alias)) => match &alias {
+				Some(ty) => {
+					let v = self.lower_ty(ty).as_no_infer().unwrap();
+					self.environment.types.insert(name.sym, v);
+				}
+				None => {
+					todo!()
+				}
+			},
+
 			hir::ItemKind::Function(Function {
 				name,
 				decl,
@@ -113,38 +191,10 @@ impl EnvironmentComputer<'_> {
 					.values
 					.insert(name.sym, ty::TyKind::Fn(Box::new(decl)));
 			}
-			hir::ItemKind::TraitImpl { .. } => todo!(),
-
-			hir::ItemKind::Struct(Struct {
-				name,
-				generics,
-				fields,
-			}) => {
-				let struct_ = Struct {
-					name: *name,
-					generics: generics.clone(),
-					fields: fields.clone(),
-				};
-				self.environment
-					.types
-					.insert(name.sym, TypeValueKind::Type(todo!()));
-			}
-			hir::ItemKind::Enum(Enum {
-				name,
-				generics,
-				variants,
-			}) => {}
-			hir::ItemKind::Trait { .. } => {}
-
-			hir::ItemKind::Type(Type(name, alias)) => {
-				self.environment
-					.types
-					.insert(name.sym, TypeValueKind::Type(todo!()));
-			}
 		}
 	}
 
-	fn lower_ty(&self, ty: &ast::Ty) -> TyKind<Infer> {
+	fn lower_ty(&mut self, ty: &ast::Ty) -> TyKind<Infer> {
 		match &ty.kind {
 			ast::TyKind::Path(path) => self.lower_path_ty(path),
 			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
@@ -154,7 +204,7 @@ impl EnvironmentComputer<'_> {
 	}
 
 	// TODO: not pub
-	pub fn lower_fn_decl(&self, decl: &hir::FnDecl) -> ty::FnDecl {
+	pub fn lower_fn_decl(&mut self, decl: &hir::FnDecl) -> ty::FnDecl {
 		// TODO: diag no infer ty in functions
 		let inputs = decl
 			.inputs
@@ -181,30 +231,58 @@ impl EnvironmentComputer<'_> {
 		ty::FnDecl { inputs, output }
 	}
 
-	fn lower_path_ty(&self, path: &ast::Path) -> TyKind<Infer> {
-		// TODO: remove these constraints
-		assert_eq!(path.segments.len(), 1);
-		assert_eq!(path.generics.len(), 0);
+	fn lower_path_ty(&mut self, path: &ast::Path) -> TyKind<Infer> {
+		// TODO ensure path length is 1
+		let primitive = path.segments.first().and_then(|seg0| {
+			let primitive = match self.tcx.scx.symbols.resolve(seg0.sym).as_str() {
+				"_" => TyKind::Infer(self.tcx.next_infer_tag(), Infer::Explicit),
 
-		let path = path.segments[0];
-		match self.tcx.scx.symbols.resolve(path.sym).as_str() {
-			"_" => TyKind::Infer(self.tcx.next_infer_tag(), Infer::Explicit),
+				"void" => TyKind::Primitive(PrimitiveKind::Void),
+				"never" => TyKind::Primitive(PrimitiveKind::Never),
 
-			"void" => TyKind::Primitive(PrimitiveKind::Void),
-			"never" => TyKind::Primitive(PrimitiveKind::Never),
+				"bool" => TyKind::Primitive(PrimitiveKind::Bool),
+				"uint" => TyKind::Primitive(PrimitiveKind::UnsignedInt),
+				"sint" => TyKind::Primitive(PrimitiveKind::SignedInt),
+				"float" => TyKind::Primitive(PrimitiveKind::Float),
 
-			"bool" => TyKind::Primitive(PrimitiveKind::Bool),
-			"uint" => TyKind::Primitive(PrimitiveKind::UnsignedInt),
-			"sint" => TyKind::Primitive(PrimitiveKind::SignedInt),
-			"float" => TyKind::Primitive(PrimitiveKind::Float),
+				"str" => TyKind::Primitive(PrimitiveKind::Str),
+				_ => return None,
+			};
+			Some(primitive)
+		});
 
-			"str" => TyKind::Primitive(PrimitiveKind::Str),
-
-			_ => {
-				let report = errors::ty::type_unknown(path.span);
-				self.tcx.scx.dcx().emit_build(report);
-				TyKind::Error
+		if let Some(primitive) = primitive {
+			primitive
+		} else {
+			let item_map = self.tcx.name_env.borrow();
+			match item_map.as_ref().unwrap().get(&path.segments[0].sym) {
+				Some(item) => {
+					self.compute_item(item);
+					self.environment.types[&path.segments[0].sym]
+						.clone()
+						.as_infer()
+				}
+				None => {
+					panic!("item {:?} doesn't exist", path.segments[0].sym)
+				}
 			}
+		}
+	}
+
+	fn lower_field_def(&mut self, hir::FieldDef { name, ty }: &hir::FieldDef) -> ty::FieldDef {
+		ty::FieldDef {
+			name: *name,
+			ty: self.lower_ty(ty).as_no_infer().unwrap(),
+		}
+	}
+
+	fn lower_variant(
+		&self,
+		hir::EnumVariant { name, fields, span }: &hir::EnumVariant,
+	) -> ty::Variant {
+		ty::Variant {
+			name: *name,
+			span: *span,
 		}
 	}
 }

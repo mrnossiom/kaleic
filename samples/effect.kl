@@ -1,0 +1,37 @@
+effect Resolve {
+	def resolve(name: Sym) &ref Ty;
+}
+
+fn main() void {
+	let items = <..>;
+	let map = Map<Sym, Ty>;
+
+	// i don't like the try/catch syntax for effects
+	handle {
+		items.for |item| {
+			'resolve(item);
+		}
+	} with {
+		// no type in effect handling
+		def resolve(name) {
+			map.entry(name).match {
+				// not long arrows
+				.Occupied |ty| effect_continue &ty
+				.Vaccant || {
+					// it's not in the handle ctx anymore???
+					let ty = resolve_item(name);
+					map.insert(name, ty);
+					effect_continue &ty;
+				}
+			}
+		}
+	}
+}
+
+fn resolve_item(item: hir::Item) Ty \ Resolve {
+	// translate hir to ty
+	// ...
+	let ty = 'resolve(item.subtype);
+	// ...
+	ty
+}

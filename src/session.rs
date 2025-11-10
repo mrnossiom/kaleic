@@ -259,15 +259,29 @@ pub enum OutputKind {
 	Object(PathBuf),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Options {
 	pub input: Option<PathBuf>,
-	pub output: OutputKind,
+
+	pub jit: bool,
+	pub output: PathBuf,
 
 	pub backend: Backend,
 
 	// TODO: replace with an enum
 	pub print: HashSet<PrintKind>,
+}
+
+impl Default for Options {
+	fn default() -> Self {
+		Self {
+			input: Default::default(),
+			jit: true,
+			output: PathBuf::from("build"),
+			backend: Default::default(),
+			print: Default::default(),
+		}
+	}
 }
 
 #[derive(Debug)]

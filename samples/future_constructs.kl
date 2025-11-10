@@ -6,11 +6,12 @@ fn main() {
 
 	var n = 10;
 	while n != 0 {
-		n = n - 1; // n -= 1;
+		n = n - 1;
+		n -= 1;
 	}
 
 	var cond = true;
-	while cond.!
+	while cond.! // or cond.not() (e.g. `vec.is_empty().not()`)
 		and cond is true
 	{
 		// snip
@@ -27,7 +28,13 @@ fn main() {
 	for stmts be stmt { }
 	all stmts be stmt { }
 
+	stmts.for |stmt| { }
+	stmts.iter().enumerate().for |i, stmt| { }
+
 	for Struct impl Trait { }
+	Struct::impl Trait { }
+	Struct.impl Trait { }
+	Struct.impl { }
 
 	cst og_num = 10;
 	var myref = &og_num;
@@ -43,6 +50,12 @@ fn main() {
 
 		123 => {}
 		else => {}
+
+		// no arrows
+		123 { 456 }
+		_ {
+			// -snip-
+		}
 	}
 
 	// annotate functions as such

@@ -11,6 +11,7 @@ pub mod pretty_print;
 pub mod resolve;
 pub mod session;
 pub mod ty;
+pub mod typeck;
 
 // IRs
 pub mod ast;

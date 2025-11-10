@@ -4,7 +4,7 @@
 //!
 //! Entrypoint to parsing is [`Parser::parse_root`].
 
-use std::{fmt, mem};
+use std::{fmt, mem, ops::ControlFlow};
 
 use ariadne::{Label, Report, ReportKind};
 
@@ -315,10 +315,18 @@ impl Parser<'_> {
 	fn parse_expr_single_and_postfix(&mut self) -> PResult<Expr> {
 		debug_parser!(self);
 
-		let lo = self.token.span;
-		let expr = self.parse_expr_single()?;
+		let mut expr = self.parse_expr_single()?;
+		loop {
+			match self.parse_expr_postfix(expr)? {
+				ControlFlow::Continue(next_expr) => expr = next_expr,
+				ControlFlow::Break(next_expr) => break Ok(next_expr),
+			}
+		}
+	}
 
-		// check for postfix constructs
+	// check for postfix constructs
+	fn parse_expr_postfix(&mut self, expr: Expr) -> PResult<ControlFlow<Expr, Expr>> {
+		let lo = expr.span.start();
 		let kind = if self.eat(Dot) {
 			if matches!(self.token.kind, Ident(_)) {
 				// `<expr> . foo` or `<expr> . bar ( <args> )`
@@ -343,14 +351,13 @@ impl Parser<'_> {
 			// `<expr> ()`
 			self.parse_fn_call(expr)?
 		} else {
-			return Ok(expr);
+			return Ok(ControlFlow::Break(expr));
 		};
-
-		Ok(Expr {
+		Ok(ControlFlow::Continue(Expr {
 			kind,
 			span: self.close_span(lo),
 			id: self.make_node_id(),
-		})
+		}))
 	}
 
 	/// Parse a single expression without eating binary operators
@@ -537,7 +544,7 @@ impl Parse for Item {
 		} else if p.eat(Keyword(For)) {
 			p.parse_item_trait_impl()?
 		} else if p.eat(Keyword(Type)) {
-			ItemKind::Type(Type::parse(p)?)
+			ItemKind::TypeAlias(Type::parse(p)?)
 		} else {
 			let report = errors::parser::expected_construct_no_match("an item", p.token);
 			return Err(Diagnostic::new(report));
@@ -755,7 +762,7 @@ impl Parser<'_> {
 		let Item { kind, span, .. } = Item::parse(self)?;
 
 		let kind = match kind {
-			ItemKind::Type(type_) => TraitItemKind::Type(type_),
+			ItemKind::TypeAlias(type_) => TraitItemKind::Type(type_),
 			ItemKind::Function(func) => TraitItemKind::Function(func),
 			_ => {
 				let report = errors::parser::incorrect_item_in_trait(span);
@@ -771,6 +778,7 @@ impl Parser<'_> {
 
 		let name = self.expect_ident()?;
 		let args_lo = self.token.span;
+		let generics = self.parse_generics_def()?;
 		self.expect(OpenParen)?;
 		let params = self.parse_seq_rest(OpenParen, CloseParen, Comma, Parser::parse_param)?;
 		let ret = if !self.check(OpenBrace) && !self.check(Semi) {

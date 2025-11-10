@@ -46,11 +46,10 @@ pub struct Enum {
 
 #[derive(Debug, Clone)]
 pub enum ItemKind {
-	Type(Type),
-	Function(Function),
-
+	// type env
 	Struct(Struct),
 	Enum(Enum),
+	TypeAlias(Type),
 
 	Trait {
 		name: ast::Ident,
@@ -62,10 +61,16 @@ pub enum ItemKind {
 		trait_: ast::Path,
 		members: Vec<TraitItem>,
 	},
+
+	// value env
+	Function(Function),
 }
 
 #[derive(Debug, Clone)]
-pub struct Type(pub ast::Ident, pub Option<Box<ast::Ty>>);
+pub struct Type {
+	pub name: ast::Ident,
+	pub alias: Option<Box<ast::Ty>>,
+}
 
 #[derive(Debug, Clone)]
 pub struct Function {

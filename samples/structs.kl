@@ -3,19 +3,26 @@ enum Option<T> {
 	None,
 }
 
+enum Toto {
+	Foo,
+	Bar(uint),
+	Baz { tata: uint }
+}
+
 struct Baz {
 	content: uint,
 }
 
-struct NamedTuple<T, U> {
-	foo: T,
-	bar: U,
-}
+// struct NamedTuple<T, U> {
+// 	foo: T,
+// 	bar: U,
+// }
 
-enum Option { Foo, Bar }
 fn foo(option: Option) { }
 
 /*
+
+enum Option { Foo, Bar }
 
 fn main() {
 	var maybe = .Some(10);

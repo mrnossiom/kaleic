@@ -53,21 +53,6 @@ mod options {
 			}
 		}
 	}
-
-	#[derive(Debug, Clone, ValueEnum)]
-	pub enum OutputKind {
-		Jit,
-		Object,
-	}
-
-	impl From<OutputKind> for session::OutputKind {
-		fn from(val: OutputKind) -> Self {
-			match val {
-				OutputKind::Jit => Self::Jit,
-				OutputKind::Object => Self::Object(PathBuf::from("out.o")),
-			}
-		}
-	}
 }
 
 #[derive(clap::Parser)]
@@ -75,10 +60,13 @@ struct Args {
 	pub input: Option<PathBuf>,
 
 	#[clap(long)]
-	pub output: Option<options::OutputKind>,
+	pub jit: bool,
+
 	#[clap(long)]
 	pub backend: Option<options::Backend>,
 
+	#[clap(long, default_value = "build")]
+	pub output: PathBuf,
 	#[clap(long)]
 	pub print: Vec<options::PrintKind>,
 }
@@ -95,14 +83,11 @@ fn main() {
 	let mut scx = SessionCtx::default();
 
 	scx.options.input = args.input;
-
-	if let Some(val) = args.output {
-		scx.options.output = val.into();
-	}
+	scx.options.jit = args.jit;
 	if let Some(val) = args.backend {
 		scx.options.backend = val.into();
 	}
-
+	scx.options.output = args.output;
 	scx.options
 		.print
 		.extend(args.print.into_iter().map(Into::into));

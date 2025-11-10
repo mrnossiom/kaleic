@@ -265,7 +265,7 @@ pub struct Function {
 #[derive(Debug)]
 pub enum ItemKind {
 	Function(Function),
-	Type(Type),
+	TypeAlias(Type),
 	/// `struct <name> <generics> { <fields>* }`
 	Struct {
 		name: Ident,
