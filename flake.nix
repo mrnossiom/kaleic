@@ -1,35 +1,47 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
 
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, rust-overlay }:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+    }:
     let
       inherit (nixpkgs.lib) genAttrs;
 
-      forAllSystems = genAttrs [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ];
+      forAllSystems = genAttrs [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
       forAllPkgs = function: forAllSystems (system: function pkgs.${system});
 
-      pkgs = forAllSystems (system: (import nixpkgs {
-        inherit system;
-        overlays = [ (import rust-overlay) ];
-      }));
+      pkgs = forAllSystems (
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ (import rust-overlay) ];
+        }
+      );
     in
     {
-      formatter = forAllPkgs (pkgs: pkgs.nixpkgs-fmt);
+      formatter = forAllPkgs (pkgs: pkgs.nixfmt-tree);
 
-      devShells = forAllPkgs (pkgs:
-        with pkgs.lib;
+      devShells = forAllPkgs (
+        pkgs:
         let
           file-rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           rust-toolchain = file-rust-toolchain.override { extensions = [ "rust-analyzer" ]; };
         in
         {
-          default = pkgs.mkShell rec {
-            nativeBuildInputs = with pkgs; [
+          default = pkgs.mkShell {
+            packages = with pkgs; [
               pkg-config
               rust-toolchain
 
@@ -38,9 +50,7 @@
               llvmPackages.llvm.dev
 
               cargo-insta
-            ];
 
-            buildInputs = with pkgs; [
               libffi
               libxml2
               libz
@@ -49,13 +59,13 @@
             ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
-            LD_LIBRARY_PATH = makeLibraryPath buildInputs;
 
             LLVM_SYS_181_PREFIX = pkgs.llvmPackages_18.llvm.dev;
 
             RUST_BACKTRACE = "1";
             RUST_LOG = "info,kaleic=debug,cranelift_jit=warn";
           };
-        });
+        }
+      );
     };
 }
