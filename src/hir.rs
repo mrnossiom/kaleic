@@ -49,7 +49,7 @@ pub enum ItemKind {
 	// type env
 	Struct(Struct),
 	Enum(Enum),
-	TypeAlias(Type),
+	TypeAlias(TypeAlias),
 
 	Trait {
 		name: ast::Ident,
@@ -67,7 +67,7 @@ pub enum ItemKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Type {
+pub struct TypeAlias {
 	pub name: ast::Ident,
 	pub alias: Option<Box<ast::Ty>>,
 }
@@ -95,7 +95,7 @@ pub struct TraitItem {
 
 #[derive(Debug, Clone)]
 pub enum TraitItemKind {
-	Type(Type),
+	Type(TypeAlias),
 	Function(Function),
 }
 

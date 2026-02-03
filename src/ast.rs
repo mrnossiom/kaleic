@@ -247,7 +247,7 @@ pub struct Item {
 
 /// `type <name> [ = <ty> ] ;`
 #[derive(Debug)]
-pub struct Type {
+pub struct TypeAlias {
 	pub name: Ident,
 	pub alias: Option<Box<Ty>>,
 }
@@ -265,7 +265,7 @@ pub struct Function {
 #[derive(Debug)]
 pub enum ItemKind {
 	Function(Function),
-	TypeAlias(Type),
+	TypeAlias(TypeAlias),
 	/// `struct <name> <generics> { <fields>* }`
 	Struct {
 		name: Ident,
@@ -328,7 +328,7 @@ pub struct TraitItem {
 
 #[derive(Debug)]
 pub enum TraitItemKind {
-	Type(Type),
+	Type(TypeAlias),
 	Function(Function),
 }
 

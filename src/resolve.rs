@@ -2,7 +2,7 @@ use std::collections::{HashMap, hash_map::Entry};
 
 use crate::{
 	ast, errors,
-	hir::{self, Enum, Function, Struct, Type},
+	hir::{self, Enum, Function, Struct, TypeAlias},
 	session::Symbol,
 	ty::{self, Infer, PrimitiveKind, TyKind},
 };
@@ -54,14 +54,16 @@ impl Collector<'_> {
 			hir::ItemKind::Trait { name, .. }
 			| hir::ItemKind::Struct(Struct { name, .. })
 			| hir::ItemKind::Enum(Enum { name, .. })
-			| hir::ItemKind::TypeAlias(Type { name, .. }) => match self.name_env.types.entry(name.sym) {
-				Entry::Vacant(vacant) => _ = vacant.insert(item.clone()),
-				Entry::Occupied(occupied) => {
-					let report =
-						errors::ty::item_name_conflict(occupied.get().span, name.span, "type");
-					self.tcx.scx.dcx().emit_build(report);
+			| hir::ItemKind::TypeAlias(TypeAlias { name, .. }) => {
+				match self.name_env.types.entry(name.sym) {
+					Entry::Vacant(vacant) => _ = vacant.insert(item.clone()),
+					Entry::Occupied(occupied) => {
+						let report =
+							errors::ty::item_name_conflict(occupied.get().span, name.span, "type");
+						self.tcx.scx.dcx().emit_build(report);
+					}
 				}
-			},
+			}
 
 			hir::ItemKind::TraitImpl { .. } => todo!("idk how to classify"),
 
@@ -170,7 +172,7 @@ impl TypeLayoutComputer<'_> {
 				// self.environment.types.insert(type_.sym, v);
 			}
 
-			hir::ItemKind::TypeAlias(Type(name, alias)) => match &alias {
+			hir::ItemKind::TypeAlias(TypeAlias(name, alias)) => match &alias {
 				Some(ty) => {
 					let v = self.lower_ty(ty).as_no_infer().unwrap();
 					self.environment.types.insert(name.sym, v);

@@ -10,7 +10,7 @@ use std::io::{self, Write, stdout};
 use crate::{
 	ast::{
 		BinaryOp, Block, Expr, ExprKind, FieldDef, Function, Item, ItemKind, Param, Path, Root,
-		Stmt, StmtKind, Ty, TyKind, Type, UnaryOp, VariantKind,
+		Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, VariantKind,
 	},
 	lexer::LiteralKind,
 	session::Symbol,
@@ -227,7 +227,7 @@ impl PrettyPrint for Function {
 	}
 }
 
-impl PrettyPrint for Type {
+impl PrettyPrint for TypeAlias {
 	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
 		f.write("type ")?;
 		self.name.sym.pprint(f)?;

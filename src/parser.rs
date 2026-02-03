@@ -13,8 +13,8 @@ use crate::lexer::{Keyword::*, LiteralKind::*, TokenKind::*};
 use crate::{
 	ast::{
 		BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Ident, Item, ItemKind, NodeId,
-		Param, Path, Root, Spanned, Stmt, StmtKind, TraitItem, TraitItemKind, Ty, TyKind, Type,
-		UnaryOp, Variant, VariantKind,
+		Param, Path, Root, Spanned, Stmt, StmtKind, TraitItem, TraitItemKind, Ty, TyKind,
+		TypeAlias, UnaryOp, Variant, VariantKind,
 	},
 	bug, errors,
 	lexer::{Lexer, Token, TokenKind},
@@ -544,7 +544,7 @@ impl Parse for Item {
 		} else if p.eat(Keyword(For)) {
 			p.parse_item_trait_impl()?
 		} else if p.eat(Keyword(Type)) {
-			ItemKind::TypeAlias(Type::parse(p)?)
+			ItemKind::TypeAlias(TypeAlias::parse(p)?)
 		} else {
 			let report = errors::parser::expected_construct_no_match("an item", p.token);
 			return Err(Diagnostic::new(report));
@@ -585,7 +585,7 @@ impl Parse for Function {
 	}
 }
 
-impl Parse for Type {
+impl Parse for TypeAlias {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
 		debug_parser!(p);
 		debug_assert_eq!(p.last_token.kind, Keyword(Type));

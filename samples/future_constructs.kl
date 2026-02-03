@@ -27,6 +27,7 @@ fn main() {
 	for stmts each stmt { /* snip */ }
 	for stmts be stmt { }
 	all stmts be stmt { }
+	loop stmts for stmt { }
 
 	stmts.for |stmt| { }
 	stmts.iter().enumerate().for |i, stmt| { }

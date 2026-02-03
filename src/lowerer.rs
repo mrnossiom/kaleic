@@ -91,8 +91,8 @@ impl Lower for ast::Item {
 		let kind = match &kind {
 			ast::ItemKind::Function(func) => hir::ItemKind::Function(func.lower(l)),
 
-			ast::ItemKind::TypeAlias(ast::Type { name, alias }) => {
-				hir::ItemKind::TypeAlias(hir::Type {
+			ast::ItemKind::TypeAlias(ast::TypeAlias { name, alias }) => {
+				hir::ItemKind::TypeAlias(hir::TypeAlias {
 					name: *name,
 					alias: alias.clone(),
 				})
@@ -261,12 +261,12 @@ impl Lower for ast::TraitItem {
 	}
 }
 
-impl Lower for ast::Type {
-	type Out = hir::Type;
+impl Lower for ast::TypeAlias {
+	type Out = hir::TypeAlias;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { name, alias } = &self;
 		let _ = l;
-		hir::Type {
+		hir::TypeAlias {
 			name: *name,
 			alias: alias.clone(),
 		}
