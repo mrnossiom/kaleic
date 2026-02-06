@@ -360,7 +360,7 @@ impl PrettyPrint for Ty {
 				ty.pprint(f)?;
 			}
 			TyKind::Unit => f.write("()")?,
-			TyKind::Infer => f.write("_")?,
+			TyKind::ImplicitInfer => f.write("_")?,
 		}
 		Ok(())
 	}

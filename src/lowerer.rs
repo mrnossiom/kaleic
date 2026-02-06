@@ -4,7 +4,7 @@ use std::sync::atomic::{self, AtomicU32};
 
 use crate::{
 	ast::{self, Spanned},
-	errors, hir,
+	errors, hir, lexer,
 	session::{SessionCtx, Span},
 };
 
@@ -153,11 +153,26 @@ impl Lower for ast::Function {
 			body,
 			abi,
 		} = &self;
+
+		let abi = if let Some(abi) = abi {
+			let abi = match abi.kind {
+				ast::ExprKind::Literal(lexer::LiteralKind::Str, sym) => sym,
+				_ => todo!("invalid abi expr"),
+			};
+
+			match l.scx.symbols.resolve(abi).as_str() {
+				"c" => hir::Abi::C,
+				_ => todo!("no such abi"),
+			}
+		} else {
+			hir::Abi::default()
+		};
+
 		Self::Out {
 			name: *name,
 			decl: decl.lower_box(l),
 			body: l.lower_opt_box(body.as_deref()),
-			abi: l.lower_opt_box(abi.as_ref()),
+			abi,
 		}
 	}
 }
@@ -227,7 +242,7 @@ impl Lower for ast::Stmt {
 				ident: *ident,
 				ty: Box::new(ty.as_ref().map_or_else(
 					|| ast::Ty {
-						kind: ast::TyKind::Infer,
+						kind: ast::TyKind::ImplicitInfer,
 						span: ident.span.end(),
 					},
 					|ty| ty.as_ref().clone(),

@@ -245,7 +245,6 @@ pub enum PrintKind {
 	AstPretty,
 	HigherIr,
 	HigherIrPretty,
-	TypedBodyIr,
 	BackendIr,
 
 	CollectedItems,

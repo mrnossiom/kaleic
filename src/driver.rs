@@ -89,24 +89,25 @@ pub fn pipeline(scx: &SessionCtx) {
 			Backend::Cranelift => &mut codegen::CraneliftBackend::new_jit(&tcx),
 			#[cfg(feature = "llvm")]
 			Backend::Llvm => &mut codegen::LlvmBackend::new_jit(&tcx),
-			Backend::NoBackend => panic!("cannot codegen without a backend"),
+			Backend::NoBackend => panic!("cannot jit without a backend"),
 		};
 
 		backend.codegen_root(&hir);
 		backend.call_main();
 	} else {
-		// let mut backend = match scx.options.backend {
-		// 	#[cfg(feature = "cranelift")]
-		// 	Backend::Cranelift => codegen::CraneliftBackend::new_object(&tcx),
-		// 	#[cfg(feature = "llvm")]
-		// 	Backend::Llvm => todo!("no object backend for llvm"),
-		// };
+		let mut backend = match scx.options.backend {
+			#[cfg(feature = "cranelift")]
+			Backend::Cranelift => codegen::CraneliftBackend::new_object(&tcx),
+			#[cfg(feature = "llvm")]
+			Backend::Llvm => todo!("no object backend for llvm"),
+			Backend::NoBackend => panic!("cannot codegen without a backend"),
+		};
 
-		// backend.codegen_root(&hir);
+		backend.codegen_root(&hir);
 
-		// let object = backend.get_object();
-		// let bytes = object.emit().unwrap();
-		// std::fs::write(path, bytes).unwrap();
+		let object = backend.get_object();
+		let bytes = object.emit().unwrap();
+		std::fs::write(scx.options.output.join("out.elf"), bytes).unwrap();
 	}
 
 	tracing::info!("Reached pipeline end successfully!");

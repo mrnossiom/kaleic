@@ -106,7 +106,13 @@ impl<'tcx> TypeComputer<'tcx> {
 
 impl TypeComputer<'_> {
 	pub fn compute_env(&mut self, name_env: &NameEnvironment) {
-		for (_, item) in &name_env.types {
+		for (_sym, item) in &name_env.types {
+			let ty = self.compute_item(item);
+
+			let old = self.ty_env.insert(item.id, ty);
+			assert!(old.is_none());
+		}
+		for (sym, item) in &name_env.values {
 			let ty = self.compute_item(item);
 
 			let old = self.ty_env.insert(item.id, ty);
@@ -122,7 +128,6 @@ impl TypeComputer<'_> {
 				fields,
 			}) => {
 				let struct_ = ty::Struct {
-					name: *name,
 					generics: generics.clone(),
 					fields: fields
 						.iter()
@@ -137,7 +142,6 @@ impl TypeComputer<'_> {
 				variants,
 			}) => {
 				let enum_ = ty::Enum {
-					name: *name,
 					generics: generics.clone(),
 					variants: variants
 						.iter()
@@ -160,7 +164,7 @@ impl TypeComputer<'_> {
 			}
 
 			hir::ItemKind::TypeAlias(TypeAlias { name, alias }) => match &alias {
-				Some(ty) => self.lower_ty(ty).as_no_infer().unwrap(),
+				Some(ty) => self.tcx.lower_ty(ty).as_no_infer().unwrap(),
 				None => todo!(
 					"error about how standalone empty type aliases are not allowed, only used in traits"
 				),
@@ -175,15 +179,6 @@ impl TypeComputer<'_> {
 		}
 	}
 
-	fn lower_ty(&mut self, ty: &ast::Ty) -> TyKind<Infer> {
-		match &ty.kind {
-			ast::TyKind::Path(path) => self.lower_path_ty(path),
-			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
-			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Void),
-			ast::TyKind::Infer => TyKind::Infer(self.tcx.next_infer_tag(), Infer::Explicit),
-		}
-	}
-
 	// TODO: not pub
 	pub fn lower_fn_decl(&mut self, decl: &hir::FnDecl) -> ty::FnDecl {
 		// TODO: diag no infer ty in functions
@@ -191,7 +186,7 @@ impl TypeComputer<'_> {
 			.inputs
 			.iter()
 			.map(|ast::Param { name, ty }| {
-				let ty = if let Ok(ty) = self.lower_ty(ty).as_no_infer() {
+				let ty = if let Ok(ty) = self.tcx.lower_ty(ty).as_no_infer() {
 					ty
 				} else {
 					let report = errors::ty::function_cannot_infer_signature(name.span);
@@ -202,7 +197,7 @@ impl TypeComputer<'_> {
 			})
 			.collect();
 
-		let output = if let Ok(ty) = self.lower_ty(&decl.output).as_no_infer() {
+		let output = if let Ok(ty) = self.tcx.lower_ty(&decl.output).as_no_infer() {
 			ty
 		} else {
 			let report = errors::ty::function_cannot_infer_signature(decl.output.span);
@@ -212,49 +207,10 @@ impl TypeComputer<'_> {
 		ty::FnDecl { inputs, output }
 	}
 
-	fn lower_path_ty(&mut self, path: &ast::Path) -> TyKind<Infer> {
-		// TODO ensure path length is 1
-		let primitive = path.segments.first().and_then(|seg0| {
-			let primitive = match self.tcx.scx.symbols.resolve(seg0.sym).as_str() {
-				"_" => TyKind::Infer(self.tcx.next_infer_tag(), Infer::Explicit),
-
-				"void" => TyKind::Primitive(PrimitiveKind::Void),
-				"never" => TyKind::Primitive(PrimitiveKind::Never),
-
-				"bool" => TyKind::Primitive(PrimitiveKind::Bool),
-				"uint" => TyKind::Primitive(PrimitiveKind::UnsignedInt),
-				"sint" => TyKind::Primitive(PrimitiveKind::SignedInt),
-				"float" => TyKind::Primitive(PrimitiveKind::Float),
-
-				"str" => TyKind::Primitive(PrimitiveKind::Str),
-				_ => return None,
-			};
-			Some(primitive)
-		});
-
-		if let Some(primitive) = primitive {
-			primitive
-		} else {
-			let item_map = self.tcx.name_env.borrow();
-			todo!()
-			// match item_map.as_ref().unwrap().get(&path.segments[0].sym) {
-			// 	Some(item) => {
-			// 		self.compute_item(item);
-			// 		self.environment.types[&path.segments[0].sym]
-			// 			.clone()
-			// 			.as_infer()
-			// 	}
-			// 	None => {
-			// 		panic!("item {:?} doesn't exist", path.segments[0].sym)
-			// 	}
-			// }
-		}
-	}
-
 	fn lower_field_def(&mut self, hir::FieldDef { name, ty }: &hir::FieldDef) -> ty::FieldDef {
 		ty::FieldDef {
 			name: *name,
-			ty: self.lower_ty(ty).as_no_infer().unwrap(),
+			ty: self.tcx.lower_ty(ty).as_no_infer().unwrap(),
 		}
 	}
 

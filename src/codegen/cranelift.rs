@@ -7,16 +7,16 @@ use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::{ObjectModule, ObjectProduct};
 
 use crate::{
-	Result,
 	ast::{self, BinaryOp},
 	bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
-	hir::{self, Enum, Struct},
+	hir::{self, Enum, Function, Struct},
 	lexer,
 	session::{PrintKind, SessionCtx, Symbol},
-	tbir,
-	ty::{self, TyCtx},
+	ty::{self, TyCtx, TyKind},
 };
+
+type Result<T> = std::result::Result<T, &'static str>;
 
 pub enum MaybeValue {
 	Value(Value),
@@ -69,7 +69,9 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 			},
 			ty::TyKind::Pointer(_kind) => todo!(),
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
-			ty::TyKind::Adt(()) => todo!(),
+			ty::TyKind::Struct(enum_) => todo!(),
+			ty::TyKind::Enum(struct_) => todo!(),
+			ty::TyKind::Ref(struct_) => todo!(),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
@@ -176,7 +178,7 @@ impl<M: Module> Generator<'_, M> {
 		&mut self,
 		func_id: FuncId,
 		decl: &ty::FnDecl,
-		body: &tbir::Block,
+		body: &hir::Block,
 	) -> Result<()> {
 		let mut context = self.module.make_context();
 
@@ -207,8 +209,13 @@ impl<M: Module> Generator<'_, M> {
 			values.insert(ident.sym, Some(variable));
 		}
 
+		let borrow = self.tcx.typeck_results.borrow();
+		let typeck_results = borrow.as_ref().unwrap();
+
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
+
+			typeck_results: &typeck_results,
 
 			builder,
 			functions: &self.functions,
@@ -248,41 +255,58 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 
 		for item in &hir.items {
 			match &item.kind {
-				hir::ItemKind::Function(func) => {
-					// TODO: do this elsewhere
-					let decl = self.tcx.lower_fn_decl(&func.decl);
-					let func_id = self.declare_function(func.name.sym, &decl).unwrap();
+				hir::ItemKind::Function(Function {
+					name,
+					decl,
+					body,
+					abi,
+				}) => {
+					let borrow = self.tcx.ty_env.borrow();
+					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
+						todo!()
+					};
 
-					function_ids.insert(func.name.sym, func_id);
+					match abi {
+						hir::Abi::Kalei => {
+							let func_id = self.declare_function(name.sym, &decl).unwrap();
+							function_ids.insert(item.id, func_id);
+						}
+						hir::Abi::C => self.declare_extern(name.sym, &decl).unwrap(),
+					}
 				}
 
 				hir::ItemKind::Struct(Struct { .. })
-				| hir::ItemKind::Enum(Enum())
-				| hir::ItemKind::Type(_)
+				| hir::ItemKind::Enum(Enum { .. })
+				| hir::ItemKind::TypeAlias(_)
 				| hir::ItemKind::Trait { .. }
 				| hir::ItemKind::TraitImpl { .. } => todo!(),
 			}
 		}
 		for item in &hir.items {
 			match &item.kind {
-				hir::ItemKind::Function(func) => {
-					// TODO: do this elsewhere
-					let decl = self.tcx.lower_fn_decl(&func.decl);
+				hir::ItemKind::Function(Function {
+					name,
+					decl,
+					body,
+					abi,
+				}) => {
+					let borrow = self.tcx.ty_env.borrow();
+					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
+						todo!()
+					};
 
-					// TODO: take abi into account
-					let body = self
-						.tcx
-						.typeck_fn(func.name, &decl, func.body.as_ref().unwrap());
-					if self.tcx.scx.options.print.contains(&PrintKind::TypedBodyIr) {
-						println!("{body:#?}");
-					}
-					let func_id = function_ids.get(&func.name.sym).unwrap();
+					let Some(func_id) = function_ids.get(&item.id) else {
+						println!("assuming fn {:?} is external", name.sym);
+						continue;
+					};
+
+					let body = body.as_ref().unwrap();
 					self.define_function(*func_id, &decl, &body).unwrap();
 				}
 
 				hir::ItemKind::Struct(Struct { .. })
-				| hir::ItemKind::Enum(Enum())
-				| hir::ItemKind::Type(_)
+				| hir::ItemKind::Enum(Enum { .. })
+				| hir::ItemKind::TypeAlias(_)
 				| hir::ItemKind::Trait { .. }
 				| hir::ItemKind::TraitImpl { .. } => todo!(),
 			}
@@ -314,6 +338,8 @@ impl ObjectBackend for Generator<'_, ObjectModule> {
 pub struct FunctionGenerator<'scx, 'bld> {
 	scx: &'scx SessionCtx,
 
+	typeck_results: &'scx HashMap<hir::NodeId, ty::TyKind>,
+
 	builder: FunctionBuilder<'bld>,
 	functions: &'bld HashMap<Symbol, FuncId>,
 	module: &'bld mut dyn Module,
@@ -323,7 +349,7 @@ pub struct FunctionGenerator<'scx, 'bld> {
 	loops: Vec<(Block, Block)>,
 }
 
-/// Codegen tbir structs
+/// Codegen hir functions
 impl FunctionGenerator<'_, '_> {
 	// TODO: remove duplicate
 	fn to_cl_type(&self, output: &ty::TyKind) -> Option<Type> {
@@ -337,14 +363,16 @@ impl FunctionGenerator<'_, '_> {
 			},
 			ty::TyKind::Pointer(_kind) => todo!(),
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
-			ty::TyKind::Adt(()) => todo!(),
+			ty::TyKind::Struct(struct_) => todo!(),
+			ty::TyKind::Enum(enum_) => todo!(),
+			ty::TyKind::Ref(ty) => todo!(),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
 		}
 	}
 
-	fn codegen_block(&mut self, block: &tbir::Block) -> Result<MaybeValue> {
+	fn codegen_block(&mut self, block: &hir::Block) -> Result<MaybeValue> {
 		tracing::trace!(id = ?block.id, "codegen_block");
 
 		for stmt in &block.stmts {
@@ -361,19 +389,18 @@ impl FunctionGenerator<'_, '_> {
 		}
 	}
 
-	fn codegen_stmt(&mut self, stmt: &tbir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
+	fn codegen_stmt(&mut self, stmt: &hir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
 		tracing::trace!(id = ?stmt.id, "codegen_stmt");
 
 		match &stmt.kind {
-			tbir::StmtKind::Expr(expr) => match self.codegen_expr(expr)? {
+			hir::StmtKind::Expr(expr) => match self.codegen_expr(expr)? {
 				MaybeValue::Value(_) | MaybeValue::Zst => {}
 				MaybeValue::Never => return Ok(true),
 			},
-			tbir::StmtKind::Let {
-				name: ident, value, ..
-			} => match self.codegen_expr(value)? {
+			hir::StmtKind::Let { ident, value, .. } => match self.codegen_expr(value)? {
 				MaybeValue::Value(expr_value) => {
-					let ty = self.to_cl_type(&value.ty).unwrap();
+					let ty = self.typeck_results.get(&value.id).unwrap();
+					let ty = self.to_cl_type(ty).unwrap();
 					let variable = self.builder.declare_var(ty);
 					self.builder.def_var(variable, expr_value);
 
@@ -384,21 +411,7 @@ impl FunctionGenerator<'_, '_> {
 				}
 				MaybeValue::Never => {}
 			},
-			tbir::StmtKind::Assign { target, value } => {
-				let target = target.segments[0];
-				let Some(variable) = *self.values.get(&target.sym).unwrap() else {
-					// handle zst
-					return Ok(false);
-				};
-
-				match self.codegen_expr(value)? {
-					MaybeValue::Value(expr_value) => {
-						self.builder.def_var(variable, expr_value);
-					}
-					MaybeValue::Zst | MaybeValue::Never => {}
-				}
-			}
-			tbir::StmtKind::Loop { block } => {
+			hir::StmtKind::Loop(block) => {
 				let loop_ = self.builder.create_block();
 				let cont = self.builder.create_block();
 
@@ -422,14 +435,15 @@ impl FunctionGenerator<'_, '_> {
 		Ok(false)
 	}
 
-	fn codegen_expr(&mut self, expr: &tbir::Expr) -> Result<MaybeValue> {
+	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue> {
 		tracing::trace!(id = ?expr.id, "codegen_expr");
 		let value = match &expr.kind {
-			tbir::ExprKind::Literal(lit, sym) => {
+			hir::ExprKind::Literal(lit, sym) => {
 				let sym = self.scx.symbols.resolve(*sym);
 				let value = match lit {
 					lexer::LiteralKind::Integer => {
-						let int_ty = self.to_cl_type(&expr.ty).unwrap();
+						let ty = self.typeck_results.get(&expr.id).unwrap();
+						let int_ty = self.to_cl_type(ty).unwrap();
 						self.builder
 							.ins()
 							.iconst(int_ty, sym.parse::<i64>().unwrap())
@@ -441,7 +455,7 @@ impl FunctionGenerator<'_, '_> {
 				};
 				MaybeValue::Value(value)
 			}
-			tbir::ExprKind::Access(path) => {
+			hir::ExprKind::Access(path) => {
 				let path = path.segments[0];
 				match self.values.get(&path.sym) {
 					Some(Some(var)) => MaybeValue::Value(self.builder.use_var(*var)),
@@ -450,14 +464,14 @@ impl FunctionGenerator<'_, '_> {
 				}
 			}
 
-			tbir::ExprKind::Unary(op, expr) => todo!("codegen unary {op:?} {expr:?}"),
+			hir::ExprKind::Unary(op, expr) => todo!("codegen unary {op:?} {expr:?}"),
 
-			tbir::ExprKind::Binary(op, left, right) => {
+			hir::ExprKind::Binary(op, left, right) => {
 				MaybeValue::Value(self.codegen_bin_op(*op, left, right)?)
 			}
-			tbir::ExprKind::FnCall { expr, args } => {
+			hir::ExprKind::FnCall { expr, args } => {
 				// TODO: allow indirect calls
-				let tbir::ExprKind::Access(path) = &expr.kind else {
+				let hir::ExprKind::Access(path) = &expr.kind else {
 					todo!("not a fn")
 				};
 				let path = path.segments[0];
@@ -488,12 +502,34 @@ impl FunctionGenerator<'_, '_> {
 					_ => panic!(),
 				}
 			}
-			tbir::ExprKind::If {
+			hir::ExprKind::If {
 				cond,
 				conseq,
 				altern,
 			} => self.codegen_if(cond, conseq, altern.as_deref())?,
-			tbir::ExprKind::Return(expr) => {
+			hir::ExprKind::Method(expr, name, params) => todo!(),
+			hir::ExprKind::Deref(expr) => todo!(),
+			hir::ExprKind::Field(expr, ident) => todo!(),
+			hir::ExprKind::Assign { target, value } => {
+				let hir::ExprKind::Access(target) = &target.kind else {
+					todo!("invalid lvalue");
+				};
+				let Some(variable) = *self.values.get(&target.simple().sym).unwrap() else {
+					// handle zst
+					return Ok(MaybeValue::Zst);
+				};
+
+				let maybe_value = self.codegen_expr(value)?;
+				match maybe_value {
+					MaybeValue::Value(expr_value) => {
+						self.builder.def_var(variable, expr_value);
+					}
+					MaybeValue::Zst | MaybeValue::Never => {}
+				}
+				maybe_value
+			}
+
+			hir::ExprKind::Return(expr) => {
 				if let Some(expr) = expr {
 					match self.codegen_expr(expr)? {
 						MaybeValue::Value(expr_value) => {
@@ -510,7 +546,7 @@ impl FunctionGenerator<'_, '_> {
 
 				MaybeValue::Never
 			}
-			tbir::ExprKind::Break(expr) => {
+			hir::ExprKind::Break(expr) => {
 				let (_, cont) = *self.loops.last().unwrap();
 
 				if let Some(expr) = expr {
@@ -529,7 +565,7 @@ impl FunctionGenerator<'_, '_> {
 
 				MaybeValue::Never
 			}
-			tbir::ExprKind::Continue => {
+			hir::ExprKind::Continue => {
 				let (loop_, _) = *self.loops.last().unwrap();
 
 				self.builder.ins().jump(loop_, &[]);
@@ -546,8 +582,8 @@ impl FunctionGenerator<'_, '_> {
 	fn codegen_bin_op(
 		&mut self,
 		op: ast::Spanned<ast::BinaryOp>,
-		left: &tbir::Expr,
-		right: &tbir::Expr,
+		left: &hir::Expr,
+		right: &hir::Expr,
 	) -> Result<Value> {
 		tracing::trace!("codegen_bin_op");
 		// cannot be zst
@@ -588,9 +624,9 @@ impl FunctionGenerator<'_, '_> {
 
 	fn codegen_if(
 		&mut self,
-		cond: &tbir::Expr,
-		conseq: &tbir::Block,
-		altern: Option<&tbir::Block>,
+		cond: &hir::Expr,
+		conseq: &hir::Block,
+		altern: Option<&hir::Block>,
 	) -> Result<MaybeValue> {
 		let then_block = self.builder.create_block();
 		let else_block = altern.as_ref().map(|_| self.builder.create_block());
@@ -602,7 +638,14 @@ impl FunctionGenerator<'_, '_> {
 			MaybeValue::Zst | MaybeValue::Never => panic!(),
 		};
 
-		if let Some(ty) = self.to_cl_type(&conseq.ty) {
+		// TODO: so ugly
+		let ty = conseq
+			.ret
+			.as_ref()
+			.map(|ret| self.typeck_results.get(&ret.id).unwrap().clone())
+			.unwrap_or(TyKind::Primitive(ty::PrimitiveKind::Void));
+
+		if let Some(ty) = self.to_cl_type(&ty) {
 			self.builder.append_block_param(cont_block, ty);
 		}
 

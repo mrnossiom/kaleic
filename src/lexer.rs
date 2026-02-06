@@ -43,7 +43,7 @@ impl Token {
 			(Colon, Colon) => ColonColon,
 
 			(Ampersand, Ampersand) => todo!("for recovery, see `and` kw"),
-			(Or, Or) => todo!("for recovery, see `or` kw"),
+			(BitwiseOr, BitwiseOr) => todo!("for recovery, see `or` kw"),
 
 			(_, _) => return None,
 		};
@@ -86,9 +86,9 @@ pub enum TokenKind {
 	/// `%`
 	Mod,
 	/// `&`
-	And,
+	BitwiseAnd,
 	/// `|`
-	Or,
+	BitwiseOr,
 	/// `^`
 	Xor,
 	/// `<<`
@@ -150,8 +150,8 @@ impl fmt::Display for TokenKind {
 			Div => write!(f, "a division operator"),
 			Mod => write!(f, "a modulo operator"),
 
-			And => write!(f, "an and operator"),
-			Or => write!(f, "an or operator"),
+			BitwiseAnd => write!(f, "an and operator"),
+			BitwiseOr => write!(f, "an or operator"),
 			Xor => write!(f, "a xor operator"),
 
 			Shl => write!(f, "a shift left operator"),
@@ -212,6 +212,9 @@ pub enum Keyword {
 
 	Var,
 	Cst,
+
+	And,
+	Or,
 
 	If,
 	Else,

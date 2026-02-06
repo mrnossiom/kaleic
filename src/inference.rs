@@ -2,7 +2,9 @@ use std::sync::atomic::Ordering;
 
 use crate::{
 	ast::{self, UnaryOp},
-	errors, hir, lexer,
+	errors,
+	hir::{self, ExprKind},
+	lexer,
 	ty::{Infer, Inferer, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
@@ -16,15 +18,17 @@ impl TyCtx<'_> {
 }
 impl Inferer<'_> {
 	fn resolve_var_ty(&self, var: &ast::Path) -> TyKind<Infer> {
-		// TODO: resolve full path
-		let var = var.segments[0];
-
+		let var = var.simple();
 		if let Some(ty) = self
 			.local_env
 			.get(&var.sym)
 			.and_then(|ty_kinds| ty_kinds.last())
 		{
+			// search in the locals defined, respecting shadowing
 			ty.clone()
+		} else if let Some(ty) = self.name_env.values.get(&var.sym) {
+			// search values in the whole project
+			self.ty_env.get(&ty.id).unwrap().clone().as_infer()
 		} else {
 			let report = errors::ty::variable_not_in_scope(var.span);
 			self.tcx.scx.dcx().emit_build(report);
@@ -33,11 +37,6 @@ impl Inferer<'_> {
 	}
 
 	pub fn infer_fn(&mut self) {
-		// TODO: remove, this fills the reachable environment, broken
-		// for (fn_, decl) in self.ty_env {
-		// 	self.local_env.insert(*fn_, vec![decl.clone().as_infer()]);
-		// }
-
 		// init context with function arguments
 
 		self.decl.inputs.iter().for_each(|Param { name, ty }| {
@@ -73,9 +72,7 @@ impl Inferer<'_> {
 				self.infer_expr(expr);
 			}
 			hir::StmtKind::Let { ident, value, ty } => {
-				// let explicit_ty = self.tcx.resolve(ty);
-				// let explicit_ty = self.tcx.lower_ty(ty);
-				let explicit_ty = todo!();
+				let explicit_ty = self.tcx.lower_ty(&ty);
 				let expr_ty = self.infer_expr(value);
 				self.unify(&explicit_ty, &expr_ty);
 
@@ -184,10 +181,14 @@ impl Inferer<'_> {
 			hir::ExprKind::Field(_expr, _name) => todo!(),
 			hir::ExprKind::Deref(_expr) => todo!("ensure expr ty is pointer"),
 
-			hir::ExprKind::Assign { target: _, value } => {
-				let target_ty = self.resolve_var_ty(todo!());
+			hir::ExprKind::Assign { target, value } => {
+				let ExprKind::Access(path) = &target.kind else {
+					todo!("invalid lvalue")
+				};
+
+				let target_ty = self.resolve_var_ty(path);
 				let value_ty = self.infer_expr(value);
-				self.unify(&target_ty, &value_ty);
+				self.unify(&target_ty, &value_ty)
 			}
 
 			hir::ExprKind::Return(_) | hir::ExprKind::Break(_) | hir::ExprKind::Continue => {

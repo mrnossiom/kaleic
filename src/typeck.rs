@@ -12,7 +12,6 @@ pub struct TypeCheck<'tcx> {
 	tcx: &'tcx ty::TyCtx<'tcx>,
 
 	expr_types: HashMap<NodeId, TyKind>,
-	type_layouts: HashMap<Symbol, ()>,
 }
 
 impl<'tcx> TypeCheck<'tcx> {
@@ -20,7 +19,6 @@ impl<'tcx> TypeCheck<'tcx> {
 		Self {
 			tcx,
 			expr_types: HashMap::new(),
-			type_layouts: HashMap::new(),
 		}
 	}
 

@@ -32,7 +32,7 @@ insta = "1"
 ariadne = { git = "https://github.com/mrnossiom/ariadne", branch = "expose-report-fields" }
 
 [features]
-# default = ["cranelift"]
+default = ["cranelift"]
 # default = ["llvm", "cranelift"]
 
 debug = []

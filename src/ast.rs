@@ -228,7 +228,7 @@ pub enum TyKind {
 	Unit,
 
 	/// Corresponds to the explicit `_` token
-	Infer,
+	ImplicitInfer,
 }
 
 #[derive(Debug, Clone)]
@@ -236,6 +236,15 @@ pub enum TyKind {
 pub struct Path {
 	pub segments: Vec<Ident>,
 	pub generics: Vec<Ty>,
+}
+
+impl Path {
+	// TODO: remove, really resolve paths
+	pub fn simple(&self) -> Ident {
+		assert_eq!(self.segments.len(), 1);
+		assert_eq!(self.generics.len(), 0);
+		self.segments[0]
+	}
 }
 
 #[derive(Debug)]

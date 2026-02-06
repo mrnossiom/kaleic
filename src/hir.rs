@@ -77,7 +77,7 @@ pub struct Function {
 	pub name: ast::Ident,
 	pub decl: Box<FnDecl>,
 	pub body: Option<Box<Block>>,
-	pub abi: Option<Box<Expr>>,
+	pub abi: Abi,
 }
 
 #[derive(Debug, Clone)]
@@ -182,4 +182,11 @@ pub enum ExprKind {
 	Break(Option<Box<Expr>>),
 	// TODO: add scope label
 	Continue,
+}
+
+#[derive(Debug, Clone, Default, Copy)]
+pub enum Abi {
+	#[default]
+	Kalei,
+	C,
 }

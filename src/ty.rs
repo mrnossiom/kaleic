@@ -5,6 +5,7 @@ use crate::{
 	bug, errors,
 	hir::{self, ExprKind, Function, NodeId},
 	inference::InferTag,
+	lexer::LiteralKind,
 	resolve::{self, NameEnvironment},
 	session::{SessionCtx, Span, Symbol},
 	ty, typeck,
@@ -71,7 +72,7 @@ impl TyCtx<'_> {
 		let binding = self.ty_env.borrow();
 		let ty_env = binding.as_ref().unwrap();
 
-		let env = self.typeck_results.borrow_mut().take().unwrap();
+		let mut expr_tys = HashMap::new();
 
 		for item in &hir.items {
 			match &item.kind {
@@ -81,17 +82,25 @@ impl TyCtx<'_> {
 					body,
 					abi,
 				}) => {
-					// TODO: assert abi
-					let body = body.as_ref().unwrap();
-					let Some(TyKind::Fn(decl)) = ty_env.get(&item.id) else {
+					// TODO: extern means that function is external rn, meaning will change later
+					let body = match abi {
+						hir::Abi::Kalei => body.as_ref().unwrap(),
+						hir::Abi::C => continue,
+					};
+
+					let TyKind::Fn(decl) = ty_env.get(&item.id).unwrap() else {
 						todo!()
 					};
 
-					let expr_tys = self.typeck_fn_old(*name, decl, body);
+					let function_expr_tys = self.typeck_fn_old(*name, decl, body);
+					expr_tys.extend(function_expr_tys);
 				}
 				_ => {}
 			}
 		}
+
+		let old = self.typeck_results.borrow_mut().replace(expr_tys);
+		assert!(old.is_none());
 	}
 
 	#[must_use]
@@ -104,8 +113,10 @@ impl TyCtx<'_> {
 	) -> HashMap<NodeId, TyKind> {
 		let borrow = self.ty_env.borrow();
 		let ty_env = borrow.as_ref().unwrap();
+		let borrow = self.name_env.borrow();
+		let name_env = borrow.as_ref().unwrap();
 
-		let mut inferer = Inferer::new(self, decl, body, ty_env);
+		let mut inferer = Inferer::new(self, decl, body, name_env, ty_env);
 		inferer.infer_fn();
 
 		let mut expr_tys = HashMap::default();
@@ -146,11 +157,57 @@ impl TyCtx<'_> {
 
 		expr_tys
 	}
+
+	pub fn lower_ty(&self, ty: &ast::Ty) -> TyKind<Infer> {
+		match &ty.kind {
+			ast::TyKind::Path(path) => self.lower_path_ty(path),
+			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
+			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Void),
+			ast::TyKind::ImplicitInfer => TyKind::Infer(self.next_infer_tag(), Infer::Generic),
+		}
+	}
+
+	pub fn lower_path_ty(&self, path: &ast::Path) -> TyKind<Infer> {
+		let path = path.simple();
+
+		let primitive = match self.scx.symbols.resolve(path.sym).as_str() {
+			"_" => Some(TyKind::Infer(self.next_infer_tag(), Infer::Explicit)),
+
+			"void" => Some(TyKind::Primitive(PrimitiveKind::Void)),
+			"never" => Some(TyKind::Primitive(PrimitiveKind::Never)),
+
+			"bool" => Some(TyKind::Primitive(PrimitiveKind::Bool)),
+			"uint" => Some(TyKind::Primitive(PrimitiveKind::UnsignedInt)),
+			"sint" => Some(TyKind::Primitive(PrimitiveKind::SignedInt)),
+			"float" => Some(TyKind::Primitive(PrimitiveKind::Float)),
+
+			"str" => Some(TyKind::Primitive(PrimitiveKind::Str)),
+			_ => None,
+		};
+
+		if let Some(primitive) = primitive {
+			primitive
+		} else {
+			let borrow = self.name_env.borrow();
+			let item_map = borrow.as_ref().unwrap();
+			match item_map.types.get(&path.sym) {
+				Some(item) => {
+					// TODO: we could access the real type directly if we sorted
+					// in some kind of topological order
+					TyKind::Ref(item.id)
+				}
+				None => {
+					panic!("item {:?} doesn't exist", path.sym)
+				}
+			}
+		}
+	}
 }
 
 #[derive(Debug)]
 pub struct Inferer<'tcx> {
 	pub(crate) tcx: &'tcx TyCtx<'tcx>,
+	pub(crate) name_env: &'tcx NameEnvironment,
 	pub(crate) ty_env: &'tcx HashMap<hir::NodeId, TyKind>,
 
 	pub(crate) decl: &'tcx FnDecl,
@@ -168,10 +225,12 @@ impl<'tcx> Inferer<'tcx> {
 		tcx: &'tcx TyCtx,
 		decl: &'tcx FnDecl,
 		body: &'tcx hir::Block,
+		name_env: &'tcx NameEnvironment,
 		ty_env: &'tcx HashMap<hir::NodeId, TyKind>,
 	) -> Self {
 		Self {
 			tcx,
+			name_env,
 			ty_env,
 
 			decl,
@@ -199,8 +258,6 @@ pub struct FnDecl {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Struct {
-	pub name: ast::Ident,
-	// TODO?: lift generics in tykind variant?
 	pub generics: Vec<Ident>,
 	pub fields: Vec<FieldDef>,
 }
@@ -213,8 +270,6 @@ pub struct FieldDef {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
-	pub name: ast::Ident,
-	// TODO?: lift generics in tykind variant?
 	pub generics: Vec<Ident>,
 	pub variants: Vec<Variant>,
 }
@@ -238,6 +293,10 @@ pub enum TyKind<InferKind = NoInfer> {
 	Struct(Box<Struct>),
 	Enum(Box<Enum>),
 
+	// TODO: remove
+	/// Refers to the type of another item
+	Ref(hir::NodeId),
+
 	Infer(InferTag, InferKind),
 	Error,
 }
@@ -253,6 +312,8 @@ impl<T: fmt::Display> fmt::Display for TyKind<T> {
 			Self::Struct(_struct) => write!(f, "a struct"),
 			Self::Enum(_enum) => write!(f, "an enum"),
 			Self::Infer(_, infer) => infer.fmt(f),
+			// TODO
+			Self::Ref(_) => bug!("ref ty kind should be resolved before it's shown to end-user"),
 			// TODO
 			Self::Error => bug!("error ty kind should never be shown to end-user"),
 		}
@@ -322,6 +383,7 @@ impl TyKind<NoInfer> {
 			// Self::Adt(()) => TyKind::Adt(()),
 			Self::Struct(struct_) => TyKind::Struct(struct_),
 			Self::Enum(enum_) => TyKind::Enum(enum_),
+			Self::Ref(id) => TyKind::Ref(id),
 			Self::Error => TyKind::Error,
 		}
 	}
@@ -337,6 +399,7 @@ impl TyKind<Infer> {
 			Self::Struct(struct_) => Ok(TyKind::Struct(struct_)),
 			Self::Enum(enum_) => Ok(TyKind::Enum(enum_)),
 			Self::Infer(tag, infer) => Err((tag, infer)),
+			Self::Ref(id) => Ok(TyKind::Ref(id)),
 			Self::Error => Ok(TyKind::Error),
 		}
 	}

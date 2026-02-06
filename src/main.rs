@@ -34,7 +34,6 @@ mod options {
 		Ast,
 		AstPretty,
 		Hir,
-		Tbir,
 		BackendIr,
 		Items,
 		Env,
@@ -46,7 +45,6 @@ mod options {
 				PrintKind::Ast => Self::Ast,
 				PrintKind::AstPretty => Self::AstPretty,
 				PrintKind::Hir => Self::HigherIr,
-				PrintKind::Tbir => Self::TypedBodyIr,
 				PrintKind::BackendIr => Self::BackendIr,
 				PrintKind::Items => Self::CollectedItems,
 				PrintKind::Env => Self::TypeEnvironment,
@@ -65,7 +63,7 @@ struct Args {
 	#[clap(long)]
 	pub backend: Option<options::Backend>,
 
-	#[clap(long, default_value = "build")]
+	#[clap(long, default_value = ".cache/kaleic")]
 	pub output: PathBuf,
 	#[clap(long)]
 	pub print: Vec<options::PrintKind>,
