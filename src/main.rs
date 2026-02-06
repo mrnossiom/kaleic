@@ -49,7 +49,7 @@ mod options {
 				PrintKind::Tbir => Self::TypedBodyIr,
 				PrintKind::BackendIr => Self::BackendIr,
 				PrintKind::Items => Self::CollectedItems,
-				PrintKind::Env => Self::Environment,
+				PrintKind::Env => Self::TypeEnvironment,
 			}
 		}
 	}

@@ -31,11 +31,12 @@ impl Inferer<'_> {
 			TyKind::Error
 		}
 	}
+
 	pub fn infer_fn(&mut self) {
-		// TODO: remove
-		for (fn_, decl) in self.item_env {
-			self.local_env.insert(*fn_, vec![decl.clone().as_infer()]);
-		}
+		// TODO: remove, this fills the reachable environment, broken
+		// for (fn_, decl) in self.ty_env {
+		// 	self.local_env.insert(*fn_, vec![decl.clone().as_infer()]);
+		// }
 
 		// init context with function arguments
 

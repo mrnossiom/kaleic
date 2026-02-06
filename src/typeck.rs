@@ -2,10 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
 	ast::Stmt,
-	hir::{
-		self, Enum, Expr, ExprKind, Function, ItemKind, NodeId, Struct, TraitItem, TraitItemKind,
-		TypeAlias,
-	},
+	hir::{self, Enum, Expr, Function, ItemKind, NodeId, Struct, TypeAlias},
 	lexer,
 	session::Symbol,
 	ty::{self, TyKind},

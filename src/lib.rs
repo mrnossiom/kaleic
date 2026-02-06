@@ -16,7 +16,6 @@ pub mod typeck;
 // IRs
 pub mod ast;
 pub mod hir;
-pub mod tbir;
 
 pub mod ffi;
 

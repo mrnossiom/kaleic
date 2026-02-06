@@ -19,12 +19,6 @@ pub struct NameEnvironment {
 	pub values: HashMap<Symbol, hir::Item>,
 }
 
-#[derive(Debug, Default)]
-pub struct TyEnvironment {
-	pub types: HashMap<Symbol, ty::TyKind>,
-	pub values: HashMap<Symbol, ty::TyKind>,
-}
-
 #[derive(Debug)]
 pub struct Collector<'tcx> {
 	tcx: &'tcx ty::TyCtx<'tcx>,
@@ -81,19 +75,18 @@ impl Collector<'_> {
 	}
 }
 
-pub struct TypeLayoutComputer<'tcx> {
+pub struct TypeComputer<'tcx> {
 	tcx: &'tcx ty::TyCtx<'tcx>,
 
-	pub(crate) environment: TyEnvironment,
+	pub(crate) ty_env: HashMap<hir::NodeId, ty::TyKind>,
 }
 
-impl<'tcx> TypeLayoutComputer<'tcx> {
+impl<'tcx> TypeComputer<'tcx> {
 	#[must_use]
 	pub fn new(tcx: &'tcx ty::TyCtx) -> Self {
 		Self {
 			tcx,
-
-			environment: TyEnvironment::default(),
+			ty_env: HashMap::default(),
 		}
 	}
 }
@@ -111,15 +104,17 @@ impl<'tcx> TypeLayoutComputer<'tcx> {
 // - compute type dependency and sort topologically
 // - resolve in order
 
-#[cfg(false)]
-impl TypeLayoutComputer<'_> {
+impl TypeComputer<'_> {
 	pub fn compute_env(&mut self, name_env: &NameEnvironment) {
-		// for item_sym in name_env.keys() {
-		// 	self.compute_item(item_sym);
-		// }
+		for (_, item) in &name_env.types {
+			let ty = self.compute_item(item);
+
+			let old = self.ty_env.insert(item.id, ty);
+			assert!(old.is_none());
+		}
 	}
 
-	fn compute_item(&mut self, item_sym: &Symbol) {
+	fn compute_item(&mut self, item: &hir::Item) -> TyKind {
 		match &item.kind {
 			hir::ItemKind::Struct(Struct {
 				name,
@@ -134,12 +129,7 @@ impl TypeLayoutComputer<'_> {
 						.map(|field| self.lower_field_def(field))
 						.collect(),
 				};
-				match self.environment.types.entry(name.sym) {
-					Entry::Occupied(_) => todo!(),
-					Entry::Vacant(entry) => {
-						entry.insert_entry(TyKind::Struct(Box::new(struct_)));
-					}
-				}
+				TyKind::Struct(Box::new(struct_))
 			}
 			hir::ItemKind::Enum(Enum {
 				name,
@@ -154,32 +144,26 @@ impl TypeLayoutComputer<'_> {
 						.map(|variant| self.lower_variant(variant))
 						.collect(),
 				};
-				match self.environment.types.entry(name.sym) {
-					Entry::Occupied(_) => todo!("type already declared {:?}", name.sym),
-					Entry::Vacant(entry) => {
-						entry.insert_entry(TyKind::Enum(Box::new(enum_)));
-					}
-				}
+				TyKind::Enum(Box::new(enum_))
 			}
 
 			hir::ItemKind::Trait { name, .. } => {
 				// self.environment
 				// 	.values
 				// 	.insert(name.sym, ty::TyKind::Fn(Box::new(decl)));
+				todo!()
 			}
 			hir::ItemKind::TraitImpl { type_, .. } => {
 				// TODO
 				// self.environment.types.insert(type_.sym, v);
+				todo!()
 			}
 
-			hir::ItemKind::TypeAlias(TypeAlias(name, alias)) => match &alias {
-				Some(ty) => {
-					let v = self.lower_ty(ty).as_no_infer().unwrap();
-					self.environment.types.insert(name.sym, v);
-				}
-				None => {
-					todo!()
-				}
+			hir::ItemKind::TypeAlias(TypeAlias { name, alias }) => match &alias {
+				Some(ty) => self.lower_ty(ty).as_no_infer().unwrap(),
+				None => todo!(
+					"error about how standalone empty type aliases are not allowed, only used in traits"
+				),
 			},
 
 			hir::ItemKind::Function(Function {
@@ -187,12 +171,7 @@ impl TypeLayoutComputer<'_> {
 				decl,
 				body,
 				abi,
-			}) => {
-				let decl = self.lower_fn_decl(decl);
-				self.environment
-					.values
-					.insert(name.sym, ty::TyKind::Fn(Box::new(decl)));
-			}
+			}) => TyKind::Fn(Box::new(self.lower_fn_decl(decl))),
 		}
 	}
 
@@ -257,17 +236,18 @@ impl TypeLayoutComputer<'_> {
 			primitive
 		} else {
 			let item_map = self.tcx.name_env.borrow();
-			match item_map.as_ref().unwrap().get(&path.segments[0].sym) {
-				Some(item) => {
-					self.compute_item(item);
-					self.environment.types[&path.segments[0].sym]
-						.clone()
-						.as_infer()
-				}
-				None => {
-					panic!("item {:?} doesn't exist", path.segments[0].sym)
-				}
-			}
+			todo!()
+			// match item_map.as_ref().unwrap().get(&path.segments[0].sym) {
+			// 	Some(item) => {
+			// 		self.compute_item(item);
+			// 		self.environment.types[&path.segments[0].sym]
+			// 			.clone()
+			// 			.as_infer()
+			// 	}
+			// 	None => {
+			// 		panic!("item {:?} doesn't exist", path.segments[0].sym)
+			// 	}
+			// }
 		}
 	}
 

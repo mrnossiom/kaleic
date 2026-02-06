@@ -2,11 +2,12 @@ use std::{cell::RefCell, collections::HashMap, fmt, sync::atomic::AtomicU32};
 
 use crate::{
 	ast::{self, Ident},
-	bug, errors, hir,
+	bug, errors,
+	hir::{self, ExprKind, Function, NodeId},
 	inference::InferTag,
-	resolve::{self, NameEnvironment, TyEnvironment},
+	resolve::{self, NameEnvironment},
 	session::{SessionCtx, Span, Symbol},
-	tbir, typeck,
+	ty, typeck,
 };
 
 #[derive(Debug)]
@@ -17,8 +18,8 @@ pub struct TyCtx<'scx> {
 	pub(crate) infer_tag_count: AtomicU32,
 
 	pub(crate) name_env: RefCell<Option<NameEnvironment>>,
-	pub environment: RefCell<Option<TyEnvironment>>,
-	pub typeck_info: RefCell<Option<()>>,
+	pub ty_env: RefCell<Option<HashMap<hir::NodeId, TyKind>>>,
+	pub typeck_results: RefCell<Option<HashMap<NodeId, TyKind>>>,
 }
 
 impl<'scx> TyCtx<'scx> {
@@ -29,8 +30,8 @@ impl<'scx> TyCtx<'scx> {
 			infer_tag_count: AtomicU32::default(),
 
 			name_env: RefCell::default(),
-			environment: RefCell::default(),
-			typeck_info: RefCell::default(),
+			ty_env: RefCell::default(),
+			typeck_results: RefCell::default(),
 		}
 	}
 }
@@ -38,26 +39,24 @@ impl<'scx> TyCtx<'scx> {
 /// Context actions
 impl TyCtx<'_> {
 	/// Goes through the HIR and maps all items
-	pub fn collect_root(&self, hir: &hir::Root) {
+	pub fn collect_items(&self, hir: &hir::Root) {
 		let mut cltr = resolve::Collector::new(self);
 		cltr.collect_items(hir);
-
 		self.name_env.replace(Some(cltr.name_env));
 	}
 
 	/// Uses the collection step to map every item to a concrete type
-	pub(crate) fn compute_env(&self, hir: &hir::Root) {
-		let mut envcp = resolve::TypeLayoutComputer::new(self);
+	pub(crate) fn compute_items_type(&self, hir: &hir::Root) {
+		let mut ty_computer = resolve::TypeComputer::new(self);
 
 		let binding = self.name_env.borrow();
 		let name_env = binding.as_ref().unwrap();
-		// envcp.compute_env(name_env);
-		todo!("no env computation");
+		ty_computer.compute_env(name_env);
 
-		self.environment.replace(Some(envcp.environment));
+		self.ty_env.replace(Some(ty_computer.ty_env));
 	}
 
-	/// Computes inference for every body and stores the result in the `TyCtx`
+	/// Computes inference for every function body and stores the result
 	pub(crate) fn typeck(&self, hir: &hir::Root) {
 		let mut ty_checker = typeck::TypeCheck::new(self);
 		ty_checker.typeck(hir);
@@ -67,13 +66,46 @@ impl TyCtx<'_> {
 		// self.typeck_info.replace(Some(ty_checker.info));
 	}
 
+	/// TODO: remove old inference
+	pub(crate) fn typeck_old(&self, hir: &hir::Root) {
+		let binding = self.ty_env.borrow();
+		let ty_env = binding.as_ref().unwrap();
+
+		let env = self.typeck_results.borrow_mut().take().unwrap();
+
+		for item in &hir.items {
+			match &item.kind {
+				hir::ItemKind::Function(Function {
+					name,
+					decl,
+					body,
+					abi,
+				}) => {
+					// TODO: assert abi
+					let body = body.as_ref().unwrap();
+					let Some(TyKind::Fn(decl)) = ty_env.get(&item.id) else {
+						todo!()
+					};
+
+					let expr_tys = self.typeck_fn_old(*name, decl, body);
+				}
+				_ => {}
+			}
+		}
+	}
+
 	#[must_use]
 	#[tracing::instrument(level = "trace", skip(self, decl, body))]
-	pub fn typeck_fn(&self, name: Ident, decl: &FnDecl, body: &hir::Block) -> tbir::Block {
-		let env = self.environment.borrow_mut().take().unwrap();
-		// defer put back
+	fn typeck_fn_old(
+		&self,
+		name: Ident,
+		decl: &FnDecl,
+		body: &hir::Block,
+	) -> HashMap<NodeId, TyKind> {
+		let borrow = self.ty_env.borrow();
+		let ty_env = borrow.as_ref().unwrap();
 
-		let mut inferer = Inferer::new(self, decl, body, &env.values);
+		let mut inferer = Inferer::new(self, decl, body, ty_env);
 		inferer.infer_fn();
 
 		let mut expr_tys = HashMap::default();
@@ -112,23 +144,14 @@ impl TyCtx<'_> {
 			}
 		}
 
-		let tbir_builder = TbirBuilder {
-			body: inferer.body,
-			expr_tys,
-		};
-		let body = tbir_builder.build_body();
-
-		// put back
-		self.environment.borrow_mut().replace(env);
-
-		body
+		expr_tys
 	}
 }
 
 #[derive(Debug)]
 pub struct Inferer<'tcx> {
 	pub(crate) tcx: &'tcx TyCtx<'tcx>,
-	pub(crate) item_env: &'tcx HashMap<Symbol, TyKind>,
+	pub(crate) ty_env: &'tcx HashMap<hir::NodeId, TyKind>,
 
 	pub(crate) decl: &'tcx FnDecl,
 	pub(crate) body: &'tcx hir::Block,
@@ -145,11 +168,11 @@ impl<'tcx> Inferer<'tcx> {
 		tcx: &'tcx TyCtx,
 		decl: &'tcx FnDecl,
 		body: &'tcx hir::Block,
-		item_env: &'tcx HashMap<Symbol, TyKind>,
+		ty_env: &'tcx HashMap<hir::NodeId, TyKind>,
 	) -> Self {
 		Self {
 			tcx,
-			item_env,
+			ty_env,
 
 			decl,
 			body,
@@ -203,6 +226,7 @@ pub struct Variant {
 	pub span: Span,
 }
 
+/// A concrete type
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TyKind<InferKind = NoInfer> {
 	// TODO: no primitive kind
@@ -314,125 +338,6 @@ impl TyKind<Infer> {
 			Self::Enum(enum_) => Ok(TyKind::Enum(enum_)),
 			Self::Infer(tag, infer) => Err((tag, infer)),
 			Self::Error => Ok(TyKind::Error),
-		}
-	}
-}
-
-struct TbirBuilder<'body> {
-	body: &'body hir::Block,
-
-	expr_tys: HashMap<hir::NodeId, TyKind>,
-}
-
-/// TBIR construction
-impl TbirBuilder<'_> {
-	fn build_body(&self) -> tbir::Block {
-		self.build_block(self.body)
-	}
-	fn build_block(&self, block: &hir::Block) -> tbir::Block {
-		let ret = block.ret.as_ref().map(|expr| self.build_expr(expr));
-		let ty = ret
-			.as_ref()
-			.map_or(TyKind::Primitive(PrimitiveKind::Void), |expr| {
-				expr.ty.clone()
-			});
-
-		tbir::Block {
-			stmts: block
-				.stmts
-				.iter()
-				.map(|stmt| self.build_stmt(stmt))
-				.collect(),
-			ret,
-			ty,
-			span: block.span,
-			id: block.id,
-		}
-	}
-
-	fn build_stmt(&self, stmt: &hir::Stmt) -> tbir::Stmt {
-		let kind = match &stmt.kind {
-			hir::StmtKind::Expr(expr) => tbir::StmtKind::Expr(self.build_expr(expr)),
-			hir::StmtKind::Let {
-				ident,
-				ty: _,
-				value,
-			} => tbir::StmtKind::Let {
-				name: *ident,
-				value: self.build_expr(value),
-			},
-			hir::StmtKind::Loop(block) => tbir::StmtKind::Loop {
-				block: self.build_block(block),
-			},
-		};
-		tbir::Stmt {
-			kind,
-			span: stmt.span,
-			id: stmt.id,
-		}
-	}
-
-	fn build_expr(&self, expr: &hir::Expr) -> tbir::Expr {
-		let kind = match &expr.kind {
-			hir::ExprKind::Access(path) => tbir::ExprKind::Access(path.clone()),
-			hir::ExprKind::Literal(kind, sym) => tbir::ExprKind::Literal(*kind, *sym),
-
-			hir::ExprKind::Unary(op, expr) => {
-				tbir::ExprKind::Unary(*op, Box::new(self.build_expr(expr)))
-			}
-			hir::ExprKind::Binary(op, left, right) => tbir::ExprKind::Binary(
-				*op,
-				Box::new(self.build_expr(left)),
-				Box::new(self.build_expr(right)),
-			),
-			hir::ExprKind::FnCall { expr, args } => {
-				let nargs = args.bit.iter().map(|arg| self.build_expr(arg)).collect();
-				tbir::ExprKind::FnCall {
-					expr: Box::new(self.build_expr(expr)),
-					args: args.with_bit(nargs),
-				}
-			}
-			hir::ExprKind::If {
-				cond,
-				conseq,
-				altern,
-			} => tbir::ExprKind::If {
-				cond: Box::new(self.build_expr(cond)),
-				conseq: Box::new(self.build_block(conseq)),
-				altern: altern
-					.as_ref()
-					.map(|altern| Box::new(self.build_block(altern))),
-			},
-
-			hir::ExprKind::Method(_expr, _name, _args) => todo!(),
-			hir::ExprKind::Field(_expr, _name) => todo!(),
-			hir::ExprKind::Deref(_expr) => todo!(),
-
-			hir::ExprKind::Assign {
-				target: _,
-				value: _,
-			} => todo!(),
-
-			hir::ExprKind::Return(expr) => {
-				tbir::ExprKind::Return(expr.as_ref().map(|expr| Box::new(self.build_expr(expr))))
-			}
-			hir::ExprKind::Break(expr) => {
-				tbir::ExprKind::Break(expr.as_ref().map(|expr| Box::new(self.build_expr(expr))))
-			}
-
-			hir::ExprKind::Continue => tbir::ExprKind::Continue,
-		};
-
-		let ty = match self.expr_tys.get(&expr.id) {
-			Some(ty) => ty.clone(),
-			None => bug!("all expression should have a type by now"),
-		};
-
-		tbir::Expr {
-			kind,
-			ty,
-			span: expr.span,
-			id: expr.id,
 		}
 	}
 }

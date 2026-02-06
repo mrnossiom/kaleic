@@ -51,11 +51,11 @@ pub fn pipeline(scx: &SessionCtx) {
 	// type collection, inference and analysis
 	let tcx = ty::TyCtx::new(scx);
 
-	tcx.collect_root(&hir);
+	tcx.collect_items(&hir);
 	if scx.options.print.contains(&PrintKind::CollectedItems) {
 		let item_map = tcx.name_env.borrow();
 		let name_environment = item_map.as_ref().unwrap();
-		let mut file = fs::File::create(debug_output.join("environment.txt")).unwrap();
+		let mut file = fs::File::create(debug_output.join("name-environment.txt")).unwrap();
 		writeln!(file, "> Type items:").unwrap();
 		for (name, item) in &name_environment.types {
 			writeln!(file, "{name:#?}: {item:?}").unwrap();
@@ -66,17 +66,18 @@ pub fn pipeline(scx: &SessionCtx) {
 		}
 	}
 
-	// TODO: move in collect_root?
-	// tcx.compute_env(&hir);
-	// if scx.options.print.contains(&PrintKind::Environment) {
-	// 	let env = tcx.environment.borrow();
-	// 	for (name, ty) in &env.as_ref().unwrap().values {
-	// 		println!("{name:?}: {ty:?}");
-	// 	}
-	// 	println!();
-	// }
+	tcx.compute_items_type(&hir);
+	if scx.options.print.contains(&PrintKind::TypeEnvironment) {
+		let env = tcx.ty_env.borrow();
+		let mut file = fs::File::create(debug_output.join("type-environment.txt")).unwrap();
+		for (name, ty) in env.as_ref().unwrap().iter() {
+			writeln!(file, "{name:?}: {ty:?}").unwrap();
+		}
+		writeln!(file).unwrap();
+	}
 
-	tcx.typeck(&hir);
+	// tcx.typeck(&hir);
+	tcx.typeck_old(&hir);
 
 	scx.dcx().check_sane_or_exit();
 
