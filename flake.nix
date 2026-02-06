@@ -45,13 +45,16 @@
               pkg-config
               rust-toolchain
               lldb
-
               typos
+              cargo-insta
 
-              llvmPackages.llvm.dev
+              # linker
               wild
 
-              cargo-insta
+              # inkwell/llvm deps
+              llvmPackages_21.llvm.dev
+              libffi
+              libxml2
             ];
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;

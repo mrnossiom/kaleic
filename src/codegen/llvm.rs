@@ -12,14 +12,15 @@ use inkwell::{
 };
 
 use crate::{
-	Result, ast,
+	ast,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
-	hir, lexer,
-	resolve::Environment,
+	hir::{self, Function},
+	lexer,
 	session::{PrintKind, Symbol},
-	tbir,
-	ty::{self, TyCtx},
+	ty::{self, TyCtx, TyKind},
 };
+
+type Result<T> = std::result::Result<T, &'static str>;
 
 #[derive(Debug, Clone)]
 enum MaybeValue<'ctx> {
@@ -88,29 +89,11 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		}
 	}
 
-	fn declare_extern(&mut self, name: Symbol, decl: &ty::FnDecl) -> Result<()> {
-		self.define_func(name, decl)?;
-		Ok(())
-	}
-
-	fn declare_function(&mut self, name: Symbol, decl: &ty::FnDecl) -> Result<FunctionValue<'ctx>> {
-		if self
-			.module
-			.get_function(&self.tcx.scx.symbols.resolve(name))
-			.is_some()
-		{
-			return Err("cannot redefine extern function");
-		}
-
-		let func_val = self.define_func(name, decl)?;
-		Ok(func_val)
-	}
-
 	fn define_function(
 		&mut self,
 		func_val: FunctionValue<'ctx>,
 		decl: &ty::FnDecl,
-		body: &tbir::Block,
+		body: &hir::Block,
 	) -> Result<()> {
 		let bb = self.ctx.append_basic_block(func_val, "entry");
 		self.builder.position_at_end(bb);
@@ -119,12 +102,12 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		func_val
 			.get_param_iter()
 			.zip(&decl.inputs)
-			.for_each(|(arg, ty::Param { ident, .. })| {
+			.for_each(|(arg, ty::Param { name, ty })| {
 				let val = arg
 					.into_int_value()
 					.const_to_pointer(self.ctx.ptr_type(AddressSpace::default()));
 				self.variables
-					.insert(ident.name, MaybeValue::Value(val.as_basic_value_enum()));
+					.insert(name.sym, MaybeValue::Value(val.as_basic_value_enum()));
 			});
 
 		let ret_val = self.codegen_block(body)?;
@@ -149,39 +132,57 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 }
 
 impl<'ctx> CodeGenBackend for Generator<'_, 'ctx> {
-	fn codegen_root(&mut self, hir: &hir::Root, env: &Environment) {
-		let mut id_map = HashMap::new();
+	fn codegen_root(&mut self, hir: &hir::Root) {
+		let mut function_ids = HashMap::new();
 
-		for item in hir.items {
-			match item.kind {
-				hir::ItemKind::Extern { ident, decl } => {
-					// TODO: do this elsewhere
-					let decl = self.tcx.lower_fn_decl(decl);
-					self.declare_extern(ident.name, &decl).unwrap();
-				}
-				hir::ItemKind::Function { ident, decl, .. } => {
-					// TODO: do this elsewhere
-					let decl = self.tcx.lower_fn_decl(decl);
-					let func_id = self.declare_function(ident.name, &decl).unwrap();
+		for item in &hir.items {
+			match &item.kind {
+				hir::ItemKind::Function(Function {
+					name,
+					decl,
+					body,
+					abi,
+				}) => {
+					let borrow = self.tcx.ty_env.borrow();
+					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
+						todo!()
+					};
 
-					id_map.insert(ident.name, func_id);
+					match abi {
+						hir::Abi::Kalei => {
+							let func_id = self.define_func(name.sym, decl).unwrap();
+							function_ids.insert(item.id, func_id);
+						}
+						hir::Abi::C => {
+							let _func_id = self.define_func(name.sym, &decl).unwrap();
+						}
+					}
 				}
+				_ => {}
 			}
 		}
-		for item in hir.items {
-			match item.kind {
-				hir::ItemKind::Extern { .. } => {}
-				hir::ItemKind::Function { ident, decl, body } => {
-					// TODO: do this elsewhere
-					let decl = self.tcx.lower_fn_decl(decl);
+		for item in &hir.items {
+			match &item.kind {
+				hir::ItemKind::Function(Function {
+					name,
+					decl,
+					body,
+					abi,
+				}) => {
+					let borrow = self.tcx.ty_env.borrow();
+					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
+						todo!()
+					};
 
-					let body = self.tcx.typeck_fn(ident, &decl, body, env);
-					if self.tcx.scx.options.print.contains(&PrintKind::TypedBodyIr) {
-						println!("{body:#?}");
-					}
-					let func_id = id_map.get(&ident.name).unwrap();
+					let Some(func_id) = function_ids.get(&item.id) else {
+						println!("assuming fn {:?} is external", name.sym);
+						continue;
+					};
+
+					let body = body.as_ref().unwrap();
 					self.define_function(*func_id, &decl, &body).unwrap();
 				}
+				_ => {}
 			}
 		}
 	}
@@ -255,9 +256,9 @@ impl<'ctx> Generator<'_, 'ctx> {
 		fn_val
 			.get_param_iter()
 			.zip(&decl.inputs)
-			.for_each(|(arg, ty::Param { ident, ty })| {
+			.for_each(|(arg, ty::Param { name, ty })| {
 				arg.into_int_value()
-					.set_name(&self.tcx.scx.symbols.resolve(ident.name));
+					.set_name(&self.tcx.scx.symbols.resolve(name.sym));
 			});
 
 		Ok(fn_val)
@@ -265,7 +266,7 @@ impl<'ctx> Generator<'_, 'ctx> {
 }
 
 impl<'ctx> Generator<'_, 'ctx> {
-	fn codegen_block(&mut self, block: &tbir::Block) -> Result<MaybeValue<'ctx>> {
+	fn codegen_block(&mut self, block: &hir::Block) -> Result<MaybeValue<'ctx>> {
 		for stmt in &block.stmts {
 			let should_stop_block_codegen = self.codegen_stmt(stmt)?;
 			if should_stop_block_codegen {
@@ -280,22 +281,15 @@ impl<'ctx> Generator<'_, 'ctx> {
 		}
 	}
 
-	fn codegen_stmt(&mut self, stmt: &tbir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
+	fn codegen_stmt(&mut self, stmt: &hir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
 		match &stmt.kind {
-			tbir::StmtKind::Expr(expr) => Ok(self.codegen_expr(expr)?.is_never()),
-			tbir::StmtKind::Let { ident, value, .. } => {
+			hir::StmtKind::Expr(expr) => Ok(self.codegen_expr(expr)?.is_never()),
+			hir::StmtKind::Let { ident, value, .. } => {
 				let expr_value = self.codegen_expr(value)?;
-				self.variables.insert(ident.name, expr_value.clone());
+				self.variables.insert(ident.sym, expr_value.clone());
 				Ok(expr_value.is_never())
 			}
-			tbir::StmtKind::Assign { target, value } => {
-				let variable = self.variables.get(&target.name).unwrap();
-				let expr_value = self.codegen_expr(value)?;
-				// self.builder.def_var(variable, expr_value);
-
-				Ok(expr_value.is_never())
-			}
-			tbir::StmtKind::Loop { block } => {
+			hir::StmtKind::Loop(block) => {
 				let func = self
 					.builder
 					.get_insert_block()
@@ -313,9 +307,9 @@ impl<'ctx> Generator<'_, 'ctx> {
 		}
 	}
 
-	fn codegen_expr(&mut self, expr: &tbir::Expr) -> Result<MaybeValue<'ctx>> {
+	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue<'ctx>> {
 		let value = match &expr.kind {
-			tbir::ExprKind::Literal(lit, sym) => {
+			hir::ExprKind::Literal(lit, sym) => {
 				let sym = self.tcx.scx.symbols.resolve(*sym);
 				let val = match lit {
 					lexer::LiteralKind::Integer => self
@@ -328,8 +322,8 @@ impl<'ctx> Generator<'_, 'ctx> {
 				};
 				MaybeValue::Value(val)
 			}
-			tbir::ExprKind::Variable(ident) => {
-				let var = match self.variables.get(&ident.name).unwrap() {
+			hir::ExprKind::Access(name) => {
+				let var = match self.variables.get(&name.simple().sym).unwrap() {
 					MaybeValue::Value(val) => val.into_pointer_value(),
 					MaybeValue::Zst | MaybeValue::Never => panic!(),
 				};
@@ -340,58 +334,72 @@ impl<'ctx> Generator<'_, 'ctx> {
 						// TODO
 						self.ctx.i64_type(),
 						var,
-						&self.tcx.scx.symbols.resolve(ident.name),
+						&self.tcx.scx.symbols.resolve(name.simple().sym),
 					)
 					.unwrap()
 					.as_basic_value_enum();
 
 				MaybeValue::Value(value)
 			}
-			tbir::ExprKind::Binary(op, left, right) => self.codegen_bin_op(*op, left, right)?,
-			tbir::ExprKind::FnCall { expr, args } => {
-				let tbir::ExprKind::Variable(ident) = expr.kind else {
+			hir::ExprKind::Assign { target, value } => {
+				todo!()
+				// let variable = self.variables.get(&target.name).unwrap();
+				// let expr_value = self.codegen_expr(value)?;
+				// // self.builder.def_var(variable, expr_value);
+
+				// MaybeValue::Value(expr_value.is_never())
+			}
+			hir::ExprKind::Binary(op, left, right) => self.codegen_bin_op(*op, left, right)?,
+
+			hir::ExprKind::Unary(op, expr) => todo!(),
+			hir::ExprKind::Method(expr, name, args) => todo!(),
+			hir::ExprKind::Field(expr, name) => todo!(),
+			hir::ExprKind::Deref(expr) => todo!(),
+
+			hir::ExprKind::FnCall { expr, args } => {
+				let hir::ExprKind::Access(path) = &expr.kind else {
 					todo!("not a fn")
 				};
 				let func = self
 					.module
-					.get_function(&self.tcx.scx.symbols.resolve(ident.name))
+					.get_function(&self.tcx.scx.symbols.resolve(path.simple().sym))
 					.unwrap();
-				if args.len() != func.count_params() as usize {
+				if args.bit.len() != func.count_params() as usize {
 					return Err("fn call args count mismatch");
 				}
 
 				let mut argsz = Vec::new();
-				for arg in args {
-					let val = self.codegen_expr(arg)?;
+				for arg in &args.bit {
+					let val = self.codegen_expr(&arg)?;
 					if let Some(Some(val)) = val.as_value_enum() {
 						argsz.push(val.into());
 					}
 				}
 
 				let call = self.builder.build_call(func, &argsz, "call").unwrap();
-				let value = call.try_as_basic_value().left();
+				let value = call.try_as_basic_value().basic();
 				match value {
 					Some(val) => MaybeValue::Value(val),
 					None => MaybeValue::Zst,
 				}
 			}
-			tbir::ExprKind::If {
+			hir::ExprKind::If {
 				cond,
 				conseq,
 				altern,
 			} => self.codegen_if(cond, conseq, altern.as_deref())?,
-			tbir::ExprKind::Return(_) => todo!(),
-			tbir::ExprKind::Break(_) => todo!(),
-			tbir::ExprKind::Continue => todo!(),
+			hir::ExprKind::Return(_) => todo!(),
+			hir::ExprKind::Break(_) => todo!(),
+			hir::ExprKind::Continue => todo!(),
 		};
 		Ok(value)
 	}
 
 	fn codegen_if(
 		&mut self,
-		cond: &tbir::Expr,
-		conseq: &tbir::Block,
-		altern: Option<&tbir::Block>,
+		cond: &hir::Expr,
+		conseq: &hir::Block,
+		altern: Option<&hir::Block>,
 	) -> Result<MaybeValue<'ctx>> {
 		let condition = match self.codegen_expr(cond)? {
 			MaybeValue::Value(val) => val.into_int_value(),
@@ -434,9 +442,9 @@ impl<'ctx> Generator<'_, 'ctx> {
 
 	fn codegen_bin_op(
 		&mut self,
-		op: ast::Spanned<lexer::BinOp>,
-		left: &tbir::Expr,
-		right: &tbir::Expr,
+		op: ast::Spanned<ast::BinaryOp>,
+		left: &hir::Expr,
+		right: &hir::Expr,
 	) -> Result<MaybeValue<'ctx>> {
 		tracing::trace!("codegen_bin_op");
 
@@ -454,33 +462,39 @@ impl<'ctx> Generator<'_, 'ctx> {
 		let rhs = rhs.into_int_value();
 
 		let ins = match op.bit {
-			lexer::BinOp::Plus => self.builder.build_int_add(lhs, rhs, "").unwrap(),
-			lexer::BinOp::Minus => self.builder.build_int_sub(lhs, rhs, "").unwrap(),
-			lexer::BinOp::Mul => self.builder.build_int_mul(lhs, rhs, "").unwrap(),
-			lexer::BinOp::Div => self.builder.build_int_unsigned_div(lhs, rhs, "").unwrap(),
-			lexer::BinOp::Mod => self.builder.build_int_unsigned_rem(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Plus => self.builder.build_int_add(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Minus => self.builder.build_int_sub(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Mul => self.builder.build_int_mul(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Div => self.builder.build_int_unsigned_div(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Mod => self.builder.build_int_unsigned_rem(lhs, rhs, "").unwrap(),
 
-			lexer::BinOp::Gt => self
+			ast::BinaryOp::And => self.builder.build_and(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Or => self.builder.build_or(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Xor => self.builder.build_xor(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Shl => self.builder.build_left_shift(lhs, rhs, "").unwrap(),
+			ast::BinaryOp::Shr => self.builder.build_right_shift(lhs, rhs, false, "").unwrap(),
+
+			ast::BinaryOp::Gt => self
 				.builder
 				.build_int_compare(IntPredicate::SGT, lhs, rhs, "")
 				.unwrap(),
-			lexer::BinOp::Ge => self
+			ast::BinaryOp::Ge => self
 				.builder
 				.build_int_compare(IntPredicate::SGE, lhs, rhs, "")
 				.unwrap(),
-			lexer::BinOp::Lt => self
+			ast::BinaryOp::Lt => self
 				.builder
 				.build_int_compare(IntPredicate::SLT, lhs, rhs, "")
 				.unwrap(),
-			lexer::BinOp::Le => self
+			ast::BinaryOp::Le => self
 				.builder
 				.build_int_compare(IntPredicate::SLE, lhs, rhs, "")
 				.unwrap(),
-			lexer::BinOp::EqEq => self
+			ast::BinaryOp::EqEq => self
 				.builder
 				.build_int_compare(IntPredicate::EQ, lhs, rhs, "")
 				.unwrap(),
-			lexer::BinOp::Ne => self
+			ast::BinaryOp::Ne => self
 				.builder
 				.build_int_compare(IntPredicate::NE, lhs, rhs, "")
 				.unwrap(),
