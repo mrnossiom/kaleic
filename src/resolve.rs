@@ -4,7 +4,7 @@ use crate::{
 	ast, errors,
 	hir::{self, Enum, Function, Struct, TypeAlias},
 	session::Symbol,
-	ty::{self, Infer, PrimitiveKind, TyKind},
+	ty::{self, TyKind},
 };
 
 #[derive(Debug)]

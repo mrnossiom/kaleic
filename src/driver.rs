@@ -1,11 +1,11 @@
-use std::{fmt::Write as _, fs, io::Write as _};
+use std::{fs, io::Write as _};
 
 use ariadne::ReportKind;
 
 use crate::{
 	codegen::{self, Backend, CodeGenBackend, JitBackend, ObjectBackend},
 	lowerer, parser, pretty_print,
-	session::{Diagnostic, OutputKind, PrintKind, Report, SessionCtx, Span},
+	session::{Diagnostic, PrintKind, Report, SessionCtx, Span},
 	ty,
 };
 
@@ -81,8 +81,7 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	scx.dcx().check_sane_or_exit();
 
-	// lower HIR bodies to TBIR
-	// codegen TBIR bodies
+	// codegen hir bodies
 	if scx.options.jit {
 		let backend: &mut dyn JitBackend = match scx.options.backend {
 			#[cfg(feature = "cranelift")]
@@ -94,6 +93,8 @@ pub fn pipeline(scx: &SessionCtx) {
 
 		backend.codegen_root(&hir);
 		backend.call_main();
+
+		tracing::info!("Finished execution!");
 	} else {
 		let mut backend = match scx.options.backend {
 			#[cfg(feature = "cranelift")]
@@ -106,8 +107,29 @@ pub fn pipeline(scx: &SessionCtx) {
 		backend.codegen_root(&hir);
 
 		let object = backend.get_object();
+		// emit object
 		let bytes = object.emit().unwrap();
-		std::fs::write(scx.options.output.join("out.elf"), bytes).unwrap();
+		let main_object = scx.options.output.join("main.o");
+		std::fs::write(&main_object, bytes).unwrap();
+
+		// link to binary
+		let mut cmd = std::process::Command::new("wild");
+
+		cmd.arg(&main_object);
+
+		// link libc
+		cmd.args(["-l", "c"]);
+
+		// no `_start` symbol
+		cmd.args(["-e", "main"]);
+
+		cmd.arg("--output");
+		let binary = scx.options.output.join("binary.elf");
+		cmd.arg(&binary);
+
+		cmd.status().unwrap();
+
+		tracing::info!("Successfully linked binary to `{}`!", binary.display());
 	}
 
 	tracing::info!("Reached pipeline end successfully!");

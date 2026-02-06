@@ -3,12 +3,11 @@ use std::{cell::RefCell, collections::HashMap, fmt, sync::atomic::AtomicU32};
 use crate::{
 	ast::{self, Ident},
 	bug, errors,
-	hir::{self, ExprKind, Function, NodeId},
+	hir::{self, Function, NodeId},
 	inference::InferTag,
-	lexer::LiteralKind,
 	resolve::{self, NameEnvironment},
 	session::{SessionCtx, Span, Symbol},
-	ty, typeck,
+	typeck,
 };
 
 #[derive(Debug)]

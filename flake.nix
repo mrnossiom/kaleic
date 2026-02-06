@@ -49,6 +49,7 @@
               typos
 
               llvmPackages.llvm.dev
+              wild
 
               cargo-insta
             ];

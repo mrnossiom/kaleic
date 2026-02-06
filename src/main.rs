@@ -5,8 +5,6 @@ use kaleic::{driver, session::SessionCtx};
 use tracing_subscriber::{EnvFilter, FmtSubscriber, fmt::time};
 
 mod options {
-	use std::path::PathBuf;
-
 	use clap::ValueEnum;
 	use kaleic::{codegen, session};
 

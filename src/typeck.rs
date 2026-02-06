@@ -4,7 +4,6 @@ use crate::{
 	ast::Stmt,
 	hir::{self, Enum, Expr, Function, ItemKind, NodeId, Struct, TypeAlias},
 	lexer,
-	session::Symbol,
 	ty::{self, TyKind},
 };
 
