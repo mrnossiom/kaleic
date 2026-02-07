@@ -12,7 +12,7 @@ fn deref(bar: T) {
 
 fn assign(bar: T) {
 	var foo = foo;
-	val foo = foo;
+	var foo = foo;
 	// let foo = foo;
 	// let mut foo = foo;
 }

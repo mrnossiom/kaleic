@@ -70,3 +70,7 @@ fn main() {
 	.into_iter()
 	.map((|x| x+1):fn(uint) -> uint);
 }
+
+fn forget[T](v: T) void;
+fn substring['a](s: &'a str) &'a str;
+fn substring(s: &str) &str;

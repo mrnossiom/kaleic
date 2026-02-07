@@ -1,10 +1,13 @@
 // You can link any symbol from libc here
 
-extern "c" fn putchar(c: uint);
+extern "c" fn putchar(c: uint) void;
+extern "c" fn exit(c: uint) void;
+
+type Number = uint;
 
 fn main() {
 	var n = 0;
-	while n != 10 {
+	while n != 45 {
 		var res = fibo(n);
 
 		print_num(res);
@@ -13,9 +16,11 @@ fn main() {
 		
 		n = n + 1;
 	}
+
+	exit(0);
 }
 
-fn num_to_ascii(n: uint) uint /*Option<uint>*/ {
+fn num_to_ascii(n: Number) Number /*Option<Number>*/ {
 	if n <= 9 {
 		var num_ascii_base = 48;
 		// Some(num_ascii_base + n)
@@ -26,7 +31,7 @@ fn num_to_ascii(n: uint) uint /*Option<uint>*/ {
 	}
 }
 
-fn print_num_rev(n: uint) {
+fn print_num_rev(n: Number) {
 	if n == 0 {
 		putchar(num_to_ascii(0));
 	} else {
@@ -38,7 +43,7 @@ fn print_num_rev(n: uint) {
 	};
 }
 
-fn print_num(n: uint) {
+fn print_num(n: Number) {
     if n == 0 {
         putchar(num_to_ascii(0));
         return;
@@ -69,7 +74,7 @@ fn print_num(n: uint) {
 }
 
 
-fn fibo(n: uint) uint {
+fn fibo(n: Number) Number {
 	var a = 0;
 	var b = 1;
 

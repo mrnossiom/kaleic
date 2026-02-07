@@ -119,7 +119,6 @@ pub fn pipeline(scx: &SessionCtx) {
 
 		// link libc
 		cmd.args(["-l", "c"]);
-
 		// no `_start` symbol
 		cmd.args(["-e", "main"]);
 

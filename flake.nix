@@ -62,7 +62,7 @@
             LLVM_SYS_211_PREFIX = pkgs.llvmPackages_21.llvm.dev;
 
             RUST_BACKTRACE = "1";
-            RUST_LOG = "info,kaleic=debug,cranelift_jit=warn";
+            RUST_LOG = "info,kaleic=debug,cranelift_jit=warn,cranelift_object=warn";
           };
         }
       );

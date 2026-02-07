@@ -213,6 +213,15 @@ impl Inferer<'_> {
 	fn unify(&mut self, expected: &TyKind<Infer>, actual: &TyKind<Infer>) -> TyKind<Infer> {
 		tracing::trace!(?expected, ?actual, "unify");
 		match (expected, actual) {
+			(TyKind::Ref(expected_ref), ty) => {
+				let expected = self.ty_env[expected_ref].clone().as_infer();
+				self.unify(&expected, ty)
+			}
+			(ty, TyKind::Ref(actual_ref)) => {
+				let actual = self.ty_env[actual_ref].clone().as_infer();
+				self.unify(ty, &actual)
+			}
+
 			(TyKind::Infer(tag, infer), ty) | (ty, TyKind::Infer(tag, infer)) => {
 				self.unify_infer(*tag, *infer, ty)
 			}

@@ -42,6 +42,7 @@ pub mod lowerer {
 	pub fn no_semicolon_mid_block(expr_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, expr_span)
 			.with_message("expression is missing a semicolon but is not at the end")
+			.with_label(Label::new(expr_span).with_message("here"))
 			.with_message("you may need to add a semicolon at the end of the expression")
 	}
 }

@@ -7,7 +7,6 @@ use crate::{
 	inference::InferTag,
 	resolve::{self, NameEnvironment},
 	session::{SessionCtx, Span, Symbol},
-	typeck,
 };
 
 #[derive(Debug)]
@@ -58,11 +57,9 @@ impl TyCtx<'_> {
 
 	/// Computes inference for every function body and stores the result
 	pub(crate) fn typeck(&self, hir: &hir::Root) {
-		let mut ty_checker = typeck::TypeCheck::new(self);
-		ty_checker.typeck(hir);
-
-		// todo!();
-
+		// let mut ty_checker = typeck::TypeCheck::new(self);
+		// ty_checker.typeck(hir);
+		todo!();
 		// self.typeck_info.replace(Some(ty_checker.info));
 	}
 
@@ -196,7 +193,8 @@ impl TyCtx<'_> {
 					TyKind::Ref(item.id)
 				}
 				None => {
-					panic!("item {:?} doesn't exist", path.sym)
+					eprintln!("item {:?} doesn't exist", path.sym);
+					TyKind::Error
 				}
 			}
 		}

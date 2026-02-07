@@ -1,13 +1,10 @@
-# Compiler Learning
+# KaleiC
 
-# Experiments
+`kaleic` is a compiler implementing a toy language.
+It is named after `kaleidoscope`, the name of the LLVM tutorial example.
 
-## Kaleidoscope
+## Resources
 
-`kaleidoscope` is a dummy language implementation.
-It includes lexing, parsing and codegen.
-
-_Ressources_:
 - [LLVM Original Kaleidoscope tutorial](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/LangImpl01.html)
 - [Inkwell (LLVM Rust Bindings) example implementation](https://github.com/TheDan64/inkwell/blob/master/examples/kaleidoscope/)
 - [Cranelift example implementation](https://github.com/CraneStation/kaleidoscope-cranelift/)

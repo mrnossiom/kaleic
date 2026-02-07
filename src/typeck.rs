@@ -1,3 +1,6 @@
+#![cfg(false)]
+//! Next inference engine
+
 use std::collections::HashMap;
 
 use crate::{

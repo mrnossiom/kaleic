@@ -71,7 +71,9 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(struct_) => todo!(),
+			ty::TyKind::Ref(ref_) => {
+				self.to_cl_type(&self.tcx.ty_env.borrow().as_ref().unwrap()[&ref_])
+			}
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
@@ -162,18 +164,6 @@ impl<M: Module> Generator<'_, M> {
 		Ok(func_id)
 	}
 
-	#[tracing::instrument(level = "debug", skip(self, decl))]
-	fn declare_extern(&mut self, name: Symbol, decl: &ty::FnDecl) -> Result<()> {
-		let _func_id = self.declare_func(name, decl, Linkage::Import)?;
-		Ok(())
-	}
-
-	#[tracing::instrument(level = "debug", skip(self, decl))]
-	fn declare_function(&mut self, name: Symbol, decl: &ty::FnDecl) -> Result<FuncId> {
-		let func_id = self.declare_func(name, decl, Linkage::Export)?;
-		Ok(func_id)
-	}
-
 	fn define_function(
 		&mut self,
 		func_id: FuncId,
@@ -209,12 +199,15 @@ impl<M: Module> Generator<'_, M> {
 			values.insert(ident.sym, Some(variable));
 		}
 
+		let borrow = self.tcx.ty_env.borrow();
+		let ty_env = borrow.as_ref().unwrap();
 		let borrow = self.tcx.typeck_results.borrow();
 		let typeck_results = borrow.as_ref().unwrap();
 
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
 
+			ty_env: &ty_env,
 			typeck_results: &typeck_results,
 
 			builder,
@@ -268,18 +261,23 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 
 					match abi {
 						hir::Abi::Kalei => {
-							let func_id = self.declare_function(name.sym, &decl).unwrap();
+							let func_id =
+							// TODO: change to hidden by default
+								self.declare_func(name.sym, &decl, Linkage::Hidden).unwrap();
 							function_ids.insert(item.id, func_id);
 						}
-						hir::Abi::C => self.declare_extern(name.sym, &decl).unwrap(),
+						hir::Abi::C => {
+							let _func_id =
+								self.declare_func(name.sym, &decl, Linkage::Import).unwrap();
+						}
 					}
 				}
 
-				hir::ItemKind::Struct(Struct { .. })
-				| hir::ItemKind::Enum(Enum { .. })
-				| hir::ItemKind::TypeAlias(_)
-				| hir::ItemKind::Trait { .. }
-				| hir::ItemKind::TraitImpl { .. } => todo!(),
+				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => {
+					todo!("codegen constructors here?")
+				}
+				hir::ItemKind::TypeAlias(_) | hir::ItemKind::Trait { .. } => {}
+				hir::ItemKind::TraitImpl { .. } => todo!("codegen methods"),
 			}
 		}
 		for item in &hir.items {
@@ -304,11 +302,9 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					self.define_function(*func_id, &decl, &body).unwrap();
 				}
 
-				hir::ItemKind::Struct(Struct { .. })
-				| hir::ItemKind::Enum(Enum { .. })
-				| hir::ItemKind::TypeAlias(_)
-				| hir::ItemKind::Trait { .. }
-				| hir::ItemKind::TraitImpl { .. } => todo!(),
+				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
+				hir::ItemKind::TypeAlias(_) | hir::ItemKind::Trait { .. } => {}
+				hir::ItemKind::TraitImpl { .. } => todo!(),
 			}
 		}
 	}
@@ -338,6 +334,7 @@ impl ObjectBackend for Generator<'_, ObjectModule> {
 pub struct FunctionGenerator<'scx, 'bld> {
 	scx: &'scx SessionCtx,
 
+	ty_env: &'scx HashMap<hir::NodeId, ty::TyKind>,
 	typeck_results: &'scx HashMap<hir::NodeId, ty::TyKind>,
 
 	builder: FunctionBuilder<'bld>,
@@ -365,7 +362,7 @@ impl FunctionGenerator<'_, '_> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(struct_) => todo!(),
 			ty::TyKind::Enum(enum_) => todo!(),
-			ty::TyKind::Ref(ty) => todo!(),
+			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.ty_env[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
