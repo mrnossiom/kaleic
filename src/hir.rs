@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-	ast::{self, BinaryOp, Ident, Spanned, UnaryOp},
+	ast::{self, BinaryOp, Ident, ShortCircuitOp, Spanned, UnaryOp},
 	lexer::LiteralKind,
 	session::{Span, Symbol},
 };
@@ -133,10 +133,11 @@ pub enum StmtKind {
 	Expr(Box<Expr>),
 
 	Let {
-		ident: ast::Ident,
+		name: ast::Ident,
 		// Hinted ty
 		ty: Box<ast::Ty>,
 		value: Box<Expr>,
+		mutable: bool,
 	},
 
 	// move these to expr
@@ -152,11 +153,23 @@ pub struct Expr {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-	Access(ast::Path),
-	Literal(LiteralKind, Symbol),
+	Access {
+		path: ast::Path,
+	},
+	Literal {
+		lit: LiteralKind,
+		sym: Symbol,
+	},
 
-	Unary(Spanned<UnaryOp>, Box<Expr>),
-	Binary(Spanned<BinaryOp>, Box<Expr>, Box<Expr>),
+	Unary {
+		op: Spanned<UnaryOp>,
+		expr: Box<Expr>,
+	},
+	Binary {
+		op: Spanned<BinaryOp>,
+		left: Box<Expr>,
+		right: Box<Expr>,
+	},
 
 	FnCall {
 		expr: Box<Expr>,
@@ -169,19 +182,34 @@ pub enum ExprKind {
 		altern: Option<Box<Block>>,
 	},
 
-	Method(Box<Expr>, ast::Ident, Vec<Expr>),
-	Field(Box<Expr>, ast::Ident),
-	Deref(Box<Expr>),
+	Method {
+		expr: Box<Expr>,
+		name: ast::Ident,
+		params: Vec<Expr>,
+	},
+	Field {
+		expr: Box<Expr>,
+		name: ast::Ident,
+	},
+	Deref {
+		expr: Box<Expr>,
+	},
 
 	Assign {
 		target: Box<Expr>,
 		value: Box<Expr>,
 	},
 
-	Return(Option<Box<Expr>>),
-	Break(Option<Box<Expr>>),
-	// TODO: add scope label
-	Continue,
+	Return {
+		expr: Option<Box<Expr>>,
+	},
+	Break {
+		expr: Option<Box<Expr>>,
+		label: Option<Ident>,
+	},
+	Continue {
+		label: Option<Ident>,
+	},
 }
 
 #[derive(Debug, Clone, Default, Copy)]

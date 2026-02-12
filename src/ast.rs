@@ -127,6 +127,12 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortCircuitOp {
+	And,
+	Or,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delimiter {
 	Paren,
 	Bracket,
@@ -138,12 +144,19 @@ pub enum Delimiter {
 #[derive(Debug)]
 pub enum ExprKind {
 	// Atomics
-	Access(Path),
-	Literal(LiteralKind, Symbol),
+	Access {
+		path: Path,
+	},
+	Literal {
+		lit: LiteralKind,
+		sym: Symbol,
+	},
 
 	// Composition
 	/// `( <expr> )`
-	Paren(Box<Expr>),
+	Paren {
+		expr: Box<Expr>,
+	},
 	/// `<op> <expr>`
 	Unary {
 		op: Spanned<UnaryOp>,
@@ -155,6 +168,12 @@ pub enum ExprKind {
 		left: Box<Expr>,
 		right: Box<Expr>,
 	},
+	ShortCircuit {
+		op: Spanned<ShortCircuitOp>,
+		left: Box<Expr>,
+		right: Box<Expr>,
+	},
+
 	/// `<expr> ( <args>* )`
 	FnCall {
 		expr: Box<Expr>,
@@ -169,11 +188,20 @@ pub enum ExprKind {
 	},
 
 	/// <expr> . <ident> ( <expr>* )
-	Method(Box<Expr>, Ident, Vec<Expr>),
+	Method {
+		expr: Box<Expr>,
+		name: Ident,
+		params: Vec<Expr>,
+	},
 	/// <expr> . <ident>
-	Field(Box<Expr>, Ident),
+	Field {
+		expr: Box<Expr>,
+		name: Ident,
+	},
 	/// `<expr> . *`
-	Deref(Box<Expr>),
+	Deref {
+		expr: Box<Expr>,
+	},
 
 	/// `<target> = <value>`
 	Assign {
@@ -181,12 +209,19 @@ pub enum ExprKind {
 		value: Box<Expr>,
 	},
 
-	/// `return [ <label> ] [ <expr> ]`
-	Return(Option<Box<Expr>>),
-	/// `break [ <label> ]`
-	Break(Option<Box<Expr>>),
-	/// `continue [ <label> ]`
-	Continue,
+	/// `return [ <expr> ]`
+	Return {
+		expr: Option<Box<Expr>>,
+	},
+	/// `break [ ' <label> ] [ <expr> ]`
+	Break {
+		expr: Option<Box<Expr>>,
+		label: Option<Spanned<Ident>>,
+	},
+	/// `continue [ ' <label> ]`
+	Continue {
+		label: Option<Spanned<Ident>>,
+	},
 }
 
 #[derive(Debug)]
@@ -355,11 +390,12 @@ pub enum StmtKind {
 	/// `while <check> <body>`
 	WhileLoop { check: Box<Expr>, body: Box<Block> },
 
-	/// `var <name> [ : <ty> ] = <expr> ;`
+	/// `let [ mut ] <name> [ : <ty> ] = <expr> ;`
 	Let {
-		name: Ident,
+		ident: Ident,
 		ty: Option<Box<Ty>>,
-		value: Box<Expr>,
+		value: Option<Box<Expr>>,
+		mutable: bool,
 	},
 
 	/// `<expr> ;`

@@ -17,7 +17,11 @@ pub enum Backend {
 	NoBackend,
 }
 
-#[allow(clippy::derivable_impls, reason = "not always the case")]
+#[allow(
+	clippy::derivable_impls,
+	unreachable_code,
+	reason = "depends on backend feature flags"
+)]
 impl Default for Backend {
 	fn default() -> Self {
 		#[cfg(feature = "cranelift")]

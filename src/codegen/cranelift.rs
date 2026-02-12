@@ -164,40 +164,13 @@ impl<M: Module> Generator<'_, M> {
 		Ok(func_id)
 	}
 
-	fn define_function(
-		&mut self,
-		func_id: FuncId,
-		decl: &ty::FnDecl,
-		body: &hir::Block,
-	) -> Result<()> {
+	fn define_func(&mut self, func_id: FuncId, decl: &ty::FnDecl, body: &hir::Block) -> Result<()> {
 		let mut context = self.module.make_context();
 
 		// TODO: this computes the signature a second time after declaration
 		context.func.signature = self.lower_signature(decl);
 
-		let params = decl
-			.inputs
-			.iter()
-			// skip zst
-			.filter_map(|param| self.to_cl_type(&param.ty).map(|ty| (param.name, ty)))
-			.collect::<Vec<_>>();
-
-		let mut builder = FunctionBuilder::new(&mut context.func, &mut self.builder_context);
-
-		let entry_block = builder.create_block();
-		builder.append_block_params_for_function_params(entry_block);
-		builder.switch_to_block(entry_block);
-		builder.seal_block(entry_block);
-
-		let mut values = HashMap::new();
-		for (i, (ident, ty)) in params.into_iter().enumerate() {
-			let value = builder.block_params(entry_block)[i];
-
-			let variable = builder.declare_var(ty);
-			builder.def_var(variable, value);
-
-			values.insert(ident.sym, Some(variable));
-		}
+		let builder = FunctionBuilder::new(&mut context.func, &mut self.builder_context);
 
 		let borrow = self.tcx.ty_env.borrow();
 		let ty_env = borrow.as_ref().unwrap();
@@ -214,15 +187,12 @@ impl<M: Module> Generator<'_, M> {
 			functions: &self.functions,
 			module: &mut self.module,
 			isa: self.isa.clone(),
-			values,
 
-			loops: Vec::default(),
+			values: HashMap::new(),
+			loop_stack: Vec::default(),
 		};
 
-		let return_value = generator.codegen_block(body)?;
-		return_value.with_slice(|vals| {
-			generator.builder.ins().return_(vals);
-		});
+		generator.codegen_body(decl, body)?;
 
 		generator.builder.finalize();
 
@@ -299,7 +269,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_function(*func_id, &decl, &body).unwrap();
+					self.define_func(*func_id, &decl, &body).unwrap();
 				}
 
 				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
@@ -341,9 +311,9 @@ pub struct FunctionGenerator<'scx, 'bld> {
 	functions: &'bld HashMap<Symbol, FuncId>,
 	module: &'bld mut dyn Module,
 	isa: Arc<dyn TargetIsa + 'static>,
-	values: HashMap<Symbol, Option<Variable>>,
 
-	loops: Vec<(Block, Block)>,
+	values: HashMap<Symbol, Option<Variable>>,
+	loop_stack: Vec<(Block, Block)>,
 }
 
 /// Codegen hir functions
@@ -367,6 +337,39 @@ impl FunctionGenerator<'_, '_> {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
 		}
+	}
+
+	fn codegen_body(&mut self, decl: &ty::FnDecl, block: &hir::Block) -> Result<()> {
+		tracing::trace!(id = ?block.id, "codegen_body");
+
+		let entry_block = self.builder.create_block();
+		self.builder
+			.append_block_params_for_function_params(entry_block);
+		self.builder.switch_to_block(entry_block);
+		self.builder.seal_block(entry_block);
+
+		let params = decl
+			.inputs
+			.iter()
+			// skip zst
+			.filter_map(|param| self.to_cl_type(&param.ty).map(|ty| (param.name, ty)))
+			.collect::<Vec<_>>();
+
+		for (i, (ident, ty)) in params.into_iter().enumerate() {
+			let value = self.builder.block_params(entry_block)[i];
+
+			let variable = self.builder.declare_var(ty);
+			self.builder.def_var(variable, value);
+
+			self.values.insert(ident.sym, Some(variable));
+		}
+
+		let return_value = self.codegen_block(block)?;
+		return_value.with_slice(|vals| {
+			self.builder.ins().return_(vals);
+		});
+
+		Ok(())
 	}
 
 	fn codegen_block(&mut self, block: &hir::Block) -> Result<MaybeValue> {
@@ -394,7 +397,9 @@ impl FunctionGenerator<'_, '_> {
 				MaybeValue::Value(_) | MaybeValue::Zst => {}
 				MaybeValue::Never => return Ok(true),
 			},
-			hir::StmtKind::Let { ident, value, .. } => match self.codegen_expr(value)? {
+			hir::StmtKind::Let {
+				name: ident, value, ..
+			} => match self.codegen_expr(value)? {
 				MaybeValue::Value(expr_value) => {
 					let ty = self.typeck_results.get(&value.id).unwrap();
 					let ty = self.to_cl_type(ty).unwrap();
@@ -412,7 +417,7 @@ impl FunctionGenerator<'_, '_> {
 				let loop_ = self.builder.create_block();
 				let cont = self.builder.create_block();
 
-				self.loops.push((loop_, cont));
+				self.loop_stack.push((loop_, cont));
 
 				self.builder.ins().jump(loop_, &[]);
 
@@ -426,7 +431,7 @@ impl FunctionGenerator<'_, '_> {
 				self.builder.switch_to_block(cont);
 				self.builder.seal_block(cont);
 
-				self.loops.pop();
+				self.loop_stack.pop();
 			}
 		}
 		Ok(false)
@@ -435,7 +440,7 @@ impl FunctionGenerator<'_, '_> {
 	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue> {
 		tracing::trace!(id = ?expr.id, "codegen_expr");
 		let value = match &expr.kind {
-			hir::ExprKind::Literal(lit, sym) => {
+			hir::ExprKind::Literal { lit, sym } => {
 				let sym = self.scx.symbols.resolve(*sym);
 				let value = match lit {
 					lexer::LiteralKind::Integer => {
@@ -452,7 +457,7 @@ impl FunctionGenerator<'_, '_> {
 				};
 				MaybeValue::Value(value)
 			}
-			hir::ExprKind::Access(path) => {
+			hir::ExprKind::Access { path } => {
 				let path = path.segments[0];
 				match self.values.get(&path.sym) {
 					Some(Some(var)) => MaybeValue::Value(self.builder.use_var(*var)),
@@ -461,14 +466,14 @@ impl FunctionGenerator<'_, '_> {
 				}
 			}
 
-			hir::ExprKind::Unary(op, expr) => todo!("codegen unary {op:?} {expr:?}"),
+			hir::ExprKind::Unary { op, expr } => todo!("codegen unary {op:?} {expr:?}"),
 
-			hir::ExprKind::Binary(op, left, right) => {
+			hir::ExprKind::Binary { op, left, right } => {
 				MaybeValue::Value(self.codegen_bin_op(*op, left, right)?)
 			}
 			hir::ExprKind::FnCall { expr, args } => {
 				// TODO: allow indirect calls
-				let hir::ExprKind::Access(path) = &expr.kind else {
+				let hir::ExprKind::Access { path } = &expr.kind else {
 					todo!("not a fn")
 				};
 				let path = path.segments[0];
@@ -504,14 +509,15 @@ impl FunctionGenerator<'_, '_> {
 				conseq,
 				altern,
 			} => self.codegen_if(cond, conseq, altern.as_deref())?,
-			hir::ExprKind::Method(expr, name, params) => todo!(),
-			hir::ExprKind::Deref(expr) => todo!(),
-			hir::ExprKind::Field(expr, ident) => todo!(),
+			hir::ExprKind::Method { expr, name, params } => todo!(),
+			hir::ExprKind::Field { expr, name: ident } => todo!(),
+			hir::ExprKind::Deref { expr } => todo!(),
+
 			hir::ExprKind::Assign { target, value } => {
-				let hir::ExprKind::Access(target) = &target.kind else {
+				let hir::ExprKind::Access { path } = &target.kind else {
 					todo!("invalid lvalue");
 				};
-				let Some(variable) = *self.values.get(&target.simple().sym).unwrap() else {
+				let Some(variable) = *self.values.get(&path.simple().sym).unwrap() else {
 					// handle zst
 					return Ok(MaybeValue::Zst);
 				};
@@ -526,7 +532,7 @@ impl FunctionGenerator<'_, '_> {
 				maybe_value
 			}
 
-			hir::ExprKind::Return(expr) => {
+			hir::ExprKind::Return { expr } => {
 				if let Some(expr) = expr {
 					match self.codegen_expr(expr)? {
 						MaybeValue::Value(expr_value) => {
@@ -543,8 +549,8 @@ impl FunctionGenerator<'_, '_> {
 
 				MaybeValue::Never
 			}
-			hir::ExprKind::Break(expr) => {
-				let (_, cont) = *self.loops.last().unwrap();
+			hir::ExprKind::Break { expr, label } => {
+				let (_, cont) = *self.loop_stack.last().unwrap();
 
 				if let Some(expr) = expr {
 					match self.codegen_expr(expr)? {
@@ -562,8 +568,8 @@ impl FunctionGenerator<'_, '_> {
 
 				MaybeValue::Never
 			}
-			hir::ExprKind::Continue => {
-				let (loop_, _) = *self.loops.last().unwrap();
+			hir::ExprKind::Continue { label } => {
+				let (loop_, _) = *self.loop_stack.last().unwrap();
 
 				self.builder.ins().jump(loop_, &[]);
 

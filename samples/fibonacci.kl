@@ -3,12 +3,14 @@
 extern "c" fn putchar(c: uint) void;
 extern "c" fn exit(c: uint) void;
 
+// TODO: make an example to check how overflow is handled
+
 type Number = uint;
 
 fn main() {
-	var n = 0;
+	let n = 0;
 	while n != 45 {
-		var res = fibo(n);
+		let res = fibo(n);
 
 		print_num(res);
 		// newline
@@ -22,7 +24,7 @@ fn main() {
 
 fn num_to_ascii(n: Number) Number /*Option<Number>*/ {
 	if n <= 9 {
-		var num_ascii_base = 48;
+		let num_ascii_base = 48;
 		// Some(num_ascii_base + n)
 		num_ascii_base + n
 	} else {
@@ -36,7 +38,7 @@ fn print_num_rev(n: Number) {
 		putchar(num_to_ascii(0));
 	} else {
 		while n != 0 {
-			var rest = n % 10;
+			let rest = n % 10;
 			n = n / 10;
 			putchar(num_to_ascii(rest));
 		}
@@ -50,8 +52,8 @@ fn print_num(n: Number) {
     };
 
     // Calculate the divisor to get the most significant digit
-    var divisor = 1;
-    var temp = n;
+    let divisor = 1;
+    let temp = n;
     while temp >= 10 {
         temp = temp / 10;
         divisor = divisor * 10;
@@ -62,7 +64,7 @@ fn print_num(n: Number) {
 
     // Print each digit from most to least significant
     while divisor > 0 {
-        var digit = temp / divisor;  // Get the current most significant digit
+        let digit = temp / divisor;  // Get the current most significant digit
         putchar(num_to_ascii(digit));
         
         // Remove the most significant digit
@@ -75,11 +77,11 @@ fn print_num(n: Number) {
 
 
 fn fibo(n: Number) Number {
-	var a = 0;
-	var b = 1;
+	let a = 0;
+	let b = 1;
 
 	while n != 0 {
-		var next = a + b;
+		let next = a + b;
 		a = b;
 		b = next;
 

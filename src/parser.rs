@@ -13,8 +13,8 @@ use crate::lexer::{Keyword::*, LiteralKind::*, TokenKind::*};
 use crate::{
 	ast::{
 		BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Ident, Item, ItemKind, NodeId,
-		Param, Path, Root, Spanned, Stmt, StmtKind, TraitItem, TraitItemKind, Ty, TyKind,
-		TypeAlias, UnaryOp, Variant, VariantKind,
+		Param, Path, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, TraitItem, TraitItemKind, Ty,
+		TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
 	},
 	bug, errors,
 	lexer::{Lexer, Token, TokenKind},
@@ -58,6 +58,7 @@ type PResult<T> = std::result::Result<T, Diagnostic>;
 #[derive(Debug)]
 enum AssocOp {
 	Binary(BinaryOp),
+	ShortCircuit(ShortCircuitOp),
 	Assign,
 }
 
@@ -81,6 +82,8 @@ impl AssocOp {
 			TokenKind::EqEq => Self::Binary(BinaryOp::EqEq),
 			TokenKind::Ne => Self::Binary(BinaryOp::Ne),
 			TokenKind::Eq => Self::Assign,
+			TokenKind::Keyword(And) => Self::ShortCircuit(ShortCircuitOp::And),
+			TokenKind::Keyword(Or) => Self::ShortCircuit(ShortCircuitOp::Or),
 			_ => return None,
 		};
 		Some(kind)
@@ -95,6 +98,9 @@ impl AssocOp {
 				BinaryOp::And | BinaryOp::Or | BinaryOp::Xor => 24,
 				BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Lt | BinaryOp::Le => 16,
 				BinaryOp::Ne | BinaryOp::EqEq => 8,
+			},
+			Self::ShortCircuit(op) => match op {
+				ShortCircuitOp::And | ShortCircuitOp::Or => 4,
 			},
 			Self::Assign => 0,
 		}
@@ -277,6 +283,10 @@ impl Parser<'_> {
 					let op = Spanned::new(bin_op, assoc_op.span);
 					ExprKind::Binary { op, left, right }
 				}
+				AssocOp::ShortCircuit(sc_op) => {
+					let op = Spanned::new(sc_op, assoc_op.span);
+					ExprKind::ShortCircuit { op, left, right }
+				}
 				AssocOp::Assign => ExprKind::Assign {
 					target: left,
 					value: right,
@@ -333,15 +343,24 @@ impl Parser<'_> {
 				let field = self.expect_ident()?;
 
 				if self.eat(OpenParen) {
-					let args =
+					let params =
 						self.parse_seq_rest(OpenParen, CloseParen, Comma, Parser::parse_expr)?;
-					ExprKind::Method(Box::new(expr), field, args)
+					ExprKind::Method {
+						expr: Box::new(expr),
+						name: field,
+						params,
+					}
 				} else {
-					ExprKind::Field(Box::new(expr), field)
+					ExprKind::Field {
+						expr: Box::new(expr),
+						name: field,
+					}
 				}
 			} else if self.eat(Star) {
 				// `<expr> . *`
-				ExprKind::Deref(Box::new(expr))
+				ExprKind::Deref {
+					expr: Box::new(expr),
+				}
 			} else {
 				let report =
 					errors::parser::expected_construct_no_match("a postfix construct", self.token);
@@ -436,10 +455,10 @@ impl Parser<'_> {
 		self.bump();
 
 		match kind {
-			Integer => ExprKind::Literal(Integer, sym),
-			Float => ExprKind::Literal(Float, sym),
+			Integer => ExprKind::Literal { lit: Integer, sym },
+			Float => ExprKind::Literal { lit: Float, sym },
 			// handle prefixed strings (e.g. c"content")
-			Str => ExprKind::Literal(Str, sym),
+			Str => ExprKind::Literal { lit: Str, sym },
 		}
 	}
 
@@ -449,7 +468,7 @@ impl Parser<'_> {
 
 		let path = self.parse_path()?;
 
-		Ok(ExprKind::Access(path))
+		Ok(ExprKind::Access { path })
 	}
 
 	/// Parse [`ExprKind::Paren`]
@@ -460,7 +479,7 @@ impl Parser<'_> {
 		let expr = Box::new(self.parse_expr()?);
 		self.expect(CloseParen)?;
 
-		Ok(ExprKind::Paren(expr))
+		Ok(ExprKind::Paren { expr })
 	}
 
 	/// Parse [`ExprKind::If`]
@@ -491,7 +510,7 @@ impl Parser<'_> {
 		// TODO: bad for recovery
 		let expr = self.parse_expr().ok().map(Box::new);
 
-		Ok(ExprKind::Return(expr))
+		Ok(ExprKind::Return { expr })
 	}
 
 	/// Parse [`ExprKind::Break`]
@@ -499,9 +518,17 @@ impl Parser<'_> {
 		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Break));
 
+		let label_span = self.token.span;
+		let label = if self.eat(TokenKind::Apostrophe) {
+			let label = self.expect_ident()?;
+			Some(Spanned::new(label, self.close_span(label_span)))
+		} else {
+			None
+		};
+
 		let expr = self.parse_expr().ok().map(Box::new);
 
-		Ok(ExprKind::Break(expr))
+		Ok(ExprKind::Break { expr, label })
 	}
 
 	/// Parse [`ExprKind::Continue`]
@@ -509,9 +536,15 @@ impl Parser<'_> {
 		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Continue));
 
-		// TODO: parse label
+		let label_span = self.token.span;
+		let label = if self.eat(TokenKind::Apostrophe) {
+			let label = self.expect_ident()?;
+			Some(Spanned::new(label, self.close_span(label_span)))
+		} else {
+			None
+		};
 
-		Ok(ExprKind::Continue)
+		Ok(ExprKind::Continue { label })
 	}
 }
 
@@ -932,8 +965,7 @@ impl Parser<'_> {
 				StmtKind::Empty
 			}
 
-			Keyword(Var) => self.parse_stmt_var()?,
-			Keyword(Cst) => self.parse_stmt_var()?,
+			Keyword(Let) => self.parse_stmt_let()?,
 
 			Eof => {
 				let report = Report::build(ReportKind::Error, self.token.span)
@@ -975,10 +1007,13 @@ impl Parser<'_> {
 		Ok(StmtKind::WhileLoop { check, body })
 	}
 
-	fn parse_stmt_var(&mut self) -> PResult<StmtKind> {
+	fn parse_stmt_let(&mut self) -> PResult<StmtKind> {
 		debug_parser!(self);
 
-		self.expect(Keyword(Var))?;
+		self.expect(Keyword(Let))?;
+
+		let mutable = self.eat(Keyword(Mut));
+
 		let name = self.expect_ident()?;
 
 		// definition with optional ty
@@ -988,12 +1023,21 @@ impl Parser<'_> {
 			None
 		};
 
-		self.expect(Eq)?;
+		let value = if self.eat(Semi) {
+			None
+		} else {
+			self.expect(Eq)?;
+			let value = Box::new(self.parse_expr()?);
+			self.expect(Semi)?;
+			Some(value)
+		};
 
-		let value = Box::new(self.parse_expr()?);
-		self.expect(Semi)?;
-
-		Ok(StmtKind::Let { name, ty, value })
+		Ok(StmtKind::Let {
+			ident: name,
+			ty,
+			value,
+			mutable,
+		})
 	}
 }
 

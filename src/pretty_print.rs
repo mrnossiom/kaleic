@@ -10,7 +10,7 @@ use std::io::{self, Write, stdout};
 use crate::{
 	ast::{
 		BinaryOp, Block, Expr, ExprKind, FieldDef, Function, Item, ItemKind, Param, Path, Root,
-		Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, VariantKind,
+		ShortCircuitOp, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, VariantKind,
 	},
 	lexer::LiteralKind,
 	session::Symbol,
@@ -243,8 +243,8 @@ impl PrettyPrint for TypeAlias {
 impl PrettyPrint for Expr {
 	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
 		match &self.kind {
-			ExprKind::Access(path) => path.pprint(f),
-			ExprKind::Literal(kind, sym) => match kind {
+			ExprKind::Access { path } => path.pprint(f),
+			ExprKind::Literal { lit, sym } => match lit {
 				LiteralKind::Integer | LiteralKind::Float => sym.pprint(f),
 				LiteralKind::Str => {
 					f.write("\"")?;
@@ -254,7 +254,7 @@ impl PrettyPrint for Expr {
 				}
 			},
 
-			ExprKind::Paren(expr) => {
+			ExprKind::Paren { expr } => {
 				f.write("(")?;
 				expr.pprint(f)?;
 				f.write(")")?;
@@ -266,6 +266,14 @@ impl PrettyPrint for Expr {
 				Ok(())
 			}
 			ExprKind::Binary { op, left, right } => {
+				left.pprint(f)?;
+				f.write(" ")?;
+				op.bit.pprint(f)?;
+				f.write(" ")?;
+				right.pprint(f)?;
+				Ok(())
+			}
+			ExprKind::ShortCircuit { op, left, right } => {
 				left.pprint(f)?;
 				f.write(" ")?;
 				op.bit.pprint(f)?;
@@ -296,22 +304,22 @@ impl PrettyPrint for Expr {
 				}
 				Ok(())
 			}
-			ExprKind::Method(expr, name, args) => {
+			ExprKind::Method { expr, name, params } => {
 				expr.pprint(f)?;
 				f.write(".")?;
 				name.sym.pprint(f)?;
 				f.write("(")?;
-				f.write_seq_oneline(args, |f, arg| arg.pprint(f), ",")?;
+				f.write_seq_oneline(params, |f, param| param.pprint(f), ",")?;
 				f.write(")")?;
 				Ok(())
 			}
-			ExprKind::Field(expr, name) => {
+			ExprKind::Field { expr, name } => {
 				expr.pprint(f)?;
 				f.write(".")?;
 				name.sym.pprint(f)?;
 				Ok(())
 			}
-			ExprKind::Deref(expr) => {
+			ExprKind::Deref { expr } => {
 				expr.pprint(f)?;
 				f.write(".*")?;
 				Ok(())
@@ -322,21 +330,21 @@ impl PrettyPrint for Expr {
 				value.pprint(f)?;
 				Ok(())
 			}
-			ExprKind::Return(expr) => {
+			ExprKind::Return { expr } => {
 				f.write("return")?;
 				if let Some(expr) = expr {
 					expr.pprint(f)?;
 				}
 				Ok(())
 			}
-			ExprKind::Break(expr) => {
+			ExprKind::Break { expr, label } => {
 				f.write("break")?;
 				if let Some(expr) = expr {
 					expr.pprint(f)?;
 				}
 				Ok(())
 			}
-			ExprKind::Continue => f.write("continue"),
+			ExprKind::Continue { label } => f.write("continue"),
 		}
 	}
 }
@@ -416,15 +424,25 @@ impl PrettyPrint for Stmt {
 				body.pprint(f)?;
 			}
 
-			StmtKind::Let { name, ty, value } => {
+			StmtKind::Let {
+				ident: name,
+				ty,
+				value,
+				mutable,
+			} => {
 				f.write("let ")?;
+				if *mutable {
+					f.write("mut ")?;
+				}
 				name.sym.pprint(f)?;
 				if let Some(ty) = &ty {
 					f.write(": ")?;
 					ty.pprint(f)?;
 				}
-				f.write(" = ")?;
-				value.pprint(f)?;
+				if let Some(value) = &value {
+					f.write(" = ")?;
+					value.pprint(f)?;
+				}
 				f.write(";")?;
 			}
 
@@ -471,6 +489,15 @@ impl PrettyPrint for BinaryOp {
 
 			Self::Ne => f.write("!="),
 			Self::EqEq => f.write("=="),
+		}
+	}
+}
+
+impl PrettyPrint for ShortCircuitOp {
+	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
+		match self {
+			Self::And => f.write("and"),
+			Self::Or => f.write("or"),
 		}
 	}
 }

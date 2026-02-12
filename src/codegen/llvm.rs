@@ -1,22 +1,24 @@
-use std::{collections::HashMap, iter};
+use std::collections::HashMap;
 
 use inkwell::{
 	AddressSpace, IntPredicate, OptimizationLevel,
+	basic_block::BasicBlock,
 	builder::Builder,
 	context::Context,
 	execution_engine::ExecutionEngine,
 	module::Module,
 	passes::PassBuilderOptions,
 	targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine},
-	values::{BasicValue, BasicValueEnum, FunctionValue},
+	types::{BasicType, BasicTypeEnum, FunctionType},
+	values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
 
 use crate::{
-	ast,
+	ast, bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Function},
 	lexer,
-	session::{PrintKind, Symbol},
+	session::{PrintKind, SessionCtx, Symbol},
 	ty::{self, TyCtx, TyKind},
 };
 
@@ -58,8 +60,6 @@ pub struct Generator<'tcx, 'ctx> {
 	builder: Builder<'ctx>,
 	module: Module<'ctx>,
 	jit: ExecutionEngine<'ctx>,
-
-	variables: HashMap<Symbol, MaybeValue<'ctx>>,
 }
 
 impl<'tcx> Generator<'tcx, '_> {
@@ -77,6 +77,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		let jit = module
 			.create_jit_execution_engine(OptimizationLevel::None)
 			.unwrap();
+
 		Self {
 			tcx,
 
@@ -84,35 +85,68 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 			builder: ctx.create_builder(),
 			module,
 			jit,
-
-			variables: HashMap::new(),
 		}
 	}
 
-	fn define_function(
+	fn to_llvm_type(&self, output: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
+		match output.clone() {
+			ty::TyKind::Primitive(kind) => match kind {
+				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
+				// (self.ctx.void_type().into()),
+				ty::PrimitiveKind::Bool => Some(self.ctx.i8_type().into()),
+				ty::PrimitiveKind::UnsignedInt | ty::PrimitiveKind::SignedInt => {
+					Some(self.ctx.i32_type().into())
+				}
+				ty::PrimitiveKind::Float => Some(self.ctx.f32_type().into()),
+				ty::PrimitiveKind::Str => todo!(),
+			},
+			ty::TyKind::Pointer(_kind) => todo!(),
+			ty::TyKind::Fn(_fn_decl) => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
+			ty::TyKind::Struct(enum_) => todo!(),
+			ty::TyKind::Enum(struct_) => todo!(),
+			ty::TyKind::Ref(ref_) => {
+				self.to_llvm_type(&self.tcx.ty_env.borrow().as_ref().unwrap()[&ref_])
+			}
+			ty::TyKind::Error => {
+				bug!("error type kind is a placeholder and should not reach codegen")
+			}
+		}
+	}
+
+	fn define_func(
 		&mut self,
 		func_val: FunctionValue<'ctx>,
 		decl: &ty::FnDecl,
 		body: &hir::Block,
 	) -> Result<()> {
-		let bb = self.ctx.append_basic_block(func_val, "entry");
-		self.builder.position_at_end(bb);
+		let borrow = self.tcx.ty_env.borrow();
+		let ty_env = borrow.as_ref().unwrap();
+		let borrow = self.tcx.typeck_results.borrow();
+		let typeck_results = borrow.as_ref().unwrap();
 
-		self.variables.clear();
-		func_val
-			.get_param_iter()
-			.zip(&decl.inputs)
-			.for_each(|(arg, ty::Param { name, ty })| {
-				let val = arg
-					.into_int_value()
-					.const_to_pointer(self.ctx.ptr_type(AddressSpace::default()));
-				self.variables
-					.insert(name.sym, MaybeValue::Value(val.as_basic_value_enum()));
-			});
+		let empty_ty = self.ctx.struct_type(&[], false).as_basic_type_enum();
 
-		let ret_val = self.codegen_block(body)?;
-		if let Some(ret_val) = ret_val.as_value() {
-			self.builder.build_return(ret_val).unwrap();
+		let mut generator = FunctionGenerator {
+			scx: self.tcx.scx,
+
+			ty_env,
+			typeck_results,
+
+			ctx: &*self.ctx,
+			module: &self.module,
+			builder: &self.builder,
+			function: func_val,
+
+			variables: HashMap::new(),
+			loop_stack: Vec::new(),
+
+			empty_ty,
+		};
+
+		generator.codegen_body(decl, body)?;
+
+		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
+			func_val.print_to_stderr();
 		}
 
 		if !func_val.verify(true) {
@@ -123,15 +157,11 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 			return Err("function is invalid");
 		}
 
-		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
-			func_val.print_to_stderr();
-		}
-
 		Ok(())
 	}
 }
 
-impl<'ctx> CodeGenBackend for Generator<'_, 'ctx> {
+impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 	fn codegen_root(&mut self, hir: &hir::Root) {
 		let mut function_ids = HashMap::new();
 
@@ -150,11 +180,11 @@ impl<'ctx> CodeGenBackend for Generator<'_, 'ctx> {
 
 					match abi {
 						hir::Abi::Kalei => {
-							let func_id = self.define_func(name.sym, decl).unwrap();
+							let func_id = self.declare_func(name.sym, decl).unwrap();
 							function_ids.insert(item.id, func_id);
 						}
 						hir::Abi::C => {
-							let _func_id = self.define_func(name.sym, &decl).unwrap();
+							let _func_id = self.declare_func(name.sym, &decl).unwrap();
 						}
 					}
 				}
@@ -175,12 +205,12 @@ impl<'ctx> CodeGenBackend for Generator<'_, 'ctx> {
 					};
 
 					let Some(func_id) = function_ids.get(&item.id) else {
-						println!("assuming fn {:?} is external", name.sym);
+						println!("assuming fn {:#?} is external", name.sym);
 						continue;
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_function(*func_id, &decl, &body).unwrap();
+					self.define_func(*func_id, &decl, &body).unwrap();
 				}
 				_ => {}
 			}
@@ -190,15 +220,17 @@ impl<'ctx> CodeGenBackend for Generator<'_, 'ctx> {
 
 impl JitBackend for Generator<'_, '_> {
 	fn call_main(&mut self) {
-		todo!()
-		// #[allow(unsafe_code)]
-		// let ret = unsafe {
-		// 	self.jit
-		// 		.get_function::<unsafe extern "C" fn() -> i64>(func.get_name().to_str().unwrap())
-		// }
-		// .unwrap();
-		// #[allow(unsafe_code)]
-		// Ok(unsafe { ret.call() })
+		#[expect(unsafe_code)]
+		let ret = unsafe {
+			self.jit
+				.get_function::<unsafe extern "C" fn() -> i64>("main")
+		}
+		.unwrap();
+
+		#[expect(unsafe_code)]
+		unsafe {
+			ret.call()
+		};
 	}
 }
 
@@ -242,12 +274,25 @@ impl<'ctx> Generator<'_, 'ctx> {
 			)
 			.unwrap();
 	}
+}
 
-	pub fn define_func(&mut self, name: Symbol, decl: &ty::FnDecl) -> Result<FunctionValue<'ctx>> {
-		let args_ty = iter::repeat_n(self.ctx.i64_type(), decl.inputs.len())
-			.map(Into::into)
-			.collect::<Vec<_>>();
-		let fn_ty = self.ctx.i64_type().fn_type(&args_ty, false);
+impl<'ctx> Generator<'_, 'ctx> {
+	pub fn lower_signature(&self, decl: &ty::FnDecl) -> FunctionType<'ctx> {
+		let mut args_ty = Vec::new();
+		for ty::Param { name: _, ty } in &decl.inputs {
+			let type_ = self.to_llvm_type(ty).unwrap();
+			args_ty.push(type_.into());
+		}
+
+		if let Some(ret_ty) = self.to_llvm_type(&decl.output) {
+			ret_ty.fn_type(&args_ty, false)
+		} else {
+			self.ctx.void_type().fn_type(&args_ty, false)
+		}
+	}
+
+	pub fn declare_func(&mut self, name: Symbol, decl: &ty::FnDecl) -> Result<FunctionValue<'ctx>> {
+		let fn_ty = self.lower_signature(decl);
 
 		let name = self.tcx.scx.symbols.resolve(name);
 		let fn_val = self.module.add_function(&name, fn_ty, None);
@@ -265,7 +310,76 @@ impl<'ctx> Generator<'_, 'ctx> {
 	}
 }
 
-impl<'ctx> Generator<'_, 'ctx> {
+struct FunctionGenerator<'scx, 'bld, 'ctx> {
+	scx: &'scx SessionCtx,
+
+	ty_env: &'scx HashMap<hir::NodeId, ty::TyKind>,
+	typeck_results: &'scx HashMap<hir::NodeId, ty::TyKind>,
+
+	ctx: &'ctx Context,
+	module: &'bld Module<'ctx>,
+	builder: &'bld Builder<'ctx>,
+	function: FunctionValue<'ctx>,
+
+	variables: HashMap<Symbol, PointerValue<'ctx>>,
+	// stack of loop and continuation blocks
+	// TODO: support labels
+	loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
+
+	// TODO: move to a predefined types struct
+	empty_ty: BasicTypeEnum<'bld>,
+}
+
+impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
+	// TODO: remove duplicate
+	fn to_llvm_type(&self, output: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
+		match output.clone() {
+			ty::TyKind::Primitive(kind) => match kind {
+				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
+				// (self.ctx.void_type().into()),
+				ty::PrimitiveKind::Bool => Some(self.ctx.i8_type().into()),
+				ty::PrimitiveKind::UnsignedInt | ty::PrimitiveKind::SignedInt => {
+					Some(self.ctx.i32_type().into())
+				}
+				ty::PrimitiveKind::Float => Some(self.ctx.f32_type().into()),
+				ty::PrimitiveKind::Str => todo!(),
+			},
+			ty::TyKind::Pointer(_kind) => todo!(),
+			ty::TyKind::Fn(_fn_decl) => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
+			ty::TyKind::Struct(enum_) => todo!(),
+			ty::TyKind::Enum(struct_) => todo!(),
+			ty::TyKind::Ref(ref_) => self.to_llvm_type(&self.ty_env[&ref_]),
+			ty::TyKind::Error => {
+				bug!("error type kind is a placeholder and should not reach codegen")
+			}
+		}
+	}
+
+	fn codegen_body(&mut self, decl: &ty::FnDecl, block: &hir::Block) -> Result<()> {
+		let bb = self.ctx.append_basic_block(self.function, "entry");
+		self.builder.position_at_end(bb);
+
+		for (ty::Param { name, ty }, value) in
+			decl.inputs.iter().zip(self.function.get_param_iter())
+		{
+			let Some(ty) = self.to_llvm_type(ty) else {
+				return Ok(());
+			};
+			let place = self
+				.builder
+				.build_alloca(ty, &format!("{:#?}", name.sym))
+				.unwrap();
+			self.builder.build_store(place, value).unwrap();
+			self.variables.insert(name.sym, place);
+		}
+
+		let ret_val = self.codegen_block(block)?;
+		if let Some(ret_val) = ret_val.as_value() {
+			self.builder.build_return(ret_val).unwrap();
+		}
+		Ok(())
+	}
+
 	fn codegen_block(&mut self, block: &hir::Block) -> Result<MaybeValue<'ctx>> {
 		for stmt in &block.stmts {
 			let should_stop_block_codegen = self.codegen_stmt(stmt)?;
@@ -284,24 +398,47 @@ impl<'ctx> Generator<'_, 'ctx> {
 	fn codegen_stmt(&mut self, stmt: &hir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
 		match &stmt.kind {
 			hir::StmtKind::Expr(expr) => Ok(self.codegen_expr(expr)?.is_never()),
-			hir::StmtKind::Let { ident, value, .. } => {
+			hir::StmtKind::Let {
+				name,
+				value,
+				ty: _,
+				mutable: _,
+			} => {
+				let ty = self.typeck_results.get(&value.id).unwrap();
+				let ty = self.to_llvm_type(ty).unwrap();
+				let place = self
+					.builder
+					.build_alloca(ty, &format!("{:#?}", name.sym))
+					.unwrap();
+
 				let expr_value = self.codegen_expr(value)?;
-				self.variables.insert(ident.sym, expr_value.clone());
+				match expr_value {
+					MaybeValue::Value(value) => {
+						self.builder.build_store(place, value).unwrap();
+					}
+					MaybeValue::Zst | MaybeValue::Never => {}
+				}
+
+				self.variables.insert(name.sym, place);
 				Ok(expr_value.is_never())
 			}
 			hir::StmtKind::Loop(block) => {
-				let func = self
-					.builder
-					.get_insert_block()
-					.unwrap()
-					.get_parent()
-					.unwrap();
-				let loop_header = self.ctx.append_basic_block(func, "loop");
-				self.builder.position_at_end(loop_header);
+				let loop_ = self.ctx.append_basic_block(self.function, "loop");
+				let cont = self.ctx.append_basic_block(self.function, "cont");
+
+				self.loop_stack.push((loop_, cont));
+
+				self.builder.build_unconditional_branch(loop_).unwrap();
+
+				self.builder.position_at_end(loop_);
+
 				self.codegen_block(block)?;
-				self.builder
-					.build_unconditional_branch(loop_header)
-					.unwrap();
+				self.builder.build_unconditional_branch(loop_).unwrap();
+
+				self.builder.position_at_end(cont);
+
+				self.loop_stack.pop();
+
 				Ok(false)
 			}
 		}
@@ -309,12 +446,15 @@ impl<'ctx> Generator<'_, 'ctx> {
 
 	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue<'ctx>> {
 		let value = match &expr.kind {
-			hir::ExprKind::Literal(lit, sym) => {
-				let sym = self.tcx.scx.symbols.resolve(*sym);
+			hir::ExprKind::Literal { lit, sym } => {
+				let sym = self.scx.symbols.resolve(*sym);
+
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.to_llvm_type(ty).unwrap();
+
 				let val = match lit {
-					lexer::LiteralKind::Integer => self
-						.ctx
-						.i64_type()
+					lexer::LiteralKind::Integer => ty
+						.into_int_type()
 						.const_int(sym.parse::<u64>().unwrap(), true)
 						.as_basic_value_enum(),
 					lexer::LiteralKind::Float => todo!(),
@@ -322,47 +462,50 @@ impl<'ctx> Generator<'_, 'ctx> {
 				};
 				MaybeValue::Value(val)
 			}
-			hir::ExprKind::Access(name) => {
-				let var = match self.variables.get(&name.simple().sym).unwrap() {
-					MaybeValue::Value(val) => val.into_pointer_value(),
-					MaybeValue::Zst | MaybeValue::Never => panic!(),
-				};
+			hir::ExprKind::Access { path } => {
+				let place = *self.variables.get(&path.simple().sym).unwrap();
+
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.to_llvm_type(ty).unwrap();
 
 				let value = self
 					.builder
-					.build_load(
-						// TODO
-						self.ctx.i64_type(),
-						var,
-						&self.tcx.scx.symbols.resolve(name.simple().sym),
-					)
+					.build_load(ty, place, &self.scx.symbols.resolve(path.simple().sym))
 					.unwrap()
 					.as_basic_value_enum();
 
-				MaybeValue::Value(value)
+				MaybeValue::Value(value.clone())
 			}
 			hir::ExprKind::Assign { target, value } => {
-				todo!()
-				// let variable = self.variables.get(&target.name).unwrap();
-				// let expr_value = self.codegen_expr(value)?;
-				// // self.builder.def_var(variable, expr_value);
+				let hir::ExprKind::Access { path } = &target.kind else {
+					todo!("invalid lvalue");
+				};
 
-				// MaybeValue::Value(expr_value.is_never())
+				let place = *self.variables.get(&path.simple().sym).unwrap();
+				let expr_value = self.codegen_expr(value)?;
+				match expr_value {
+					MaybeValue::Value(value) => {
+						self.builder.build_store(place, value).unwrap();
+					}
+					MaybeValue::Zst | MaybeValue::Never => {}
+				};
+
+				expr_value
 			}
-			hir::ExprKind::Binary(op, left, right) => self.codegen_bin_op(*op, left, right)?,
+			hir::ExprKind::Binary { op, left, right } => self.codegen_bin_op(*op, left, right)?,
 
-			hir::ExprKind::Unary(op, expr) => todo!(),
-			hir::ExprKind::Method(expr, name, args) => todo!(),
-			hir::ExprKind::Field(expr, name) => todo!(),
-			hir::ExprKind::Deref(expr) => todo!(),
+			hir::ExprKind::Unary { op, expr } => todo!(),
+			hir::ExprKind::Method { expr, name, params } => todo!(),
+			hir::ExprKind::Field { expr, name: ident } => todo!(),
+			hir::ExprKind::Deref { expr } => todo!(),
 
 			hir::ExprKind::FnCall { expr, args } => {
-				let hir::ExprKind::Access(path) = &expr.kind else {
+				let hir::ExprKind::Access { path } = &expr.kind else {
 					todo!("not a fn")
 				};
 				let func = self
 					.module
-					.get_function(&self.tcx.scx.symbols.resolve(path.simple().sym))
+					.get_function(&self.scx.symbols.resolve(path.simple().sym))
 					.unwrap();
 				if args.bit.len() != func.count_params() as usize {
 					return Err("fn call args count mismatch");
@@ -388,9 +531,42 @@ impl<'ctx> Generator<'_, 'ctx> {
 				conseq,
 				altern,
 			} => self.codegen_if(cond, conseq, altern.as_deref())?,
-			hir::ExprKind::Return(_) => todo!(),
-			hir::ExprKind::Break(_) => todo!(),
-			hir::ExprKind::Continue => todo!(),
+
+			hir::ExprKind::Return { expr } => {
+				if let Some(expr) = expr {
+					match self.codegen_expr(expr)? {
+						MaybeValue::Value(value) => {
+							self.builder.build_return(Some(&value)).unwrap();
+						}
+						MaybeValue::Zst | MaybeValue::Never => {
+							self.builder.build_return(None).unwrap();
+						}
+					}
+				} else {
+					self.builder.build_return(None).unwrap();
+				};
+
+				MaybeValue::Never
+			}
+			hir::ExprKind::Break { expr, label } => {
+				let (_loop_, cont) = *self.loop_stack.last().unwrap();
+
+				if let Some(expr) = expr {
+					match self.codegen_expr(expr)? {
+						// TODO: transfer value to callsite
+						MaybeValue::Value(value) => {}
+						MaybeValue::Zst | MaybeValue::Never => {}
+					}
+				} else {
+				}
+				self.builder.build_unconditional_branch(cont).unwrap();
+				MaybeValue::Never
+			}
+			hir::ExprKind::Continue { label } => {
+				let (loop_, _cont) = *self.loop_stack.last().unwrap();
+				self.builder.build_unconditional_branch(loop_).unwrap();
+				MaybeValue::Never
+			}
 		};
 		Ok(value)
 	}
@@ -406,15 +582,10 @@ impl<'ctx> Generator<'_, 'ctx> {
 			MaybeValue::Zst => panic!(),
 			MaybeValue::Never => return Ok(MaybeValue::Never),
 		};
-		let func = self
-			.builder
-			.get_insert_block()
-			.unwrap()
-			.get_parent()
-			.unwrap();
-		let then_bb = self.ctx.append_basic_block(func, "then");
-		let else_bb = self.ctx.append_basic_block(func, "else");
-		let merge_bb = self.ctx.append_basic_block(func, "merge");
+
+		let then_bb = self.ctx.append_basic_block(self.function, "then");
+		let else_bb = self.ctx.append_basic_block(self.function, "else");
+		let merge_bb = self.ctx.append_basic_block(self.function, "merge");
 		self.builder
 			.build_conditional_branch(condition, then_bb, else_bb)
 			.unwrap();

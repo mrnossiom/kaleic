@@ -121,6 +121,8 @@ pub enum TokenKind {
 	Eq,
 	/// `::`
 	ColonColon,
+	/// `'`
+	Apostrophe,
 
 	/// Fallback token for unrecognized lexeme
 	Unknown,
@@ -174,6 +176,7 @@ impl fmt::Display for TokenKind {
 			Eq => write!(f, "an assign sign"),
 
 			ColonColon => write!(f, "a path separator"),
+			Apostrophe => write!(f, "an apostrophe"),
 
 			Unknown => write!(f, "an unknown token"),
 			Eof => write!(f, "the end of the file"),
@@ -199,6 +202,9 @@ impl fmt::Display for LiteralKind {
 	}
 }
 
+// TODO: should keywords be a verb? def (function), let (variables), ??? (type)
+// or should we keep names like fn, trait, var
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keyword {
 	Fn,
@@ -210,8 +216,8 @@ pub enum Keyword {
 	For,
 	Impl,
 
-	Var,
-	Cst,
+	Let,
+	Mut,
 
 	And,
 	Or,
@@ -312,8 +318,11 @@ impl Lexer<'_, '_> {
 						"for" => Keyword(For),
 						"impl" => Keyword(Impl),
 
-						"var" => Keyword(Var),
-						"cst" => Keyword(Cst),
+						"let" => Keyword(Let),
+						"mut" => Keyword(Mut),
+
+						"and" => Keyword(And),
+						"or" => Keyword(Or),
 
 						"if" => Keyword(If),
 						"else" => Keyword(Else),

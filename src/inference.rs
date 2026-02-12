@@ -71,7 +71,12 @@ impl Inferer<'_> {
 			hir::StmtKind::Expr(expr) => {
 				self.infer_expr(expr);
 			}
-			hir::StmtKind::Let { ident, value, ty } => {
+			hir::StmtKind::Let {
+				name: ident,
+				value,
+				ty,
+				mutable,
+			} => {
 				let explicit_ty = self.tcx.lower_ty(&ty);
 				let expr_ty = self.infer_expr(value);
 				self.unify(&explicit_ty, &expr_ty);
@@ -87,8 +92,8 @@ impl Inferer<'_> {
 
 	fn infer_expr(&mut self, expr: &hir::Expr) -> TyKind<Infer> {
 		let ty = match &expr.kind {
-			hir::ExprKind::Access(path) => self.resolve_var_ty(path),
-			hir::ExprKind::Literal(lit, _ident) => match lit {
+			hir::ExprKind::Access { path } => self.resolve_var_ty(path),
+			hir::ExprKind::Literal { lit, sym } => match lit {
 				lexer::LiteralKind::Integer => {
 					TyKind::Infer(self.tcx.next_infer_tag(), Infer::Integer)
 				}
@@ -96,7 +101,7 @@ impl Inferer<'_> {
 				lexer::LiteralKind::Str => TyKind::Primitive(PrimitiveKind::Str),
 			},
 
-			hir::ExprKind::Unary(op, expr) => {
+			hir::ExprKind::Unary { op, expr } => {
 				let expr_ty = self.infer_expr(expr);
 
 				match op.bit {
@@ -110,7 +115,7 @@ impl Inferer<'_> {
 					}
 				}
 			}
-			hir::ExprKind::Binary(op, left, right) => {
+			hir::ExprKind::Binary { op, left, right } => {
 				let left = self.infer_expr(left);
 				let right = self.infer_expr(right);
 
@@ -177,12 +182,12 @@ impl Inferer<'_> {
 				self.unify(&conseq_ty, &altern_ty)
 			}
 
-			hir::ExprKind::Method(_expr, _name, _args) => todo!(),
-			hir::ExprKind::Field(_expr, _name) => todo!(),
-			hir::ExprKind::Deref(_expr) => todo!("ensure expr ty is pointer"),
+			hir::ExprKind::Method { expr, name, params } => todo!(),
+			hir::ExprKind::Field { expr, name: ident } => todo!(),
+			hir::ExprKind::Deref { expr } => todo!("ensure expr ty is pointer"),
 
 			hir::ExprKind::Assign { target, value } => {
-				let ExprKind::Access(path) = &target.kind else {
+				let ExprKind::Access { path } = &target.kind else {
 					todo!("invalid lvalue")
 				};
 
@@ -191,9 +196,9 @@ impl Inferer<'_> {
 				self.unify(&target_ty, &value_ty)
 			}
 
-			hir::ExprKind::Return(_) | hir::ExprKind::Break(_) | hir::ExprKind::Continue => {
-				TyKind::Primitive(PrimitiveKind::Never)
-			}
+			hir::ExprKind::Return { .. }
+			| hir::ExprKind::Break { .. }
+			| hir::ExprKind::Continue { .. } => TyKind::Primitive(PrimitiveKind::Never),
 		};
 
 		// TODO
@@ -226,6 +231,8 @@ impl Inferer<'_> {
 				self.unify_infer(*tag, *infer, ty)
 			}
 			// infer and never have different meaning but both coerces to anything
+			// TODO: enforce that functions that return never cannot return anything else
+			// this in incorrect
 			(TyKind::Primitive(PrimitiveKind::Never), ty)
 			| (ty, TyKind::Primitive(PrimitiveKind::Never)) => ty.clone(),
 			// we try to recover further by inferring errors

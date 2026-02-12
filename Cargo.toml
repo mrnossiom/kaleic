@@ -32,8 +32,8 @@ insta = "1"
 ariadne = { git = "https://github.com/mrnossiom/ariadne", branch = "expose-report-fields" }
 
 [features]
-default = ["cranelift"]
-# default = ["llvm", "cranelift"]
+# default = ["cranelift"]
+default = ["llvm", "cranelift"]
 
 debug = []
 
@@ -50,6 +50,7 @@ cranelift = [
 
 [lints.rust]
 # missing_docs = "warn"
+unused_variables = "allow"
 
 # not forbid because jit-ing is inherently unsafe
 unsafe_code = "deny"

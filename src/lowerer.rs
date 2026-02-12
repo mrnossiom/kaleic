@@ -156,7 +156,10 @@ impl Lower for ast::Function {
 
 		let abi = if let Some(abi) = abi {
 			let abi = match abi.kind {
-				ast::ExprKind::Literal(lexer::LiteralKind::Str, sym) => sym,
+				ast::ExprKind::Literal {
+					lit: lexer::LiteralKind::Str,
+					sym,
+				} => sym,
 				_ => todo!("invalid abi expr"),
 			};
 
@@ -235,11 +238,12 @@ impl Lower for ast::Stmt {
 			ast::StmtKind::WhileLoop { check, body } => lower_while_loop(l, check, body),
 
 			ast::StmtKind::Let {
-				name: ident,
+				ident,
 				ty,
 				value,
+				mutable,
 			} => hir::StmtKind::Let {
-				ident: *ident,
+				name: *ident,
 				ty: Box::new(ty.as_ref().map_or_else(
 					|| ast::Ty {
 						kind: ast::TyKind::ImplicitInfer,
@@ -247,7 +251,9 @@ impl Lower for ast::Stmt {
 					},
 					|ty| ty.as_ref().clone(),
 				)),
-				value: value.lower_box(l),
+				// TODO: handle variable with no init value
+				value: value.as_ref().unwrap().lower_box(l),
+				mutable: *mutable,
 			},
 			ast::StmtKind::Expr(expr) => hir::StmtKind::Expr(expr.lower_box(l)),
 			ast::StmtKind::ExprRet(expr) => {
@@ -347,12 +353,19 @@ impl Lower for ast::Expr {
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { kind, span, id } = &self;
 		let kind = match kind {
-			ast::ExprKind::Access(path) => hir::ExprKind::Access(path.clone()),
-			ast::ExprKind::Literal(lit, ident) => hir::ExprKind::Literal(*lit, *ident),
+			ast::ExprKind::Access { path } => hir::ExprKind::Access { path: path.clone() },
+			ast::ExprKind::Literal { lit, sym } => hir::ExprKind::Literal {
+				lit: *lit,
+				sym: *sym,
+			},
 
-			ast::ExprKind::Paren(expr) => expr.lower(l).kind,
+			ast::ExprKind::Paren { expr } => expr.lower(l).kind,
 			ast::ExprKind::Unary { op, expr } => lower_unary(l, *op, expr),
 			ast::ExprKind::Binary { op, left, right } => lower_binary(l, *op, left, right),
+			ast::ExprKind::ShortCircuit { op, left, right } => {
+				lower_short_circuit(l, *op, left, right)
+			}
+
 			ast::ExprKind::FnCall { expr, args } => hir::ExprKind::FnCall {
 				expr: Box::new(expr.lower(l)),
 				args: args.with_bit(l.lower_iter(args.bit.iter()).collect()),
@@ -367,24 +380,32 @@ impl Lower for ast::Expr {
 				altern: l.lower_opt_box(altern.as_deref()),
 			},
 
-			ast::ExprKind::Method(expr, name, args) => hir::ExprKind::Method(
-				Box::new(expr.lower(l)),
-				*name,
-				l.lower_iter(args.iter()).collect(),
-			),
-			ast::ExprKind::Field(expr, name) => {
-				hir::ExprKind::Field(Box::new(expr.lower(l)), *name)
-			}
-			ast::ExprKind::Deref(expr) => hir::ExprKind::Deref(expr.lower_box(l)),
+			ast::ExprKind::Method { expr, name, params } => hir::ExprKind::Method {
+				expr: Box::new(expr.lower(l)),
+				name: *name,
+				params: l.lower_iter(params.iter()).collect(),
+			},
+			ast::ExprKind::Field { expr, name } => hir::ExprKind::Field {
+				expr: Box::new(expr.lower(l)),
+				name: *name,
+			},
+			ast::ExprKind::Deref { expr } => hir::ExprKind::Deref {
+				expr: expr.lower_box(l),
+			},
 
 			ast::ExprKind::Assign { target, value } => hir::ExprKind::Assign {
 				target: Box::new(target.lower(l)),
 				value: Box::new(value.lower(l)),
 			},
 
-			ast::ExprKind::Return(expr) => hir::ExprKind::Return(l.lower_opt_box(expr.as_deref())),
-			ast::ExprKind::Break(expr) => hir::ExprKind::Break(l.lower_opt_box(expr.as_deref())),
-			ast::ExprKind::Continue => hir::ExprKind::Continue,
+			ast::ExprKind::Return { expr } => hir::ExprKind::Return {
+				expr: l.lower_opt_box(expr.as_deref()),
+			},
+			ast::ExprKind::Break { expr, label } => hir::ExprKind::Break {
+				expr: l.lower_opt_box(expr.as_deref()),
+				label: todo!(),
+			},
+			ast::ExprKind::Continue { label } => hir::ExprKind::Continue { label: todo!() },
 		};
 
 		hir::Expr {
@@ -398,7 +419,10 @@ impl Lower for ast::Expr {
 /// Lower an AST `while cond { body }` to an HIR `loop { if cond { body } else { break } }`
 fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::StmtKind {
 	let break_expr = hir::Expr {
-		kind: hir::ExprKind::Break(None),
+		kind: hir::ExprKind::Break {
+			expr: None,
+			label: None,
+		},
 		span: body.span,
 		id: l.make_new_node_id(),
 	};
@@ -431,7 +455,10 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 
 fn lower_unary(l: &mut Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir::ExprKind {
 	// TODO: same as lower_binary
-	hir::ExprKind::Unary(op, expr.lower_box(l))
+	hir::ExprKind::Unary {
+		op,
+		expr: expr.lower_box(l),
+	}
 }
 
 fn lower_binary(
@@ -444,5 +471,71 @@ fn lower_binary(
 	// `a + b` becomes `Add.add(a, b)` or `<a as Add>.add(b)`
 	// e.g. ExprKind::FnCall { expr: to_core_func(op), args: vec![left, right] }
 
-	hir::ExprKind::Binary(op, left.lower_box(l), right.lower_box(l))
+	hir::ExprKind::Binary {
+		op,
+		left: left.lower_box(l),
+		right: right.lower_box(l),
+	}
+}
+
+fn lower_short_circuit(
+	l: &mut Lowerer,
+	op: Spanned<ast::ShortCircuitOp>,
+	left: &ast::Expr,
+	right: &ast::Expr,
+) -> hir::ExprKind {
+	let (altern, conseq) = match op.bit {
+		// foo() and bar()
+		// → if foo() { bar() } else { false }
+		ast::ShortCircuitOp::And => {
+			let kind = hir::ExprKind::Access { path: todo!() };
+			let expr = hir::Expr {
+				kind,
+				span: right.span,
+				id: l.make_new_node_id(),
+			};
+			let right_block = hir::Block {
+				stmts: Vec::new(),
+				ret: Some(Box::new(expr)),
+				span: right.span,
+				id: l.make_new_node_id(),
+			};
+			let left_block = hir::Block {
+				stmts: Vec::new(),
+				ret: Some(right.lower_box(l)),
+				span: left.span,
+				id: l.make_new_node_id(),
+			};
+			(Box::new(left_block), Box::new(right_block))
+		}
+		// foo() or bar()
+		// → if foo() { true } else { bar() }
+		ast::ShortCircuitOp::Or => {
+			let kind = hir::ExprKind::Access { path: todo!() };
+			let expr = hir::Expr {
+				kind,
+				span: right.span,
+				id: l.make_new_node_id(),
+			};
+			let right_block = hir::Block {
+				stmts: Vec::new(),
+				ret: Some(Box::new(expr)),
+				span: right.span,
+				id: l.make_new_node_id(),
+			};
+			let left_block = hir::Block {
+				stmts: Vec::new(),
+				ret: Some(right.lower_box(l)),
+				span: left.span,
+				id: l.make_new_node_id(),
+			};
+			(Box::new(right_block), Box::new(left_block))
+		}
+	};
+
+	hir::ExprKind::If {
+		cond: left.lower_box(l),
+		conseq,
+		altern: Some(altern),
+	}
 }
