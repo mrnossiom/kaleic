@@ -441,5 +441,5 @@ impl ops::Sub for BytePos {
 	}
 }
 
-pub type Report = ariadne::Report<'static, Span>;
-pub type ReportBuilder = ariadne::ReportBuilder<'static, Span>;
+pub type Report = ariadne::Report<Span, ReportKind>;
+pub type ReportBuilder = ariadne::ReportBuilder<Span, ReportKind>;

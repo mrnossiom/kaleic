@@ -26,9 +26,7 @@ pub mod parser {
 			)
 	}
 
-	pub(crate) fn incorrect_item_in_trait(
-		item_span: Span,
-	) -> ariadne::ReportBuilder<'static, Span> {
+	pub(crate) fn incorrect_item_in_trait(item_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, item_span)
 			.with_message("invalid item in trait definition".to_string())
 			.with_label(Label::new(item_span).with_message("found an item that was unexpected"))
