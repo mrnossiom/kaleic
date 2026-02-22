@@ -1,10 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, fmt::Write as _, path::Path, sync::Arc};
 
 use cranelift::prelude::{isa::TargetIsa, *};
 use cranelift_control::ControlPlane;
 use cranelift_jit::JITModule;
-use cranelift_module::{FuncId, Linkage, Module};
-use cranelift_object::{ObjectModule, ObjectProduct};
+use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
+use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::{
 	ast::{self, BinaryOp},
@@ -103,10 +103,6 @@ impl<'tcx> Generator<'tcx, JITModule> {
 
 impl<'tcx> Generator<'tcx, ObjectModule> {
 	pub fn new_object(tcx: &'tcx TyCtx) -> Self {
-		use ::cranelift::prelude::{Configurable, settings};
-		use cranelift_module::default_libcall_names;
-		use cranelift_object::{ObjectBuilder, ObjectModule};
-
 		let mut flag_builder = settings::builder();
 		flag_builder.set("opt_level", "speed_and_size").unwrap();
 
@@ -201,7 +197,8 @@ impl<M: Module> Generator<'_, M> {
 			.unwrap();
 
 		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
-			print!("{}", context.func.display());
+			let mut writer = self.tcx.scx.register_artefact("backend-ir.txt");
+			write!(writer, "{}", context.func.display()).unwrap();
 		}
 
 		self.module.define_function(func_id, &mut context).unwrap();
@@ -281,9 +278,11 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 }
 
 impl JitBackend for Generator<'_, JITModule> {
-	fn call_main(&mut self) {
+	fn finalize(&mut self) {
 		self.module.finalize_definitions().unwrap();
+	}
 
+	fn call_main(&self) {
 		let main = self.tcx.scx.symbols.intern("main");
 		let main_id = self.functions.get(&main).unwrap();
 		let func = self.module.get_finalized_function(*main_id);
@@ -296,8 +295,10 @@ impl JitBackend for Generator<'_, JITModule> {
 }
 
 impl ObjectBackend for Generator<'_, ObjectModule> {
-	fn get_object(self) -> ObjectProduct {
-		self.module.finish()
+	fn write_object(self: Box<Self>, path: &Path) {
+		let object = self.module.finish();
+		let bytes = object.emit().unwrap();
+		std::fs::write(path, bytes).unwrap();
 	}
 }
 

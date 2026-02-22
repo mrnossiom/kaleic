@@ -1,7 +1,7 @@
 // You can link any symbol from libc here
 
 extern "c" fn putchar(c: uint) void;
-extern "c" fn exit(c: uint) void;
+extern "c" fn exit(c: uint) never;
 
 // TODO: make an example to check how overflow is handled
 
@@ -9,7 +9,7 @@ type Number = uint;
 
 fn main() {
 	let n = 0;
-	while n != 45 {
+	while n != 5 {
 		let res = fibo(n);
 
 		print_num(res);
@@ -18,8 +18,6 @@ fn main() {
 		
 		n = n + 1;
 	}
-
-	exit(0);
 }
 
 fn num_to_ascii(n: Number) Number /*Option<Number>*/ {

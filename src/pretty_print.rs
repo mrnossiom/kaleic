@@ -5,61 +5,46 @@
 
 #![expect(unused_variables, clippy::todo)]
 
-use std::io::{self, Write, stdout};
+use std::fmt::{self, Write as _};
 
-use crate::{
-	ast::{
-		BinaryOp, Block, Expr, ExprKind, FieldDef, Function, Item, ItemKind, Param, Path, Root,
-		ShortCircuitOp, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, VariantKind,
-	},
-	lexer::LiteralKind,
-	session::Symbol,
-};
-
-type Result<T> = std::result::Result<T, io::Error>;
+use crate::{lexer::LiteralKind, session::Symbol};
 
 pub struct PrettyFormatter<'fmt> {
-	inner: &'fmt mut dyn Write,
+	inner: &'fmt mut dyn fmt::Write,
 
-	ident: u32,
+	indent: u32,
 }
 
 impl<'fmt> PrettyFormatter<'fmt> {
-	fn new(inner: &'fmt mut dyn Write) -> Self {
-		Self { inner, ident: 0 }
+	fn new(inner: &'fmt mut dyn fmt::Write) -> Self {
+		Self { inner, indent: 0 }
 	}
 
-	fn with_ident(&mut self, f: impl FnOnce(&mut PrettyFormatter) -> Result<()>) -> Result<()> {
-		self.ident += 1;
+	fn with_indent(&mut self, f: impl FnOnce(&mut PrettyFormatter) -> fmt::Result) -> fmt::Result {
+		self.indent += 1;
 		f(self)?;
-		self.ident -= 1;
+		self.indent -= 1;
 		Ok(())
 	}
 
-	fn newline(&mut self) -> io::Result<()> {
-		self.inner.write_all(b"\n")?;
-		for _ in 0..self.ident {
-			self.inner.write_all(b"\t")?;
+	fn newline(&mut self) -> fmt::Result {
+		write!(self.inner, "\n")?;
+		for _ in 0..self.indent {
+			write!(self.inner, "\t")?;
 		}
-
-		Ok(())
-	}
-
-	fn write(&mut self, s: &str) -> io::Result<()> {
-		self.inner.write_all(s.as_bytes())?;
 		Ok(())
 	}
 
 	fn write_seq<T>(
 		&mut self,
 		elements: &[T],
-		mut print: impl FnMut(&mut Self, &T) -> Result<()>,
+		mut print: impl FnMut(&mut Self, &T) -> fmt::Result,
 		sep: &str,
-	) -> Result<()> {
+	) -> fmt::Result {
 		for (i, elem) in elements.iter().enumerate() {
 			self.newline()?;
 			print(self, elem)?;
-			self.write(sep)?;
+			write!(self.inner, "{sep}")?;
 		}
 		Ok(())
 	}
@@ -67,13 +52,12 @@ impl<'fmt> PrettyFormatter<'fmt> {
 	fn write_seq_oneline<T>(
 		&mut self,
 		elements: &[T],
-		mut print: impl FnMut(&mut Self, &T) -> Result<()>,
+		mut print: impl FnMut(&mut Self, &T) -> fmt::Result,
 		sep: &str,
-	) -> Result<()> {
+	) -> fmt::Result {
 		for (i, elem) in elements.iter().enumerate() {
 			if i != 0 {
-				self.write(sep)?;
-				self.write(" ")?;
+				write!(self.inner, "{sep} ")?;
 			}
 			print(self, elem)?;
 		}
@@ -81,423 +65,732 @@ impl<'fmt> PrettyFormatter<'fmt> {
 	}
 }
 
-// impl<'fmt> fmt::Write for PrettyFormatter<'fmt> {}
+impl fmt::Write for PrettyFormatter<'_> {
+	fn write_str(&mut self, s: &str) -> fmt::Result {
+		self.inner.write_str(s)
+	}
+}
 
-pub fn pretty_print_root(root: &Root, mut output: &mut dyn Write) -> Result<()> {
+pub fn pretty_print(node: &dyn PrettyPrint, mut output: &mut dyn fmt::Write) -> fmt::Result {
 	let mut f = PrettyFormatter::new(&mut output);
-	root.pprint(&mut f)?;
+	node.pprint(&mut f)?;
 	Ok(())
 }
 
-pub fn pretty_print_item(item: &Item) -> Result<()> {
-	let mut output = &stdout();
-	let mut f = PrettyFormatter::new(&mut output);
-	item.pprint(&mut f)?;
-	Ok(())
+// annoying to seal but should be
+pub trait PrettyPrint {
+	fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result;
 }
 
-trait PrettyPrint {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()>;
-}
+mod ast_pp {
+	use super::*;
 
-impl PrettyPrint for Root {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		for item in &self.items {
-			item.pprint(f)?;
-			f.newline()?;
+	use crate::ast::{
+		BinaryOp, Block, Expr, ExprKind, FieldDef, Function, Item, ItemKind, Param, Path, Root,
+		ShortCircuitOp, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, VariantKind,
+	};
 
-			f.newline()?;
-		}
-		Ok(())
-	}
-}
-
-impl PrettyPrint for Item {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		match &self.kind {
-			ItemKind::Function(func) => func.pprint(f)?,
-			ItemKind::TypeAlias(ty) => ty.pprint(f)?,
-
-			ItemKind::Struct {
-				name,
-				generics,
-				fields,
-			} => {
-				f.write("struct ")?;
-				name.sym.pprint(f)?;
-				if !generics.is_empty() {
-					f.write("<")?;
-					f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
-					f.write(">")?;
-				}
-				f.write(" {")?;
-				f.with_ident(|f| f.write_seq(fields, |f, variant| variant.pprint(f), ","))?;
+	impl PrettyPrint for Root {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			for item in &self.items {
+				item.pprint(f)?;
 				f.newline()?;
-				f.write("}")?;
+
+				f.newline()?;
 			}
-			ItemKind::Enum {
-				name,
-				generics,
-				variants,
-			} => {
-				f.write("enum ")?;
-				name.sym.pprint(f)?;
-				if !generics.is_empty() {
-					f.write("<")?;
-					f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
-					f.write(">")?;
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Item {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match &self.kind {
+				ItemKind::Function(func) => func.pprint(f)?,
+				ItemKind::TypeAlias(ty) => ty.pprint(f)?,
+
+				ItemKind::Struct {
+					name,
+					generics,
+					fields,
+				} => {
+					write!(f, "struct ")?;
+					name.sym.pprint(f)?;
+					if !generics.is_empty() {
+						write!(f, "<")?;
+						f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
+						write!(f, ">")?;
+					}
+					write!(f, " {{")?;
+					f.with_indent(|f| f.write_seq(fields, |f, variant| variant.pprint(f), ","))?;
+					f.newline()?;
+					write!(f, "}}")?;
 				}
-				f.write(" {")?;
-				f.with_ident(|f| {
-					f.write_seq(
-						variants,
-						|f, variant| {
-							variant.name.sym.pprint(f)?;
-							match &variant.kind {
-								VariantKind::Bare => {}
-								VariantKind::Tuple(fields) => {
-									f.write("(")?;
-									f.write_seq_oneline(fields, |f, field| field.pprint(f), ",")?;
-									f.write(")")?;
+				ItemKind::Enum {
+					name,
+					generics,
+					variants,
+				} => {
+					write!(f, "enum ")?;
+					name.sym.pprint(f)?;
+					if !generics.is_empty() {
+						write!(f, "<")?;
+						f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
+						write!(f, ">")?;
+					}
+					write!(f, " {{")?;
+					f.with_indent(|f| {
+						f.write_seq(
+							variants,
+							|f, variant| {
+								variant.name.sym.pprint(f)?;
+								match &variant.kind {
+									VariantKind::Bare => {}
+									VariantKind::Tuple(fields) => {
+										write!(f, "(")?;
+										f.write_seq_oneline(
+											fields,
+											|f, field| field.pprint(f),
+											",",
+										)?;
+										write!(f, ")")?;
+									}
+									VariantKind::Struct(fields) => {
+										write!(f, " {{")?;
+										f.write_seq_oneline(
+											fields,
+											|f, field| field.pprint(f),
+											",",
+										)?;
+										write!(f, "}}")?;
+									}
 								}
-								VariantKind::Struct(fields) => {
-									f.write(" { ")?;
-									f.write_seq_oneline(fields, |f, field| field.pprint(f), ",")?;
-									f.write(" }")?;
-								}
-							}
-							Ok(())
-						},
-						",",
-					)
-				})?;
-				f.newline()?;
-				f.write("}")?;
-			}
-			ItemKind::Trait { .. } => todo!(),
-			ItemKind::TraitImpl { .. } => todo!(),
-		}
-		Ok(())
-	}
-}
-
-impl PrettyPrint for FieldDef {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		self.name.sym.pprint(f)?;
-		f.write(": ")?;
-		self.ty.pprint(f)?;
-		Ok(())
-	}
-}
-
-impl PrettyPrint for Function {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		let Self {
-			name,
-			decl,
-			body,
-			abi,
-		} = &self;
-
-		if let Some(abi) = &abi {
-			f.write("extern ")?;
-			abi.pprint(f)?;
-			f.write(" ")?;
-		}
-
-		f.write("fn ")?;
-		name.sym.pprint(f)?;
-		f.write("(")?;
-		f.write_seq_oneline(&decl.params, |f, param| param.pprint(f), ", ")?;
-		f.write(")")?;
-
-		if let Some(ret) = &decl.ret {
-			f.write(" ")?;
-			ret.pprint(f)?;
-		}
-
-		if let Some(body) = &body {
-			f.write(" ")?;
-			body.pprint(f)?;
-		} else {
-			f.write(";")?;
-		}
-
-		Ok(())
-	}
-}
-
-impl PrettyPrint for TypeAlias {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		f.write("type ")?;
-		self.name.sym.pprint(f)?;
-		if let Some(alias) = &self.alias {
-			f.write(" = ")?;
-			alias.pprint(f)?;
-		}
-		f.write(";")?;
-		Ok(())
-	}
-}
-
-impl PrettyPrint for Expr {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		match &self.kind {
-			ExprKind::Access { path } => path.pprint(f),
-			ExprKind::Literal { lit, sym } => match lit {
-				LiteralKind::Integer | LiteralKind::Float => sym.pprint(f),
-				LiteralKind::Str => {
-					f.write("\"")?;
-					sym.pprint(f)?;
-					f.write("\"")?;
-					Ok(())
+								Ok(())
+							},
+							",",
+						)
+					})?;
+					f.newline()?;
+					write!(f, "}}")?;
 				}
-			},
-
-			ExprKind::Paren { expr } => {
-				f.write("(")?;
-				expr.pprint(f)?;
-				f.write(")")?;
-				Ok(())
+				ItemKind::Trait { .. } => todo!(),
+				ItemKind::TraitImpl { .. } => todo!(),
 			}
-			ExprKind::Unary { op, expr } => {
-				op.bit.pprint(f)?;
-				expr.pprint(f)?;
-				Ok(())
-			}
-			ExprKind::Binary { op, left, right } => {
-				left.pprint(f)?;
-				f.write(" ")?;
-				op.bit.pprint(f)?;
-				f.write(" ")?;
-				right.pprint(f)?;
-				Ok(())
-			}
-			ExprKind::ShortCircuit { op, left, right } => {
-				left.pprint(f)?;
-				f.write(" ")?;
-				op.bit.pprint(f)?;
-				f.write(" ")?;
-				right.pprint(f)?;
-				Ok(())
-			}
-
-			ExprKind::FnCall { expr, args } => {
-				expr.pprint(f)?;
-				f.write("(")?;
-				f.write_seq_oneline(&args.bit, |f, arg| arg.pprint(f), ",")?;
-				f.write(")")?;
-				Ok(())
-			}
-			ExprKind::If {
-				cond,
-				conseq,
-				altern,
-			} => {
-				f.write("if ")?;
-				cond.pprint(f)?;
-				f.write(" ")?;
-				conseq.pprint(f)?;
-				if let Some(altern) = altern {
-					f.write(" else ")?;
-					altern.pprint(f)?;
-				}
-				Ok(())
-			}
-			ExprKind::Method { expr, name, params } => {
-				expr.pprint(f)?;
-				f.write(".")?;
-				name.sym.pprint(f)?;
-				f.write("(")?;
-				f.write_seq_oneline(params, |f, param| param.pprint(f), ",")?;
-				f.write(")")?;
-				Ok(())
-			}
-			ExprKind::Field { expr, name } => {
-				expr.pprint(f)?;
-				f.write(".")?;
-				name.sym.pprint(f)?;
-				Ok(())
-			}
-			ExprKind::Deref { expr } => {
-				expr.pprint(f)?;
-				f.write(".*")?;
-				Ok(())
-			}
-			ExprKind::Assign { target, value } => {
-				target.pprint(f)?;
-				f.write(" = ")?;
-				value.pprint(f)?;
-				Ok(())
-			}
-			ExprKind::Return { expr } => {
-				f.write("return")?;
-				if let Some(expr) = expr {
-					expr.pprint(f)?;
-				}
-				Ok(())
-			}
-			ExprKind::Break { expr, label } => {
-				f.write("break")?;
-				if let Some(expr) = expr {
-					expr.pprint(f)?;
-				}
-				Ok(())
-			}
-			ExprKind::Continue { label } => f.write("continue"),
+			Ok(())
 		}
 	}
-}
 
-impl PrettyPrint for Param {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		self.name.sym.pprint(f)?;
-		f.write(": ")?;
-		self.ty.pprint(f)?;
-		Ok(())
+	impl PrettyPrint for FieldDef {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			self.name.sym.pprint(f)?;
+			write!(f, ": ")?;
+			self.ty.pprint(f)?;
+			Ok(())
+		}
 	}
-}
 
-impl PrettyPrint for Ty {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		match &self.kind {
-			TyKind::Path(path) => path.pprint(f)?,
+	impl PrettyPrint for Function {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				name,
+				decl,
+				body,
+				abi,
+			} = &self;
 
-			TyKind::Pointer(ty) => {
-				f.write("&")?;
-				ty.pprint(f)?;
+			if let Some(abi) = &abi {
+				write!(f, "extern ")?;
+				abi.pprint(f)?;
+				write!(f, " ")?;
 			}
-			TyKind::Unit => f.write("()")?,
-			TyKind::ImplicitInfer => f.write("_")?,
-		}
-		Ok(())
-	}
-}
 
-impl PrettyPrint for Symbol {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		// TODO
-		f.write(&format!("{self:#?}"))
-	}
-}
+			write!(f, "fn ")?;
+			name.sym.pprint(f)?;
+			write!(f, "(")?;
+			f.write_seq_oneline(&decl.params, |f, param| param.pprint(f), ", ")?;
+			write!(f, ")")?;
 
-impl PrettyPrint for Path {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		f.write_seq_oneline(&self.segments, |f, segment| segment.sym.pprint(f), "::")?;
-		if !self.generics.is_empty() {
-			f.write("<")?;
-			f.write_seq_oneline(&self.generics, |f, generic| generic.pprint(f), ", ")?;
-			f.write(">")?;
-		}
-		Ok(())
-	}
-}
+			if let Some(ret) = &decl.ret {
+				write!(f, " ")?;
+				ret.pprint(f)?;
+			}
 
-impl PrettyPrint for Block {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		f.write("{")?;
-		f.with_ident(|f| {
-			for stmt in &self.stmts {
-				f.newline()?;
-				stmt.pprint(f)?;
+			if let Some(body) = &body {
+				write!(f, " ")?;
+				body.pprint(f)?;
+			} else {
+				write!(f, ";")?;
 			}
 
 			Ok(())
-		})?;
-		f.newline()?;
-		f.write("}")?;
-		Ok(())
+		}
 	}
-}
 
-impl PrettyPrint for Stmt {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		match &self.kind {
-			StmtKind::Loop { body } => {
-				f.write("loop ")?;
-				body.pprint(f)?;
+	impl PrettyPrint for TypeAlias {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			write!(f, "type ")?;
+			self.name.sym.pprint(f)?;
+			if let Some(alias) = &self.alias {
+				write!(f, " = ")?;
+				alias.pprint(f)?;
 			}
-			StmtKind::WhileLoop { check, body } => {
-				f.write("while ")?;
-				check.pprint(f)?;
-				f.write(" ")?;
-				body.pprint(f)?;
-			}
+			write!(f, ";")?;
+			Ok(())
+		}
+	}
 
-			StmtKind::Let {
-				ident: name,
-				ty,
-				value,
-				mutable,
-			} => {
-				f.write("let ")?;
-				if *mutable {
-					f.write("mut ")?;
+	impl PrettyPrint for Expr {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match &self.kind {
+				ExprKind::Access { path } => path.pprint(f),
+				ExprKind::Literal { lit, sym } => match lit {
+					LiteralKind::Integer | LiteralKind::Float => sym.pprint(f),
+					LiteralKind::Str => {
+						write!(f, "\"")?;
+						sym.pprint(f)?;
+						write!(f, "\"")?;
+						Ok(())
+					}
+				},
+
+				ExprKind::Paren { expr } => {
+					write!(f, "(")?;
+					expr.pprint(f)?;
+					write!(f, ")")?;
+					Ok(())
 				}
-				name.sym.pprint(f)?;
-				if let Some(ty) = &ty {
-					f.write(": ")?;
+				ExprKind::Unary { op, expr } => {
+					op.bit.pprint(f)?;
+					expr.pprint(f)?;
+					Ok(())
+				}
+				ExprKind::Binary { op, left, right } => {
+					left.pprint(f)?;
+					write!(f, " ")?;
+					op.bit.pprint(f)?;
+					write!(f, " ")?;
+					right.pprint(f)?;
+					Ok(())
+				}
+				ExprKind::ShortCircuit { op, left, right } => {
+					left.pprint(f)?;
+					write!(f, " ")?;
+					op.bit.pprint(f)?;
+					write!(f, " ")?;
+					right.pprint(f)?;
+					Ok(())
+				}
+
+				ExprKind::FnCall { expr, args } => {
+					expr.pprint(f)?;
+					write!(f, "(")?;
+					f.write_seq_oneline(&args.bit, |f, arg| arg.pprint(f), ",")?;
+					write!(f, ")")?;
+					Ok(())
+				}
+				ExprKind::If {
+					cond,
+					conseq,
+					altern,
+				} => {
+					write!(f, "if ")?;
+					cond.pprint(f)?;
+					write!(f, " ")?;
+					conseq.pprint(f)?;
+					if let Some(altern) = altern {
+						write!(f, " else ")?;
+						altern.pprint(f)?;
+					}
+					Ok(())
+				}
+				ExprKind::Method { expr, name, params } => {
+					expr.pprint(f)?;
+					write!(f, ".")?;
+					name.sym.pprint(f)?;
+					write!(f, "(")?;
+					f.write_seq_oneline(params, |f, param| param.pprint(f), ",")?;
+					write!(f, ")")?;
+					Ok(())
+				}
+				ExprKind::Field { expr, name } => {
+					expr.pprint(f)?;
+					write!(f, ".")?;
+					name.sym.pprint(f)?;
+					Ok(())
+				}
+				ExprKind::Deref { expr } => {
+					expr.pprint(f)?;
+					write!(f, ".*")?;
+					Ok(())
+				}
+				ExprKind::Assign { target, value } => {
+					target.pprint(f)?;
+					write!(f, " = ")?;
+					value.pprint(f)?;
+					Ok(())
+				}
+				ExprKind::Return { expr } => {
+					write!(f, "return")?;
+					if let Some(expr) = expr {
+						expr.pprint(f)?;
+					}
+					Ok(())
+				}
+				ExprKind::Break { expr, label } => {
+					write!(f, "break")?;
+					if let Some(expr) = expr {
+						expr.pprint(f)?;
+					}
+					Ok(())
+				}
+				ExprKind::Continue { label } => write!(f, "continue"),
+			}
+		}
+	}
+
+	impl PrettyPrint for Param {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			self.name.sym.pprint(f)?;
+			write!(f, ": ")?;
+			self.ty.pprint(f)?;
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Ty {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match &self.kind {
+				TyKind::Path(path) => path.pprint(f)?,
+
+				TyKind::Pointer(ty) => {
+					write!(f, "&")?;
 					ty.pprint(f)?;
 				}
-				if let Some(value) = &value {
-					f.write(" = ")?;
-					value.pprint(f)?;
+				TyKind::Unit => write!(f, "()")?,
+				TyKind::ImplicitInfer => write!(f, "_")?,
+			}
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Symbol {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			// TODO
+			write!(f, "{self:#?}")
+		}
+	}
+
+	impl PrettyPrint for Path {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			f.write_seq_oneline(&self.segments, |f, segment| segment.sym.pprint(f), "::")?;
+			if !self.generics.is_empty() {
+				write!(f, "<")?;
+				f.write_seq_oneline(&self.generics, |f, generic| generic.pprint(f), ", ")?;
+				write!(f, ">")?;
+			}
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Block {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			write!(f, "{{")?;
+			f.with_indent(|f| {
+				for stmt in &self.stmts {
+					f.newline()?;
+					stmt.pprint(f)?;
 				}
-				f.write(";")?;
+				Ok(())
+			})?;
+			f.newline()?;
+			write!(f, "}}")?;
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Stmt {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match &self.kind {
+				StmtKind::Loop { body } => {
+					write!(f, "loop ")?;
+					body.pprint(f)?;
+				}
+				StmtKind::WhileLoop { check, body } => {
+					write!(f, "while ")?;
+					check.pprint(f)?;
+					write!(f, " ")?;
+					body.pprint(f)?;
+				}
+
+				StmtKind::Let {
+					ident: name,
+					ty,
+					value,
+					mutable,
+				} => {
+					write!(f, "let ")?;
+					if *mutable {
+						write!(f, "mut ")?;
+					}
+					name.sym.pprint(f)?;
+					if let Some(ty) = &ty {
+						write!(f, ": ")?;
+						ty.pprint(f)?;
+					}
+					if let Some(value) = &value {
+						write!(f, " = ")?;
+						value.pprint(f)?;
+					}
+					write!(f, ";")?;
+				}
+
+				StmtKind::Empty => write!(f, "; empty stmt")?,
+				StmtKind::Expr(expr) => {
+					expr.pprint(f)?;
+					write!(f, ";")?;
+				}
+				StmtKind::ExprRet(expr) => expr.pprint(f)?,
+			}
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for UnaryOp {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::Not => write!(f, "!"),
+				Self::Minus => write!(f, "-"),
+			}
+		}
+	}
+
+	impl PrettyPrint for BinaryOp {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::Plus => write!(f, "+"),
+				Self::Minus => write!(f, "-"),
+				Self::Mul => write!(f, "*"),
+				Self::Div => write!(f, "/"),
+				Self::Mod => write!(f, "%"),
+
+				Self::And => write!(f, "&"),
+				Self::Or => write!(f, "|"),
+				Self::Xor => write!(f, "^"),
+
+				Self::Shl => write!(f, "<<"),
+				Self::Shr => write!(f, ">>"),
+
+				Self::Gt => write!(f, ">"),
+				Self::Ge => write!(f, ">="),
+				Self::Lt => write!(f, "<"),
+				Self::Le => write!(f, "<="),
+
+				Self::Ne => write!(f, "!="),
+				Self::EqEq => write!(f, "=="),
+			}
+		}
+	}
+
+	impl PrettyPrint for ShortCircuitOp {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::And => write!(f, "and"),
+				Self::Or => write!(f, "or"),
+			}
+		}
+	}
+}
+
+mod hir_pp {
+	use super::*;
+
+	use crate::hir::{
+		Abi, Block, Enum, Expr, ExprKind, FieldDef, Function, Item, ItemKind, Root, Stmt, StmtKind,
+		Struct, TypeAlias,
+	};
+
+	impl PrettyPrint for Root {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			for item in &self.items {
+				item.pprint(f)?;
+				f.newline()?;
+
+				f.newline()?;
+			}
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Item {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match &self.kind {
+				ItemKind::Function(func) => func.pprint(f)?,
+				ItemKind::TypeAlias(ty) => ty.pprint(f)?,
+
+				ItemKind::Struct(Struct {
+					name,
+					generics,
+					fields,
+				}) => {
+					write!(f, "struct ")?;
+					name.sym.pprint(f)?;
+					if !generics.is_empty() {
+						write!(f, "<")?;
+						f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
+						write!(f, ">")?;
+					}
+					write!(f, " {{")?;
+					f.with_indent(|f| f.write_seq(fields, |f, variant| variant.pprint(f), ","))?;
+					f.newline()?;
+					write!(f, "}}")?;
+				}
+				ItemKind::Enum(Enum {
+					name,
+					generics,
+					variants,
+				}) => {
+					write!(f, "enum ")?;
+					name.sym.pprint(f)?;
+					if !generics.is_empty() {
+						write!(f, "<")?;
+						f.write_seq_oneline(generics, |f, generic| generic.sym.pprint(f), ",")?;
+						write!(f, ">")?;
+					}
+					write!(f, " {{")?;
+					f.with_indent(|f| {
+						f.write_seq(
+							variants,
+							|f, variant| {
+								variant.name.sym.pprint(f)?;
+								write!(f, " {{")?;
+								f.write_seq_oneline(
+									&variant.fields,
+									|f, field| field.pprint(f),
+									",",
+								)?;
+								write!(f, "}}")?;
+								Ok(())
+							},
+							",",
+						)
+					})?;
+					f.newline()?;
+					write!(f, "}}")?;
+				}
+				ItemKind::Trait { .. } => todo!(),
+				ItemKind::TraitImpl { .. } => todo!(),
+			}
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Function {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				name,
+				decl,
+				body,
+				abi,
+			} = &self;
+
+			write!(f, "fn ")?;
+			abi.pprint(f)?;
+			write!(f, " ")?;
+			name.sym.pprint(f)?;
+			write!(f, "(")?;
+			f.write_seq_oneline(&decl.inputs, |f, param| param.pprint(f), ", ")?;
+			write!(f, ")")?;
+
+			write!(f, " ")?;
+			decl.output.pprint(f)?;
+
+			if let Some(body) = &body {
+				write!(f, " ")?;
+				body.pprint(f)?;
+			} else {
+				write!(f, ";")?;
 			}
 
-			StmtKind::Empty => f.write("; empty stmt")?,
-			StmtKind::Expr(expr) => {
-				expr.pprint(f)?;
-				f.write(";")?;
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Abi {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::Kalei => write!(f, "kalei"),
+				Self::C => write!(f, "c"),
 			}
-			StmtKind::ExprRet(expr) => expr.pprint(f)?,
-		}
-		Ok(())
-	}
-}
-
-impl PrettyPrint for UnaryOp {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		match self {
-			Self::Not => f.write("!"),
-			Self::Minus => f.write("-"),
 		}
 	}
-}
 
-impl PrettyPrint for BinaryOp {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		match self {
-			Self::Plus => f.write("+"),
-			Self::Minus => f.write("-"),
-			Self::Mul => f.write("*"),
-			Self::Div => f.write("/"),
-			Self::Mod => f.write("%"),
-
-			Self::And => f.write("&"),
-			Self::Or => f.write("|"),
-			Self::Xor => f.write("^"),
-
-			Self::Shl => f.write("<<"),
-			Self::Shr => f.write(">>"),
-
-			Self::Gt => f.write(">"),
-			Self::Ge => f.write(">="),
-			Self::Lt => f.write("<"),
-			Self::Le => f.write("<="),
-
-			Self::Ne => f.write("!="),
-			Self::EqEq => f.write("=="),
+	impl PrettyPrint for TypeAlias {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			write!(f, "type ")?;
+			self.name.sym.pprint(f)?;
+			if let Some(alias) = &self.alias {
+				write!(f, " = ")?;
+				alias.pprint(f)?;
+			}
+			write!(f, ";")?;
+			Ok(())
 		}
 	}
-}
 
-impl PrettyPrint for ShortCircuitOp {
-	fn pprint(&self, f: &mut PrettyFormatter) -> Result<()> {
-		match self {
-			Self::And => f.write("and"),
-			Self::Or => f.write("or"),
+	impl PrettyPrint for FieldDef {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			self.name.sym.pprint(f)?;
+			write!(f, ": ")?;
+			self.ty.pprint(f)?;
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Block {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			write!(f, "{{")?;
+			f.with_indent(|f| {
+				for stmt in &self.stmts {
+					f.newline()?;
+					stmt.pprint(f)?;
+				}
+				if let Some(expr) = &self.ret {
+					f.newline()?;
+					expr.pprint(f)?;
+				}
+				Ok(())
+			})?;
+			f.newline()?;
+			write!(f, "}}")?;
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Stmt {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match &self.kind {
+				StmtKind::Loop { block } => {
+					write!(f, "loop ")?;
+					block.pprint(f)?;
+				}
+				StmtKind::Let {
+					name,
+					ty,
+					value,
+					mutable,
+				} => {
+					write!(f, "let ")?;
+					if *mutable {
+						write!(f, "mut ")?;
+					}
+					name.sym.pprint(f)?;
+					write!(f, ": ")?;
+					ty.pprint(f)?;
+					write!(f, " = ")?;
+					value.pprint(f)?;
+					write!(f, ";")?;
+				}
+				StmtKind::Expr { expr } => {
+					expr.pprint(f)?;
+					write!(f, ";")?;
+				}
+			}
+			Ok(())
+		}
+	}
+
+	impl PrettyPrint for Expr {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			// TODO: parenthesize ambiguous expressions
+			match &self.kind {
+				ExprKind::Access { path } => path.pprint(f),
+				ExprKind::Literal { lit, sym } => match lit {
+					LiteralKind::Integer | LiteralKind::Float => sym.pprint(f),
+					LiteralKind::Str => {
+						write!(f, "\"")?;
+						sym.pprint(f)?;
+						write!(f, "\"")?;
+						Ok(())
+					}
+				},
+
+				ExprKind::Unary { op, expr } => {
+					op.bit.pprint(f)?;
+					expr.pprint(f)?;
+					Ok(())
+				}
+				ExprKind::Binary { op, left, right } => {
+					left.pprint(f)?;
+					write!(f, " ")?;
+					op.bit.pprint(f)?;
+					write!(f, " ")?;
+					right.pprint(f)?;
+					Ok(())
+				}
+
+				ExprKind::FnCall { expr, args } => {
+					expr.pprint(f)?;
+					write!(f, "(")?;
+					f.write_seq_oneline(&args.bit, |f, arg| arg.pprint(f), ",")?;
+					write!(f, ")")?;
+					Ok(())
+				}
+				ExprKind::If {
+					cond,
+					conseq,
+					altern,
+				} => {
+					write!(f, "if ")?;
+					cond.pprint(f)?;
+					write!(f, " ")?;
+					conseq.pprint(f)?;
+					if let Some(altern) = altern {
+						write!(f, " else ")?;
+						altern.pprint(f)?;
+					}
+					Ok(())
+				}
+				ExprKind::Method { expr, name, params } => {
+					expr.pprint(f)?;
+					write!(f, ".")?;
+					name.sym.pprint(f)?;
+					write!(f, "(")?;
+					f.write_seq_oneline(params, |f, param| param.pprint(f), ",")?;
+					write!(f, ")")?;
+					Ok(())
+				}
+				ExprKind::Field { expr, name } => {
+					expr.pprint(f)?;
+					write!(f, ".")?;
+					name.sym.pprint(f)?;
+					Ok(())
+				}
+				ExprKind::Deref { expr } => {
+					expr.pprint(f)?;
+					write!(f, ".*")?;
+					Ok(())
+				}
+				ExprKind::Assign { target, value } => {
+					target.pprint(f)?;
+					write!(f, " = ")?;
+					value.pprint(f)?;
+					Ok(())
+				}
+				ExprKind::Return { expr } => {
+					write!(f, "return")?;
+					if let Some(expr) = expr {
+						expr.pprint(f)?;
+					}
+					Ok(())
+				}
+				ExprKind::Break { expr, label } => {
+					write!(f, "break")?;
+					if let Some(expr) = expr {
+						expr.pprint(f)?;
+					}
+					Ok(())
+				}
+				ExprKind::Continue { label } => write!(f, "continue"),
+			}
 		}
 	}
 }

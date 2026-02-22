@@ -205,7 +205,9 @@ impl Lower for ast::Block {
 					// recover like there was a semicolon
 					hir::Stmt {
 						span: expr.span,
-						kind: hir::StmtKind::Expr(Box::new(expr)),
+						kind: hir::StmtKind::Expr {
+							expr: Box::new(expr),
+						},
 						id: l.make_new_node_id(),
 					}
 				}
@@ -234,7 +236,9 @@ impl Lower for ast::Stmt {
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { kind, span, id } = &self;
 		let kind = match &kind {
-			ast::StmtKind::Loop { body } => hir::StmtKind::Loop(body.lower_box(l)),
+			ast::StmtKind::Loop { body } => hir::StmtKind::Loop {
+				block: body.lower_box(l),
+			},
 			ast::StmtKind::WhileLoop { check, body } => lower_while_loop(l, check, body),
 
 			ast::StmtKind::Let {
@@ -255,7 +259,9 @@ impl Lower for ast::Stmt {
 				value: value.as_ref().unwrap().lower_box(l),
 				mutable: *mutable,
 			},
-			ast::StmtKind::Expr(expr) => hir::StmtKind::Expr(expr.lower_box(l)),
+			ast::StmtKind::Expr(expr) => hir::StmtKind::Expr {
+				expr: expr.lower_box(l),
+			},
 			ast::StmtKind::ExprRet(expr) => {
 				return Some(StmtOrRet::Ret(expr.lower(l)));
 			}
@@ -450,7 +456,9 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 		id: l.make_new_node_id(),
 	};
 
-	hir::StmtKind::Loop(Box::new(loop_blk))
+	hir::StmtKind::Loop {
+		block: Box::new(loop_blk),
+	}
 }
 
 fn lower_unary(l: &mut Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir::ExprKind {

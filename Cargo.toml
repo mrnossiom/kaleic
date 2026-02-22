@@ -32,13 +32,13 @@ insta = "1"
 ariadne = { git = "https://github.com/mrnossiom/ariadne", branch = "expose-report-fields" }
 
 [features]
-# default = ["cranelift"]
-default = ["llvm", "cranelift"]
+# default = ["backend-cranelift"]
+default = ["backend-llvm", "backend-cranelift"]
 
 debug = []
 
-llvm = ["dep:inkwell"]
-cranelift = [
+backend-llvm = ["dep:inkwell"]
+backend-cranelift = [
   "dep:cranelift",
   "dep:cranelift-control",
   "dep:cranelift-jit",

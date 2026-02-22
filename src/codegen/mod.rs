@@ -1,18 +1,20 @@
-#[cfg(feature = "cranelift")]
+#[cfg(feature = "backend-cranelift")]
 mod cranelift;
-#[cfg(feature = "llvm")]
+#[cfg(feature = "backend-llvm")]
 mod llvm;
 
-#[cfg(feature = "cranelift")]
+use std::path::Path;
+
+#[cfg(feature = "backend-cranelift")]
 pub use self::cranelift::Generator as CraneliftBackend;
-#[cfg(feature = "llvm")]
+#[cfg(feature = "backend-llvm")]
 pub use self::llvm::Generator as LlvmBackend;
 
 #[derive(Debug)]
 pub enum Backend {
-	#[cfg(feature = "cranelift")]
+	#[cfg(feature = "backend-cranelift")]
 	Cranelift,
-	#[cfg(feature = "llvm")]
+	#[cfg(feature = "backend-llvm")]
 	Llvm,
 	NoBackend,
 }
@@ -24,12 +26,20 @@ pub enum Backend {
 )]
 impl Default for Backend {
 	fn default() -> Self {
-		#[cfg(feature = "cranelift")]
+		#[cfg(feature = "backend-cranelift")]
 		return Self::Cranelift;
-		#[cfg(feature = "llvm")]
+		#[cfg(feature = "backend-llvm")]
 		return Self::Llvm;
 		Self::NoBackend
 	}
+}
+
+#[derive(Debug, Default)]
+pub enum Linker {
+	Ld,
+	Lld,
+	#[default]
+	Wild,
 }
 
 pub trait CodeGenBackend {
@@ -37,11 +47,18 @@ pub trait CodeGenBackend {
 }
 
 pub trait JitBackend: CodeGenBackend {
-	fn call_main(&mut self);
+	fn finalize(&mut self);
+
+	fn call_main(&self);
 }
 
 pub trait ObjectBackend: CodeGenBackend {
-	// TODO: change to common object
-	#[cfg(feature = "cranelift")]
-	fn get_object(self) -> cranelift_object::ObjectProduct;
+	fn write_object(self: Box<Self>, path: &Path);
+}
+
+pub enum BackendDispatch {
+	#[cfg(feature = "backend-cranelift")]
+	Cranelift,
+	#[cfg(feature = "backend-llvm")]
+	Llvm,
 }

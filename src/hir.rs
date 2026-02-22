@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-	ast::{self, BinaryOp, Ident, ShortCircuitOp, Spanned, UnaryOp},
+	ast::{self, BinaryOp, Ident, Spanned, UnaryOp},
 	lexer::LiteralKind,
 	session::{Span, Symbol},
 };
@@ -130,7 +130,9 @@ pub struct Stmt {
 
 #[derive(Debug, Clone)]
 pub enum StmtKind {
-	Expr(Box<Expr>),
+	Expr {
+		expr: Box<Expr>,
+	},
 
 	Let {
 		name: ast::Ident,
@@ -141,7 +143,9 @@ pub enum StmtKind {
 	},
 
 	// move these to expr
-	Loop(Box<Block>),
+	Loop {
+		block: Box<Block>,
+	},
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use inkwell::{
 	AddressSpace, IntPredicate, OptimizationLevel,
@@ -63,7 +63,14 @@ pub struct Generator<'tcx, 'ctx> {
 }
 
 impl<'tcx> Generator<'tcx, '_> {
-	pub fn new_jit(tcx: &'tcx TyCtx) -> Self {
+	pub fn new_jit(tcx: &'tcx TyCtx<'_>) -> Self {
+		// TODO
+		let context = Box::leak(Box::new(inkwell::context::Context::create()));
+
+		Self::new(tcx, context)
+	}
+
+	pub(crate) fn new_object(tcx: &'tcx TyCtx<'_>) -> Self {
 		// TODO
 		let context = Box::leak(Box::new(inkwell::context::Context::create()));
 
@@ -146,6 +153,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		generator.codegen_body(decl, body)?;
 
 		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
+			// HERE
 			func_val.print_to_stderr();
 		}
 
@@ -219,7 +227,9 @@ impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 }
 
 impl JitBackend for Generator<'_, '_> {
-	fn call_main(&mut self) {
+	fn finalize(&mut self) {}
+
+	fn call_main(&self) {
 		#[expect(unsafe_code)]
 		let ret = unsafe {
 			self.jit
@@ -235,7 +245,7 @@ impl JitBackend for Generator<'_, '_> {
 }
 
 impl ObjectBackend for Generator<'_, '_> {
-	fn get_object(self) -> cranelift_object::ObjectProduct {
+	fn write_object(self: Box<Self>, path: &Path) {
 		todo!()
 	}
 }

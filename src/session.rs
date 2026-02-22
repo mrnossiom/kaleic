@@ -3,7 +3,8 @@
 use std::{
 	cmp,
 	collections::HashSet,
-	fmt, io,
+	fmt, fs,
+	io::{self, Write as _},
 	ops::{self, Sub},
 	path::{Path, PathBuf},
 	process,
@@ -15,7 +16,10 @@ use ariadne::{Config, IndexType, ReportKind};
 use parking_lot::RwLock;
 use string_interner::{StringInterner, Symbol as _, backend::StringBackend, symbol::SymbolU32};
 
-use crate::{bug, codegen::Backend};
+use crate::{
+	bug,
+	codegen::{Backend, Linker},
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -185,6 +189,21 @@ impl SessionCtx {
 	}
 }
 
+pub struct ArtefactWriter(fs::File);
+
+impl fmt::Write for ArtefactWriter {
+	fn write_str(&mut self, s: &str) -> fmt::Result {
+		write!(self.0, "{s}").map_err(|_| fmt::Error)
+	}
+}
+
+impl SessionCtx {
+	pub(crate) fn register_artefact(&self, name: &str) -> ArtefactWriter {
+		let file = fs::File::create(self.options.debug_output.join(name)).unwrap();
+		ArtefactWriter(file)
+	}
+}
+
 impl Default for SessionCtx {
 	fn default() -> Self {
 		Self::new()
@@ -263,11 +282,11 @@ pub struct Options {
 	pub input: Option<PathBuf>,
 
 	pub jit: bool,
-	pub output: PathBuf,
-
 	pub backend: Backend,
+	pub linker: Linker,
 
-	// TODO: replace with an enum
+	pub output: PathBuf,
+	pub debug_output: PathBuf,
 	pub print: HashSet<PrintKind>,
 }
 
@@ -276,8 +295,11 @@ impl Default for Options {
 		Self {
 			input: Default::default(),
 			jit: true,
-			output: PathBuf::from("build"),
 			backend: Default::default(),
+			linker: Default::default(),
+
+			output: PathBuf::from(".cache/kaleic"),
+			debug_output: PathBuf::from(".cache/kaleic/debug"),
 			print: Default::default(),
 		}
 	}
