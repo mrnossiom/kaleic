@@ -208,26 +208,28 @@ impl fmt::Display for LiteralKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Keyword {
 	Fn,
-	Type,
+	// Decl,
+	//
 	Extern,
+	Type,
 	Struct,
 	Enum,
+
+	Impl,
 	Trait,
 	For,
-	Impl,
+	Loop,
+	While,
+	If,
+	Else,
+	Is,
+	Match,
 
 	Let,
 	Mut,
 
 	And,
 	Or,
-
-	If,
-	Else,
-	Is,
-
-	Loop,
-	While,
 
 	Return,
 	Break,
@@ -310,13 +312,21 @@ impl Lexer<'_, '_> {
 					// TODO: make kw an symbol wrapper with preinterned value
 					match self.str_from(start) {
 						"fn" => Keyword(Fn),
-						"type" => Keyword(Type),
+						// "decl" => Keyword(Decl),
 						"extern" => Keyword(Extern),
+						"type" => Keyword(Type),
 						"struct" => Keyword(Struct),
 						"enum" => Keyword(Enum),
+
+						"impl" => Keyword(Impl),
 						"trait" => Keyword(Trait),
 						"for" => Keyword(For),
-						"impl" => Keyword(Impl),
+						"loop" => Keyword(Loop),
+						"while" => Keyword(While),
+						"if" => Keyword(If),
+						"else" => Keyword(Else),
+						"is" => Keyword(Is),
+						"match" => Keyword(Match),
 
 						"let" => Keyword(Let),
 						"mut" => Keyword(Mut),
@@ -324,18 +334,11 @@ impl Lexer<'_, '_> {
 						"and" => Keyword(And),
 						"or" => Keyword(Or),
 
-						"if" => Keyword(If),
-						"else" => Keyword(Else),
-						"is" => Keyword(Is),
-
-						"loop" => Keyword(Loop),
-						"while" => Keyword(While),
-
 						"return" => Keyword(Return),
 						"break" => Keyword(Break),
 						"continue" => Keyword(Continue),
 
-						ident => TokenKind::Ident(self.scx.symbols.intern(ident)),
+						ident => Ident(self.scx.symbols.intern(ident)),
 					}
 				}
 

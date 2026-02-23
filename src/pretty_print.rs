@@ -302,6 +302,8 @@ mod ast_pp {
 					}
 					Ok(())
 				}
+				ExprKind::Match { expr, arms } => todo!(),
+
 				ExprKind::Method { expr, name, params } => {
 					expr.pprint(f)?;
 					write!(f, ".")?;

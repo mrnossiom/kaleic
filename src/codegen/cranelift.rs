@@ -197,7 +197,15 @@ impl<M: Module> Generator<'_, M> {
 			.unwrap();
 
 		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
-			let mut artefact = self.tcx.scx.register_artefact("cranelift-ir.txt");
+			let name = format!(
+				"{:#?}.clif",
+				self.functions
+					.iter()
+					.find(|(k, v)| **v == func_id)
+					.unwrap()
+					.0
+			);
+			let mut artefact = self.tcx.scx.register_artefact(&name);
 			write!(artefact, "{}", context.func.display()).unwrap();
 		}
 

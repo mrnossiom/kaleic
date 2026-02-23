@@ -3,7 +3,6 @@ use std::{fmt::Write as _, fs};
 use ariadne::ReportKind;
 
 use crate::{
-	codegen::{self, Backend, JitBackend, ObjectBackend},
 	lowerer, parser,
 	pretty_print::pretty_print,
 	session::{Diagnostic, PrintKind, Report, SessionCtx, Span},
@@ -87,12 +86,8 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	// codegen hir bodies
 	if scx.options.jit {
-		let backend: &mut dyn JitBackend = match scx.options.backend {
-			#[cfg(feature = "backend-cranelift")]
-			Backend::Cranelift => &mut codegen::CraneliftBackend::new_jit(&tcx),
-			#[cfg(feature = "backend-llvm")]
-			Backend::Llvm => &mut codegen::LlvmBackend::new_jit(&tcx),
-			Backend::NoBackend => panic!("cannot jit without a backend"),
+		let Some(mut backend) = scx.options.backend.jit_backend(&tcx) else {
+			panic!("cannot jit for backend {:?}", scx.options.backend)
 		};
 
 		backend.codegen_root(&hir);
@@ -100,12 +95,8 @@ pub fn pipeline(scx: &SessionCtx) {
 
 		tracing::info!("Finished execution!");
 	} else {
-		let mut backend: Box<dyn ObjectBackend> = match scx.options.backend {
-			#[cfg(feature = "backend-cranelift")]
-			Backend::Cranelift => Box::new(codegen::CraneliftBackend::new_object(&tcx)),
-			#[cfg(feature = "backend-llvm")]
-			Backend::Llvm => Box::new(codegen::LlvmBackend::new_object(&tcx)),
-			Backend::NoBackend => panic!("cannot codegen without a backend"),
+		let Some(mut backend) = scx.options.backend.object_backend(&tcx) else {
+			panic!("cannot codegen for backend {:?}", scx.options.backend)
 		};
 
 		backend.codegen_root(&hir);

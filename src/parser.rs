@@ -177,8 +177,7 @@ impl Parser<'_> {
 	fn expect_ident(&mut self) -> PResult<Ident> {
 		self.eat_ident().ok_or_else(|| {
 			let placeholder = self.scx.symbols.intern("_");
-			let report =
-				errors::parser::expected_token_kind(TokenKind::Ident(placeholder), self.token);
+			let report = errors::parser::expected_token_kind(Ident(placeholder), self.token);
 			Diagnostic::new(report)
 		})
 	}
@@ -361,6 +360,13 @@ impl Parser<'_> {
 				ExprKind::Deref {
 					expr: Box::new(expr),
 				}
+			} else if self.eat(Keyword(Match)) {
+				// `<expr> . match { <arms> }`
+				let arms = self.parse_expr_match();
+				ExprKind::Match {
+					expr: Box::new(expr),
+					arms: todo!("parse match expression"),
+				}
 			} else {
 				let report =
 					errors::parser::expected_construct_no_match("a postfix construct", self.token);
@@ -391,7 +397,7 @@ impl Parser<'_> {
 			self.parse_expr_not()?
 		} else if self.eat(Dash) {
 			self.parse_expr_neg()?
-		} else if matches!(self.token.kind, TokenKind::Ident(_)) {
+		} else if matches!(self.token.kind, Ident(_)) {
 			self.parse_expr_access()?
 		} else if matches!(self.token.kind, Literal(_, _)) {
 			self.parse_expr_literal()
@@ -887,6 +893,10 @@ impl Parser<'_> {
 			expr: Box::new(expr),
 			args: Spanned::new(args, self.close_span(args_lo)),
 		})
+	}
+
+	fn parse_expr_match(&self) -> Vec<()> {
+		todo!()
 	}
 }
 

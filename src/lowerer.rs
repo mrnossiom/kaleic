@@ -385,6 +385,7 @@ impl Lower for ast::Expr {
 				conseq: conseq.lower_box(l),
 				altern: l.lower_opt_box(altern.as_deref()),
 			},
+			ast::ExprKind::Match { expr, arms } => todo!(),
 
 			ast::ExprKind::Method { expr, name, params } => hir::ExprKind::Method {
 				expr: Box::new(expr.lower(l)),

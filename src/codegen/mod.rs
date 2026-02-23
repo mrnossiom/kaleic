@@ -5,6 +5,8 @@ mod llvm;
 
 use std::path::Path;
 
+use crate::ty::TyCtx;
+
 #[cfg(feature = "backend-cranelift")]
 pub use self::cranelift::Generator as CraneliftBackend;
 #[cfg(feature = "backend-llvm")]
@@ -31,6 +33,31 @@ impl Default for Backend {
 		#[cfg(feature = "backend-llvm")]
 		return Self::Llvm;
 		Self::NoBackend
+	}
+}
+
+impl Backend {
+	pub fn jit_backend<'tcx>(&self, tcx: &'tcx TyCtx<'tcx>) -> Option<Box<dyn JitBackend + 'tcx>> {
+		match self {
+			#[cfg(feature = "backend-cranelift")]
+			Backend::Cranelift => Some(Box::new(CraneliftBackend::new_jit(&tcx))),
+			#[cfg(feature = "backend-llvm")]
+			Backend::Llvm => Some(Box::new(LlvmBackend::new_jit(&tcx))),
+			Backend::NoBackend => None,
+		}
+	}
+
+	pub fn object_backend<'tcx>(
+		&self,
+		tcx: &'tcx TyCtx<'tcx>,
+	) -> Option<Box<dyn ObjectBackend + 'tcx>> {
+		match self {
+			#[cfg(feature = "backend-cranelift")]
+			Backend::Cranelift => Some(Box::new(CraneliftBackend::new_object(&tcx))),
+			#[cfg(feature = "backend-llvm")]
+			Backend::Llvm => Some(Box::new(LlvmBackend::new_object(&tcx))),
+			Backend::NoBackend => None,
+		}
 	}
 }
 
