@@ -1,5 +1,0 @@
-type Hello = Foo;
-
-fn main() {
-	var a = 1;
-}

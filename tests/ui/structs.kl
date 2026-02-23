@@ -1,0 +1,22 @@
+// decl Color {r: u8, g: u8, b: u8}
+// decl Mood (
+// 	Excited,
+// 	Tired,
+// 	Fine,
+// )
+
+// decl StrongIndex {idx: u32}
+// decl WeakIndex = u32
+
+struct Color {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+enum Mood {
+	Excited,
+	Tired,
+	Fine,
+}
+

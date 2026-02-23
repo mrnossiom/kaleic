@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2024"
 
 [dependencies]
-ariadne = "0.6"
+ariadne = { version = "0.6", features = ["concolor"] }
 bumpalo = "3"
 clap = { version = "4", features = ["derive"] }
 index_vec = "0.1"
@@ -26,6 +26,7 @@ target-lexicon = { version = "0.13", optional = true }
 inkwell = { version = "0.8", features = ["llvm21-1"], optional = true }
 
 [dev-dependencies]
+goldentests = "1.4.1"
 insta = "1"
 
 [patch.crates-io]

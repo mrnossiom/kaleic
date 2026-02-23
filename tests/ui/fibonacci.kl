@@ -1,11 +1,8 @@
-// You can link any symbol from libc here
-
-extern "c" fn putchar(c: uint) void;
-extern "c" fn exit(c: uint) never;
-
-// TODO: make an example to check how overflow is handled
-
-type Number = uint;
+extern "libc" {
+	// You can link any symbol from libc in here
+	fn putchar(c: uint);
+	fn exit(c: uint) never;
+}
 
 fn main() {
 	let n = 0;
@@ -13,14 +10,13 @@ fn main() {
 		let res = fibo(n);
 
 		print_num(res);
-		// newline
-		putchar(10);
+		putchar(10); // newline
 		
 		n = n + 1;
 	}
 }
 
-fn num_to_ascii(n: Number) Number /*Option<Number>*/ {
+fn num_to_ascii(n: uint) uint /*Option<Number>*/ {
 	if n <= 9 {
 		let num_ascii_base = 48;
 		// Some(num_ascii_base + n)
@@ -31,7 +27,7 @@ fn num_to_ascii(n: Number) Number /*Option<Number>*/ {
 	}
 }
 
-fn print_num_rev(n: Number) {
+fn print_num_rev(n: uint) {
 	if n == 0 {
 		putchar(num_to_ascii(0));
 	} else {
@@ -43,7 +39,7 @@ fn print_num_rev(n: Number) {
 	};
 }
 
-fn print_num(n: Number) {
+fn print_num(n: uint) {
     if n == 0 {
         putchar(num_to_ascii(0));
         return;
@@ -57,12 +53,13 @@ fn print_num(n: Number) {
         divisor = divisor * 10;
     };
 
-    // Reset temp to original number
+    // Reset temp to the original number
     temp = n;
 
     // Print each digit from most to least significant
     while divisor > 0 {
-        let digit = temp / divisor;  // Get the current most significant digit
+		// Get the current most significant digit
+        let digit = temp / divisor;
         putchar(num_to_ascii(digit));
         
         // Remove the most significant digit
@@ -73,8 +70,7 @@ fn print_num(n: Number) {
     };
 }
 
-
-fn fibo(n: Number) Number {
+fn fibo(n: uint) uint {
 	let a = 0;
 	let b = 1;
 
