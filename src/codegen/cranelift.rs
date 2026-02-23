@@ -58,8 +58,8 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 
 	// Return `None` on non-concrete types (e.g. zst, never)
 	// TODO: remove duplicate on function generator
-	fn to_cl_type(&self, output: &ty::TyKind) -> Option<Type> {
-		match output.clone() {
+	fn to_cl_type(&self, ty: &ty::TyKind) -> Option<Type> {
+		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
 				ty::PrimitiveKind::Bool => Some(types::I8),
@@ -197,8 +197,8 @@ impl<M: Module> Generator<'_, M> {
 			.unwrap();
 
 		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
-			let mut writer = self.tcx.scx.register_artefact("backend-ir.txt");
-			write!(writer, "{}", context.func.display()).unwrap();
+			let mut artefact = self.tcx.scx.register_artefact("cranelift-ir.txt");
+			write!(artefact, "{}", context.func.display()).unwrap();
 		}
 
 		self.module.define_function(func_id, &mut context).unwrap();
@@ -261,7 +261,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					};
 
 					let Some(func_id) = function_ids.get(&item.id) else {
-						println!("assuming fn {:?} is external", name.sym);
+						println!("assuming fn `{:#?}` is external", name.sym);
 						continue;
 					};
 
@@ -320,8 +320,8 @@ pub struct FunctionGenerator<'scx, 'bld> {
 /// Codegen hir functions
 impl FunctionGenerator<'_, '_> {
 	// TODO: remove duplicate
-	fn to_cl_type(&self, output: &ty::TyKind) -> Option<Type> {
-		match output.clone() {
+	fn to_cl_type(&self, ty: &ty::TyKind) -> Option<Type> {
+		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
 				ty::PrimitiveKind::Bool => Some(types::I8),
@@ -394,12 +394,15 @@ impl FunctionGenerator<'_, '_> {
 		tracing::trace!(id = ?stmt.id, "codegen_stmt");
 
 		match &stmt.kind {
-			hir::StmtKind::Expr(expr) => match self.codegen_expr(expr)? {
+			hir::StmtKind::Expr { expr } => match self.codegen_expr(expr)? {
 				MaybeValue::Value(_) | MaybeValue::Zst => {}
 				MaybeValue::Never => return Ok(true),
 			},
 			hir::StmtKind::Let {
-				name: ident, value, ..
+				name,
+				value,
+				ty: _,
+				mutable: _,
 			} => match self.codegen_expr(value)? {
 				MaybeValue::Value(expr_value) => {
 					let ty = self.typeck_results.get(&value.id).unwrap();
@@ -407,14 +410,14 @@ impl FunctionGenerator<'_, '_> {
 					let variable = self.builder.declare_var(ty);
 					self.builder.def_var(variable, expr_value);
 
-					self.values.insert(ident.sym, Some(variable));
+					self.values.insert(name.sym, Some(variable));
 				}
 				MaybeValue::Zst => {
-					self.values.insert(ident.sym, None);
+					self.values.insert(name.sym, None);
 				}
 				MaybeValue::Never => {}
 			},
-			hir::StmtKind::Loop(block) => {
+			hir::StmtKind::Loop { block } => {
 				let loop_ = self.builder.create_block();
 				let cont = self.builder.create_block();
 
@@ -639,7 +642,8 @@ impl FunctionGenerator<'_, '_> {
 
 		let condition = match self.codegen_expr(cond)? {
 			MaybeValue::Value(val) => val,
-			MaybeValue::Zst | MaybeValue::Never => panic!(),
+			MaybeValue::Zst => bug!("a ZST cannot be used as a condition"),
+			MaybeValue::Never => return Ok(MaybeValue::Never),
 		};
 
 		// TODO: so ugly

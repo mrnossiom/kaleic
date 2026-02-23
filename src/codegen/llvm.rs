@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, fmt::Write as _, path::Path};
 
 use inkwell::{
 	AddressSpace, IntPredicate, OptimizationLevel,
@@ -8,9 +8,9 @@ use inkwell::{
 	execution_engine::ExecutionEngine,
 	module::Module,
 	passes::PassBuilderOptions,
-	targets::{CodeModel, InitializationConfig, RelocMode, Target, TargetMachine},
+	targets::{CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine},
 	types::{BasicType, BasicTypeEnum, FunctionType},
-	values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue},
+	values::{AnyValue, BasicValue, BasicValueEnum, FunctionValue, PointerValue},
 };
 
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
 
 type Result<T> = std::result::Result<T, &'static str>;
 
+#[must_use]
 #[derive(Debug, Clone)]
 enum MaybeValue<'ctx> {
 	Value(BasicValueEnum<'ctx>),
@@ -95,8 +96,8 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		}
 	}
 
-	fn to_llvm_type(&self, output: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
-		match output.clone() {
+	fn to_llvm_type(&self, ty: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
+		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
 				// (self.ctx.void_type().into()),
@@ -153,8 +154,9 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		generator.codegen_body(decl, body)?;
 
 		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
-			// HERE
-			func_val.print_to_stderr();
+			let name = format!("{}.ll", func_val.get_name().to_string_lossy());
+			let mut artefact = self.tcx.scx.register_artefact(&name);
+			write!(artefact, "{}", func_val.print_to_string().to_string_lossy()).unwrap();
 		}
 
 		if !func_val.verify(true) {
@@ -213,7 +215,7 @@ impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 					};
 
 					let Some(func_id) = function_ids.get(&item.id) else {
-						println!("assuming fn {:#?} is external", name.sym);
+						println!("assuming fn `{:#?}` is external", name.sym);
 						continue;
 					};
 
@@ -246,12 +248,6 @@ impl JitBackend for Generator<'_, '_> {
 
 impl ObjectBackend for Generator<'_, '_> {
 	fn write_object(self: Box<Self>, path: &Path) {
-		todo!()
-	}
-}
-
-impl<'ctx> Generator<'_, 'ctx> {
-	pub fn apply_passes(&self) {
 		Target::initialize_all(&InitializationConfig::default());
 
 		let target_triple = TargetMachine::get_default_triple();
@@ -282,6 +278,10 @@ impl<'ctx> Generator<'_, 'ctx> {
 				&target_machine,
 				PassBuilderOptions::create(),
 			)
+			.unwrap();
+
+		target_machine
+			.write_to_file(&self.module, FileType::Object, path)
 			.unwrap();
 	}
 }
@@ -337,16 +337,16 @@ struct FunctionGenerator<'scx, 'bld, 'ctx> {
 	loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>,
 
 	// TODO: move to a predefined types struct
-	empty_ty: BasicTypeEnum<'bld>,
+	empty_ty: BasicTypeEnum<'ctx>,
 }
 
 impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	// TODO: remove duplicate
-	fn to_llvm_type(&self, output: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
-		match output.clone() {
+	fn to_llvm_type(&self, ty: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
+		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
-				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
-				// (self.ctx.void_type().into()),
+				ty::PrimitiveKind::Void => Some(self.empty_ty.into()),
+				ty::PrimitiveKind::Never => None,
 				ty::PrimitiveKind::Bool => Some(self.ctx.i8_type().into()),
 				ty::PrimitiveKind::UnsignedInt | ty::PrimitiveKind::SignedInt => {
 					Some(self.ctx.i32_type().into())
@@ -366,6 +366,8 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	fn codegen_body(&mut self, decl: &ty::FnDecl, block: &hir::Block) -> Result<()> {
+		tracing::trace!(id = ?block.id, "codegen_body");
+
 		let bb = self.ctx.append_basic_block(self.function, "entry");
 		self.builder.position_at_end(bb);
 
@@ -386,11 +388,15 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 		let ret_val = self.codegen_block(block)?;
 		if let Some(ret_val) = ret_val.as_value() {
 			self.builder.build_return(ret_val).unwrap();
+		} else {
+			self.builder.build_unreachable().unwrap();
 		}
 		Ok(())
 	}
 
 	fn codegen_block(&mut self, block: &hir::Block) -> Result<MaybeValue<'ctx>> {
+		tracing::trace!(id = ?block.id, "codegen_block");
+
 		for stmt in &block.stmts {
 			let should_stop_block_codegen = self.codegen_stmt(stmt)?;
 			if should_stop_block_codegen {
@@ -406,8 +412,9 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	fn codegen_stmt(&mut self, stmt: &hir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
+		tracing::trace!(id = ?stmt.id, "codegen_stmt");
 		match &stmt.kind {
-			hir::StmtKind::Expr(expr) => Ok(self.codegen_expr(expr)?.is_never()),
+			hir::StmtKind::Expr { expr } => Ok(self.codegen_expr(expr)?.is_never()),
 			hir::StmtKind::Let {
 				name,
 				value,
@@ -432,7 +439,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				self.variables.insert(name.sym, place);
 				Ok(expr_value.is_never())
 			}
-			hir::StmtKind::Loop(block) => {
+			hir::StmtKind::Loop { block } => {
 				let loop_ = self.ctx.append_basic_block(self.function, "loop");
 				let cont = self.ctx.append_basic_block(self.function, "cont");
 
@@ -442,8 +449,10 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 
 				self.builder.position_at_end(loop_);
 
-				self.codegen_block(block)?;
-				self.builder.build_unconditional_branch(loop_).unwrap();
+				let maybe_value = self.codegen_block(block)?;
+				if let Some(Some(value)) = maybe_value.as_value() {
+					self.builder.build_unconditional_branch(loop_).unwrap();
+				}
 
 				self.builder.position_at_end(cont);
 
@@ -455,6 +464,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue<'ctx>> {
+		tracing::trace!(id = ?expr.id, "codegen_expr");
 		let value = match &expr.kind {
 			hir::ExprKind::Literal { lit, sym } => {
 				let sym = self.scx.symbols.resolve(*sym);
@@ -524,13 +534,15 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				let mut argsz = Vec::new();
 				for arg in &args.bit {
 					let val = self.codegen_expr(&arg)?;
+					// TODO
 					if let Some(Some(val)) = val.as_value_enum() {
 						argsz.push(val.into());
 					}
 				}
 
-				let call = self.builder.build_call(func, &argsz, "call").unwrap();
+				let call = self.builder.build_call(func, &argsz, "").unwrap();
 				let value = call.try_as_basic_value().basic();
+				// TODO: handle never
 				match value {
 					Some(val) => MaybeValue::Value(val),
 					None => MaybeValue::Zst,
@@ -587,38 +599,74 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 		conseq: &hir::Block,
 		altern: Option<&hir::Block>,
 	) -> Result<MaybeValue<'ctx>> {
+		tracing::trace!(id = ?cond.id, "codegen_if");
 		let condition = match self.codegen_expr(cond)? {
 			MaybeValue::Value(val) => val.into_int_value(),
-			MaybeValue::Zst => panic!(),
+			MaybeValue::Zst => bug!("a zero-sized type cannot be used as a condition"),
 			MaybeValue::Never => return Ok(MaybeValue::Never),
 		};
 
 		let then_bb = self.ctx.append_basic_block(self.function, "then");
-		let else_bb = self.ctx.append_basic_block(self.function, "else");
-		let merge_bb = self.ctx.append_basic_block(self.function, "merge");
+		let else_bb = altern
+			.as_ref()
+			.map(|_| self.ctx.append_basic_block(self.function, "else"));
+		let cont_bb = self.ctx.append_basic_block(self.function, "merge");
+
+		// TODO: so ugly
+		let ty = conseq
+			.ret
+			.as_ref()
+			.map(|ret| self.typeck_results.get(&ret.id).unwrap().clone())
+			.unwrap_or(TyKind::Primitive(ty::PrimitiveKind::Void));
+		let ty = self.to_llvm_type(&ty);
+
+		let ret_ptr = ty
+			.as_ref()
+			.map(|ty| self.builder.build_alloca(*ty, "").unwrap());
+
 		self.builder
-			.build_conditional_branch(condition, then_bb, else_bb)
+			.build_conditional_branch(condition, then_bb, else_bb.unwrap_or(cont_bb))
 			.unwrap();
 		self.builder.position_at_end(then_bb);
-		let then_val = self.codegen_block(conseq)?;
-		self.builder.build_unconditional_branch(merge_bb).unwrap();
-		let then_bb = self.builder.get_insert_block().unwrap();
-		self.builder.position_at_end(else_bb);
-		let else_val = self.codegen_block(altern.as_ref().unwrap())?;
-		self.builder.build_unconditional_branch(merge_bb).unwrap();
-		let else_bb = self.builder.get_insert_block().unwrap();
-		self.builder.position_at_end(merge_bb);
-		let phi = self
-			.builder
-			.build_phi(self.ctx.i64_type(), "if_ret")
-			.unwrap();
-		if let Some(Some(then_val)) = then_val.as_value() {
-			phi.add_incoming(&[(then_val, then_bb)]);
+
+		match self.codegen_block(conseq)? {
+			MaybeValue::Value(value) => {
+				self.builder.build_store(ret_ptr.unwrap(), value).unwrap();
+				self.builder.build_unconditional_branch(cont_bb).unwrap();
+			}
+			MaybeValue::Zst => {
+				self.builder.build_unconditional_branch(cont_bb).unwrap();
+			}
+			MaybeValue::Never => {}
 		}
-		if let Some(Some(else_val)) = else_val.as_value() {
-			phi.add_incoming(&[(else_val, else_bb)]);
+
+		if let Some(altern) = altern {
+			let else_bb = else_bb.unwrap();
+
+			self.builder.position_at_end(else_bb);
+
+			match self.codegen_block(altern)? {
+				MaybeValue::Value(value) => {
+					self.builder.build_store(ret_ptr.unwrap(), value).unwrap();
+					self.builder.build_unconditional_branch(cont_bb).unwrap();
+				}
+				MaybeValue::Zst => {
+					self.builder.build_unconditional_branch(cont_bb).unwrap();
+				}
+				MaybeValue::Never => {}
+			}
 		}
-		Ok(MaybeValue::Value(phi.as_basic_value()))
+
+		self.builder.position_at_end(cont_bb);
+
+		let value = if let Some(ty) = ty {
+			let value = self.builder.build_load(ty, ret_ptr.unwrap(), "").unwrap();
+			MaybeValue::Value(value)
+		} else {
+			MaybeValue::Zst
+		};
+
+		Ok(value)
 	}
 
 	fn codegen_bin_op(
