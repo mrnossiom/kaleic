@@ -33,6 +33,16 @@
     {
       formatter = forAllPkgs (pkgs: pkgs.nixfmt-tree);
 
+      packages = forAllPkgs (pkgs: {
+        docs = pkgs.stdenv.mkDerivation {
+          name = "kaleic-docs";
+          src = ./docs;
+          nativeBuildInputs = [ pkgs.mdbook ];
+          buildPhase = "mdbook build";
+          installPhase = "cp -r book $out";
+        };
+      });
+
       devShells = forAllPkgs (
         pkgs:
         let
@@ -46,7 +56,8 @@
               rust-toolchain
               lldb
               typos
-              cargo-insta
+
+              mdbook
 
               # linker
               wild

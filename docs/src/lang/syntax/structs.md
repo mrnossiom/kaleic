@@ -1,0 +1,46 @@
+# Structs
+
+## Design
+
+```kalei
+enum Option<T> {
+	Some(uint),
+	None,
+}
+
+enum Toto {
+	Foo,
+	Bar(uint),
+	Baz { tata: uint }
+}
+
+struct Baz {
+	content: uint,
+}
+
+// struct NamedTuple<T, U> {
+// 	foo: T,
+// 	bar: U,
+// }
+
+fn foo(option: Option) { }
+
+/*
+
+enum Option { Foo, Bar }
+
+fn main() {
+	var maybe = .Some(10);
+	match maybe {
+		.Some()
+		.None => {}
+		else => {}
+	}
+
+	var baz = Baz { content: 10 };
+	var inner = baz.content;
+	var _ { content } = &baz;
+
+	foo(.Foo);
+}
+```

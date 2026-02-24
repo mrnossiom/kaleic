@@ -13,3 +13,6 @@ compile *args:
 exec program *args:
 	cargo run -F debug -- {{program}}
 	.cache/kaleic/binary.elf {{args}}
+
+serve-docs:
+	mdbook serve docs
