@@ -8,13 +8,12 @@ use std::{fmt, mem, ops::ControlFlow};
 
 use ariadne::{Label, Report, ReportKind};
 
-#[allow(clippy::enum_glob_use)]
 use crate::lexer::{Keyword::*, LiteralKind::*, TokenKind::*};
 use crate::{
 	ast::{
 		BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Ident, Item, ItemKind, NodeId,
-		Param, Path, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, TraitItem, TraitItemKind, Ty,
-		TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
+		Param, Path, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp,
+		Variant, VariantKind,
 	},
 	bug, errors,
 	lexer::{Lexer, Token, TokenKind},
@@ -363,7 +362,7 @@ impl Parser<'_> {
 	fn parse_expr_single(&mut self) -> PResult<Expr> {
 		let lo = self.token.span;
 
-		let kind = if self.eat(Not) {
+		let kind = if self.eat(Keyword(Not)) {
 			self.parse_expr_not()?
 		} else if self.eat(Dash) {
 			self.parse_expr_neg()?
@@ -400,7 +399,7 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Unary`] for [`UnaryOp::Not`]
 	fn parse_expr_not(&mut self) -> PResult<ExprKind> {
-		debug_assert_eq!(self.last_token.kind, Not);
+		debug_assert_eq!(self.last_token.kind, Bang);
 
 		let expr = Box::new(self.parse_expr()?);
 
@@ -528,8 +527,11 @@ impl Parse for Item {
 
 		let kind = if p.eat(Keyword(Fn)) {
 			ItemKind::Function(Parse::parse(p)?)
+		} else if p.eat(Keyword(Unsafe)) {
+			p.parse_item_unsafe_extern()?
 		} else if p.eat(Keyword(Extern)) {
-			p.parse_item_extern()?
+			todo!("recover to unsafe extern block");
+			p.parse_item_unsafe_extern()?
 		} else if p.eat(Keyword(Struct)) {
 			p.parse_item_struct()?
 		} else if p.eat(Keyword(Enum)) {
@@ -570,12 +572,7 @@ impl Parse for Function {
 			return Err(Diagnostic::new(report));
 		};
 
-		Ok(Self {
-			name,
-			decl,
-			body,
-			abi: None,
-		})
+		Ok(Self { name, decl, body })
 	}
 }
 
@@ -601,17 +598,16 @@ impl Parse for TypeAlias {
 
 /// Items
 impl Parser<'_> {
-	/// Parse [`Function`] with [`Function::externess`] set to some ABI.
-	fn parse_item_extern(&mut self) -> PResult<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Extern));
+	/// Parse [`Extern`] block of items
+	fn parse_item_unsafe_extern(&mut self) -> PResult<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Keyword(Unsafe));
 
-		let abi = self.parse_expr()?;
-		self.expect(Keyword(Fn))?;
-		let mut func = Function::parse(self)?;
+		self.expect(Keyword(Extern))?;
 
-		func.abi = Some(abi);
+		self.expect(OpenBrace)?;
+		let items = self.parse_until_func(CloseBrace, |p| Item::parse(p))?;
 
-		Ok(ItemKind::Function(func))
+		Ok(ItemKind::Extern { items })
 	}
 
 	/// Parse [`ItemKind::Struct`]
@@ -674,7 +670,7 @@ impl Parser<'_> {
 		let generics = self.parse_generics_def()?;
 
 		self.expect(OpenBrace)?;
-		let members = self.parse_until_func(CloseBrace, Self::parse_trait_member)?;
+		let members = self.parse_until_func(CloseBrace, Item::parse)?;
 
 		Ok(ItemKind::Trait {
 			name,
@@ -691,7 +687,7 @@ impl Parser<'_> {
 		self.expect(Keyword(Impl))?;
 		let trait_ = self.parse_path()?;
 		self.expect(OpenBrace)?;
-		let members = self.parse_until_func(CloseBrace, Self::parse_trait_member)?;
+		let members = self.parse_until_func(CloseBrace, Item::parse)?;
 
 		Ok(ItemKind::TraitImpl {
 			type_,
@@ -737,22 +733,6 @@ impl Parser<'_> {
 			kind: fields,
 			span: self.close_span(lo),
 		})
-	}
-
-	/// Parse [`TraitItem`]
-	fn parse_trait_member(&mut self) -> PResult<TraitItem> {
-		let Item { kind, span, .. } = Item::parse(self)?;
-
-		let kind = match kind {
-			ItemKind::TypeAlias(type_) => TraitItemKind::Type(type_),
-			ItemKind::Function(func) => TraitItemKind::Function(func),
-			_ => {
-				let report = errors::parser::incorrect_item_in_trait(span);
-				return Err(Diagnostic::new(report));
-			}
-		};
-
-		Ok(TraitItem { kind, span })
 	}
 
 	fn parse_fn_decl(&mut self) -> PResult<(Ident, FnDecl)> {

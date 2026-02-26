@@ -91,9 +91,9 @@ pub fn pipeline(scx: &SessionCtx) {
 		};
 
 		backend.codegen_root(&hir);
-		backend.call_main();
+		let status = backend.call_main();
 
-		eprintln!("Finished execution!");
+		eprintln!("Finished execution! Exited with {status}.");
 	} else {
 		let Some(mut backend) = scx.options.backend.object_backend(&tcx) else {
 			panic!("cannot codegen for backend {:?}", scx.options.backend)
@@ -111,8 +111,6 @@ pub fn pipeline(scx: &SessionCtx) {
 
 		// link libc
 		cmd.args(["-l", "c"]);
-		// no `_start` symbol
-		cmd.args(["-e", "main"]);
 
 		cmd.arg("--output");
 		let binary = scx.options.output.join("binary.elf");

@@ -32,7 +32,7 @@ impl Token {
 	fn maybe_glue_joint(&self, next: &Self) -> Option<Self> {
 		let glued_kind = match (self.kind, next.kind) {
 			(Eq, Eq) => EqEq,
-			(Not, Eq) => Ne,
+			(Bang, Eq) => Ne,
 
 			(Gt, Eq) => Ge,
 			(Lt, Eq) => Le,
@@ -74,7 +74,7 @@ pub enum TokenKind {
 	CloseBrace,
 
 	/// `!`
-	Not,
+	Bang,
 	/// `+`
 	Plus,
 	/// `-`
@@ -145,7 +145,7 @@ impl fmt::Display for TokenKind {
 			OpenBrace => write!(f, "an opening brace"),
 			CloseBrace => write!(f, "a closing brace"),
 
-			Not => write!(f, "a logical negation"),
+			Bang => write!(f, "a logical negation"),
 			Plus => write!(f, "a plus operator"),
 			Dash => write!(f, "a minus operator"),
 			Star => write!(f, "a multiplication operator"),
@@ -210,6 +210,7 @@ pub enum Keyword {
 	Fn,
 	// Decl,
 	//
+	Unsafe,
 	Extern,
 	Type,
 	Struct,
@@ -230,6 +231,7 @@ pub enum Keyword {
 
 	And,
 	Or,
+	Not,
 
 	Return,
 	Break,
@@ -313,6 +315,7 @@ impl Lexer<'_, '_> {
 					match self.str_from(start) {
 						"fn" => Keyword(Fn),
 						// "decl" => Keyword(Decl),
+						"unsafe" => Keyword(Unsafe),
 						"extern" => Keyword(Extern),
 						"type" => Keyword(Type),
 						"struct" => Keyword(Struct),
@@ -333,6 +336,7 @@ impl Lexer<'_, '_> {
 
 						"and" => Keyword(And),
 						"or" => Keyword(Or),
+						"not" => Keyword(Not),
 
 						"return" => Keyword(Return),
 						"break" => Keyword(Break),
@@ -417,7 +421,7 @@ impl Lexer<'_, '_> {
 				'<' => Lt,
 				'=' => Eq,
 
-				'!' => Not,
+				'!' => Bang,
 
 				',' => Comma,
 				'.' => Dot,

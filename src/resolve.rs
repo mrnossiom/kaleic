@@ -36,7 +36,7 @@ impl<'tcx> Collector<'tcx> {
 }
 
 impl Collector<'_> {
-	pub fn collect_items(&mut self, hir: &hir::Root) {
+	pub fn collect_root(&mut self, hir: &hir::Root) {
 		for item in &hir.items {
 			self.collect_item(item);
 		}
@@ -69,6 +69,11 @@ impl Collector<'_> {
 							errors::ty::item_name_conflict(occupied.get().span, name.span, "value");
 						self.tcx.scx.dcx().emit_build(report);
 					}
+				}
+			}
+			hir::ItemKind::Extern { items } => {
+				for item in items {
+					self.collect_item(&item.clone().into());
 				}
 			}
 		}
@@ -108,20 +113,14 @@ impl TypeComputer<'_> {
 	pub fn compute_env(&mut self, name_env: &NameEnvironment) {
 		for (_sym, item) in &name_env.types {
 			let ty = self.compute_item(item);
-
-			let old = self.ty_env.insert(item.id, ty);
-			assert!(old.is_none());
 		}
 		for (sym, item) in &name_env.values {
 			let ty = self.compute_item(item);
-
-			let old = self.ty_env.insert(item.id, ty);
-			assert!(old.is_none());
 		}
 	}
 
-	fn compute_item(&mut self, item: &hir::Item) -> TyKind {
-		match &item.kind {
+	fn compute_item(&mut self, item: &hir::Item) {
+		let ty = match &item.kind {
 			hir::ItemKind::Struct(Struct {
 				name,
 				generics,
@@ -170,13 +169,18 @@ impl TypeComputer<'_> {
 				),
 			},
 
-			hir::ItemKind::Function(Function {
-				name,
-				decl,
-				body,
-				abi,
-			}) => TyKind::Fn(Box::new(self.lower_fn_decl(decl))),
-		}
+			hir::ItemKind::Function(Function { name, decl, body }) => {
+				TyKind::Fn(Box::new(self.lower_fn_decl(decl)))
+			}
+			hir::ItemKind::Extern { items } => {
+				for item in items {
+					self.compute_item(&item.clone().into())
+				}
+				return;
+			}
+		};
+		let old = self.ty_env.insert(item.id, ty);
+		assert!(old.is_none());
 	}
 
 	// TODO: not pub

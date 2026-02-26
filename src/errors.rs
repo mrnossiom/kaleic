@@ -25,13 +25,6 @@ pub mod parser {
 					.with_message(format!("found {} that was unexpected", token.kind)),
 			)
 	}
-
-	pub(crate) fn incorrect_item_in_trait(item_span: Span) -> ReportBuilder {
-		Report::build(ReportKind::Error, item_span)
-			.with_message("invalid item in trait definition".to_string())
-			.with_label(Label::new(item_span).with_message("found an item that was unexpected"))
-			.with_help("only type definitions and functions are allowed")
-	}
 }
 
 pub mod lowerer {
@@ -42,6 +35,13 @@ pub mod lowerer {
 			.with_message("expression is missing a semicolon but is not at the end")
 			.with_label(Label::new(expr_span).with_message("here"))
 			.with_message("you may need to add a semicolon at the end of the expression")
+	}
+
+	pub(crate) fn incorrect_item_in_trait(item_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, item_span)
+			.with_message("invalid item in trait definition".to_string())
+			.with_label(Label::new(item_span).with_message("found an item that was unexpected"))
+			.with_help("only type definitions and functions are allowed")
 	}
 }
 

@@ -1,0 +1,5 @@
+// Unix start
+fn _start() never {
+    let status = main();
+    exit(status)
+}

@@ -76,7 +76,7 @@ pub trait CodeGenBackend {
 pub trait JitBackend: CodeGenBackend {
 	fn finalize(&mut self);
 
-	fn call_main(&self);
+	fn call_main(&self) -> i32;
 }
 
 pub trait ObjectBackend: CodeGenBackend {

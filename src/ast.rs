@@ -300,14 +300,12 @@ pub struct TypeAlias {
 	pub alias: Option<Box<Ty>>,
 }
 
-/// `[ extern <abi> ] fn <name> <decl> <body>|;`
+/// `fn <name> <decl> <body>|;`
 #[derive(Debug)]
 pub struct Function {
 	pub name: Ident,
 	pub decl: FnDecl,
 	pub body: Option<Box<Block>>,
-
-	pub abi: Option<Expr>,
 }
 
 #[derive(Debug)]
@@ -330,14 +328,18 @@ pub enum ItemKind {
 	Trait {
 		name: Ident,
 		generics: Vec<Ident>,
-		members: Vec<TraitItem>,
+		members: Vec<Item>,
 	},
 
 	/// `for <type> impl <trait> { <items>* }`
 	TraitImpl {
 		type_: Path,
 		trait_: Path,
-		members: Vec<TraitItem>,
+		members: Vec<Item>,
+	},
+
+	Extern {
+		items: Vec<Item>,
 	},
 }
 
@@ -366,18 +368,6 @@ pub enum VariantKind {
 	Tuple(Vec<Ty>),
 	/// `{ <fields>* }`
 	Struct(Vec<FieldDef>),
-}
-
-#[derive(Debug)]
-pub struct TraitItem {
-	pub kind: TraitItemKind,
-	pub span: Span,
-}
-
-#[derive(Debug)]
-pub enum TraitItemKind {
-	Type(TypeAlias),
-	Function(Function),
 }
 
 #[derive(Debug)]

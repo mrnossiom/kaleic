@@ -174,6 +174,7 @@ mod ast_pp {
 				}
 				ItemKind::Trait { .. } => todo!(),
 				ItemKind::TraitImpl { .. } => todo!(),
+				ItemKind::Extern { items } => todo!(),
 			}
 			Ok(())
 		}
@@ -190,18 +191,7 @@ mod ast_pp {
 
 	impl PrettyPrint for Function {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self {
-				name,
-				decl,
-				body,
-				abi,
-			} = &self;
-
-			if let Some(abi) = &abi {
-				write!(f, "extern ")?;
-				abi.pprint(f)?;
-				write!(f, " ")?;
-			}
+			let Self { name, decl, body } = &self;
 
 			write!(f, "fn ")?;
 			name.sym.pprint(f)?;
@@ -506,14 +496,14 @@ mod hir_pp {
 	use super::*;
 
 	use crate::hir::{
-		Abi, Block, Enum, Expr, ExprKind, FieldDef, Function, Item, ItemKind, Root, Stmt, StmtKind,
+		Abi, Block, Enum, Expr, ExprKind, FieldDef, Function, ItemKind, Root, Stmt, StmtKind,
 		Struct, TypeAlias,
 	};
 
 	impl PrettyPrint for Root {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			for item in &self.items {
-				item.pprint(f)?;
+				item.kind.pprint(f)?;
 				f.newline()?;
 
 				f.newline()?;
@@ -522,12 +512,23 @@ mod hir_pp {
 		}
 	}
 
-	impl PrettyPrint for Item {
+	impl PrettyPrint for ItemKind {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			match &self.kind {
+			match &self {
 				ItemKind::Function(func) => func.pprint(f)?,
-				ItemKind::TypeAlias(ty) => ty.pprint(f)?,
+				ItemKind::Extern { items } => {
+					write!(f, "unsafe extern {{")?;
+					f.with_indent(|f| {
+						for item in items {
+							ItemKind::from(item.kind.clone().into()).pprint(f)?;
+						}
+						Ok(())
+					})?;
+					f.newline()?;
+					write!(f, "}}")?;
+				}
 
+				ItemKind::TypeAlias(ty) => ty.pprint(f)?,
 				ItemKind::Struct(Struct {
 					name,
 					generics,
@@ -578,8 +579,44 @@ mod hir_pp {
 					f.newline()?;
 					write!(f, "}}")?;
 				}
-				ItemKind::Trait { .. } => todo!(),
-				ItemKind::TraitImpl { .. } => todo!(),
+
+				ItemKind::Trait {
+					name,
+					generics,
+					members,
+				} => {
+					write!(f, "trait ")?;
+					name.sym.pprint(f)?;
+					// TODO: generics
+					write!(f, " {{")?;
+					f.with_indent(|f| {
+						for item in members {
+							ItemKind::from(item.kind.clone().into()).pprint(f)?;
+						}
+						Ok(())
+					})?;
+					f.newline()?;
+					write!(f, "}}")?;
+				}
+				ItemKind::TraitImpl {
+					type_,
+					trait_,
+					members,
+				} => {
+					write!(f, "impl ")?;
+					trait_.pprint(f)?;
+					write!(f, " for ")?;
+					type_.pprint(f)?;
+					write!(f, " {{")?;
+					f.with_indent(|f| {
+						for item in members {
+							ItemKind::from(item.kind.clone().into()).pprint(f)?;
+						}
+						Ok(())
+					})?;
+					f.newline()?;
+					write!(f, "}}")?;
+				}
 			}
 			Ok(())
 		}
@@ -587,16 +624,9 @@ mod hir_pp {
 
 	impl PrettyPrint for Function {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self {
-				name,
-				decl,
-				body,
-				abi,
-			} = &self;
+			let Self { name, decl, body } = &self;
 
 			write!(f, "fn ")?;
-			abi.pprint(f)?;
-			write!(f, " ")?;
 			name.sym.pprint(f)?;
 			write!(f, "(")?;
 			f.write_seq_oneline(&decl.inputs, |f, param| param.pprint(f), ", ")?;

@@ -223,27 +223,31 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 
 		for item in &hir.items {
 			match &item.kind {
-				hir::ItemKind::Function(Function {
-					name,
-					decl,
-					body,
-					abi,
-				}) => {
+				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let borrow = self.tcx.ty_env.borrow();
 					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
 						todo!()
 					};
 
-					match abi {
-						hir::Abi::Kalei => {
-							let func_id =
-							// TODO: change to hidden by default
-								self.declare_func(name.sym, &decl, Linkage::Hidden).unwrap();
-							function_ids.insert(item.id, func_id);
-						}
-						hir::Abi::C => {
-							let _func_id =
-								self.declare_func(name.sym, &decl, Linkage::Import).unwrap();
+					// TODO: react to abi attribute
+					// TODO: change to hidden by default
+					let func_id = self.declare_func(name.sym, &decl, Linkage::Hidden).unwrap();
+					function_ids.insert(item.id, func_id);
+				}
+				hir::ItemKind::Extern { items } => {
+					for item in items {
+						match &item.kind {
+							hir::ExternItemKind::Function(Function { name, decl, body }) => {
+								let borrow = self.tcx.ty_env.borrow();
+								let TyKind::Fn(decl) =
+									borrow.as_ref().unwrap().get(&item.id).unwrap()
+								else {
+									todo!()
+								};
+
+								let _func_id =
+									self.declare_func(name.sym, &decl, Linkage::Import).unwrap();
+							}
 						}
 					}
 				}
@@ -257,12 +261,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 		}
 		for item in &hir.items {
 			match &item.kind {
-				hir::ItemKind::Function(Function {
-					name,
-					decl,
-					body,
-					abi,
-				}) => {
+				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let borrow = self.tcx.ty_env.borrow();
 					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
 						todo!()
@@ -277,9 +276,13 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					self.define_func(*func_id, &decl, &body).unwrap();
 				}
 
-				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
-				hir::ItemKind::TypeAlias(_) | hir::ItemKind::Trait { .. } => {}
 				hir::ItemKind::TraitImpl { .. } => todo!(),
+
+				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
+
+				hir::ItemKind::Extern { .. }
+				| hir::ItemKind::TypeAlias(_)
+				| hir::ItemKind::Trait { .. } => {}
 			}
 		}
 	}
@@ -290,15 +293,15 @@ impl JitBackend for Generator<'_, JITModule> {
 		self.module.finalize_definitions().unwrap();
 	}
 
-	fn call_main(&self) {
+	fn call_main(&self) -> i32 {
 		let main = self.tcx.scx.symbols.intern("main");
 		let main_id = self.functions.get(&main).unwrap();
 		let func = self.module.get_finalized_function(*main_id);
 		// TODO: this is unsafe as some functions ask for arguments, and lot a more reasons
 		#[allow(unsafe_code)]
-		let main = unsafe { std::mem::transmute::<*const u8, fn()>(func) };
+		let main = unsafe { std::mem::transmute::<*const u8, fn() -> i32>(func) };
 
-		main();
+		main()
 	}
 }
 

@@ -64,6 +64,9 @@ pub enum ItemKind {
 
 	// value env
 	Function(Function),
+	Extern {
+		items: Vec<ExternItem>,
+	},
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +80,6 @@ pub struct Function {
 	pub name: ast::Ident,
 	pub decl: Box<FnDecl>,
 	pub body: Option<Box<Block>>,
-	pub abi: Abi,
 }
 
 #[derive(Debug, Clone)]
@@ -91,12 +93,64 @@ pub struct EnumVariant {
 pub struct TraitItem {
 	pub kind: TraitItemKind,
 	pub span: Span,
+	pub id: NodeId,
 }
 
 #[derive(Debug, Clone)]
 pub enum TraitItemKind {
-	Type(TypeAlias),
+	TypeAlias(TypeAlias),
 	Function(Function),
+}
+
+impl Into<Item> for TraitItem {
+	fn into(self) -> Item {
+		let Self { kind, span, id } = self;
+		Item {
+			kind: kind.into(),
+			span,
+			id,
+		}
+	}
+}
+
+impl Into<ItemKind> for TraitItemKind {
+	fn into(self) -> ItemKind {
+		match self {
+			Self::Function(func) => ItemKind::Function(func),
+			Self::TypeAlias(ty) => ItemKind::TypeAlias(ty),
+		}
+	}
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternItem {
+	pub kind: ExternItemKind,
+	pub span: Span,
+	pub id: NodeId,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExternItemKind {
+	Function(Function),
+}
+
+impl Into<Item> for ExternItem {
+	fn into(self) -> Item {
+		let Self { kind, span, id } = self;
+		Item {
+			kind: kind.into(),
+			span,
+			id,
+		}
+	}
+}
+
+impl Into<ItemKind> for ExternItemKind {
+	fn into(self) -> ItemKind {
+		match self {
+			Self::Function(func) => ItemKind::Function(func),
+		}
+	}
 }
 
 #[derive(Debug, Clone)]

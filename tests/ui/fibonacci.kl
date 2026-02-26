@@ -1,7 +1,6 @@
-extern "libc" {
-	// You can link any symbol from libc in here
+unsafe extern {
 	fn putchar(c: uint);
-	fn exit(c: uint) never;
+	fn exit(status: uint) never;
 }
 
 fn main() {

@@ -16,7 +16,7 @@ use inkwell::{
 use crate::{
 	ast, bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
-	hir::{self, Function},
+	hir::{self, Enum, Function, Struct},
 	lexer,
 	session::{PrintKind, SessionCtx, Symbol},
 	ty::{self, TyCtx, TyKind},
@@ -177,38 +177,42 @@ impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 
 		for item in &hir.items {
 			match &item.kind {
-				hir::ItemKind::Function(Function {
-					name,
-					decl,
-					body,
-					abi,
-				}) => {
+				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let borrow = self.tcx.ty_env.borrow();
 					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
 						todo!()
 					};
 
-					match abi {
-						hir::Abi::Kalei => {
-							let func_id = self.declare_func(name.sym, decl).unwrap();
-							function_ids.insert(item.id, func_id);
-						}
-						hir::Abi::C => {
-							let _func_id = self.declare_func(name.sym, &decl).unwrap();
+					let func_id = self.declare_func(name.sym, decl).unwrap();
+					function_ids.insert(item.id, func_id);
+				}
+				hir::ItemKind::Extern { items } => {
+					for item in items {
+						match &item.kind {
+							hir::ExternItemKind::Function(Function { name, decl, body }) => {
+								let borrow = self.tcx.ty_env.borrow();
+								let TyKind::Fn(decl) =
+									borrow.as_ref().unwrap().get(&item.id).unwrap()
+								else {
+									todo!()
+								};
+
+								let _func_id = self.declare_func(name.sym, &decl).unwrap();
+							}
 						}
 					}
 				}
-				_ => {}
+
+				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => {
+					todo!("codegen constructors here?")
+				}
+				hir::ItemKind::TypeAlias(_) | hir::ItemKind::Trait { .. } => {}
+				hir::ItemKind::TraitImpl { .. } => todo!("codegen methods"),
 			}
 		}
 		for item in &hir.items {
 			match &item.kind {
-				hir::ItemKind::Function(Function {
-					name,
-					decl,
-					body,
-					abi,
-				}) => {
+				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let borrow = self.tcx.ty_env.borrow();
 					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
 						todo!()
@@ -222,7 +226,14 @@ impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 					let body = body.as_ref().unwrap();
 					self.define_func(*func_id, &decl, &body).unwrap();
 				}
-				_ => {}
+
+				hir::ItemKind::TraitImpl { .. } => todo!(),
+
+				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
+
+				hir::ItemKind::Extern { .. }
+				| hir::ItemKind::TypeAlias(_)
+				| hir::ItemKind::Trait { .. } => {}
 			}
 		}
 	}
@@ -231,18 +242,18 @@ impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 impl JitBackend for Generator<'_, '_> {
 	fn finalize(&mut self) {}
 
-	fn call_main(&self) {
+	fn call_main(&self) -> i32 {
 		#[expect(unsafe_code)]
 		let ret = unsafe {
 			self.jit
-				.get_function::<unsafe extern "C" fn() -> i64>("main")
+				.get_function::<unsafe extern "C" fn() -> i32>("main")
 		}
 		.unwrap();
 
 		#[expect(unsafe_code)]
 		unsafe {
 			ret.call()
-		};
+		}
 	}
 }
 
@@ -517,10 +528,8 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				let hir::ExprKind::Access { path } = &expr.kind else {
 					todo!("not a fn")
 				};
-				let func = self
-					.module
-					.get_function(&self.scx.symbols.resolve(path.simple().sym))
-					.unwrap();
+				let fn_name = self.scx.symbols.resolve(path.simple().sym);
+				let func = self.module.get_function(&fn_name).unwrap();
 				if args.bit.len() != func.count_params() as usize {
 					return Err("fn call args count mismatch");
 				}

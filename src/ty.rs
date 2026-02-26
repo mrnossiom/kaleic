@@ -40,7 +40,7 @@ impl TyCtx<'_> {
 	/// Goes through the HIR and maps all items
 	pub fn collect_items(&self, hir: &hir::Root) {
 		let mut cltr = resolve::Collector::new(self);
-		cltr.collect_items(hir);
+		cltr.collect_root(hir);
 		self.name_env.replace(Some(cltr.name_env));
 	}
 
@@ -72,17 +72,8 @@ impl TyCtx<'_> {
 
 		for item in &hir.items {
 			match &item.kind {
-				hir::ItemKind::Function(Function {
-					name,
-					decl,
-					body,
-					abi,
-				}) => {
-					// TODO: extern means that function is external rn, meaning will change later
-					let body = match abi {
-						hir::Abi::Kalei => body.as_ref().unwrap(),
-						hir::Abi::C => continue,
-					};
+				hir::ItemKind::Function(Function { name, decl, body }) => {
+					let body = body.as_ref().unwrap();
 
 					let TyKind::Fn(decl) = ty_env.get(&item.id).unwrap() else {
 						todo!()
