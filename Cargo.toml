@@ -10,8 +10,6 @@ clap = { version = "4", features = ["derive"] }
 index_vec = "0.1"
 parking_lot = "0.12"
 string-interner = "0.19"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Cranelift backend
 cranelift = { version = "0.128", optional = true }

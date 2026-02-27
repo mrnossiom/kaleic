@@ -100,7 +100,6 @@ impl TyCtx<'_> {
 	}
 
 	#[must_use]
-	#[tracing::instrument(level = "trace", skip(self, decl, body))]
 	fn typeck_fn_old(
 		&self,
 		name: Ident,

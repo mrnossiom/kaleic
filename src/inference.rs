@@ -216,7 +216,6 @@ impl Inferer<'_> {
 #[expect(clippy::match_same_arms)]
 impl Inferer<'_> {
 	fn unify(&mut self, expected: &TyKind<Infer>, actual: &TyKind<Infer>) -> TyKind<Infer> {
-		tracing::trace!(?expected, ?actual, "unify");
 		match (expected, actual) {
 			(TyKind::Ref(expected_ref), ty) => {
 				let expected = self.ty_env[expected_ref].clone().as_infer();
@@ -249,7 +248,6 @@ impl Inferer<'_> {
 	}
 
 	fn unify_infer(&mut self, tag: InferTag, infer: Infer, other: &TyKind<Infer>) -> TyKind<Infer> {
-		tracing::trace!(?tag, ?infer, ?other, "unify_infer");
 		let unified = match (infer, other) {
 			(
 				Infer::Integer,

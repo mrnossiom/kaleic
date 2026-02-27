@@ -93,7 +93,7 @@ pub fn pipeline(scx: &SessionCtx) {
 		backend.codegen_root(&hir);
 		backend.call_main();
 
-		tracing::info!("Finished execution!");
+		eprintln!("Finished execution!");
 	} else {
 		let Some(mut backend) = scx.options.backend.object_backend(&tcx) else {
 			panic!("cannot codegen for backend {:?}", scx.options.backend)
@@ -120,8 +120,6 @@ pub fn pipeline(scx: &SessionCtx) {
 
 		cmd.status().unwrap();
 
-		tracing::info!("Successfully linked binary to `{}`!", binary.display());
+		eprintln!("Successfully linked binary to `{}`!", binary.display());
 	}
-
-	tracing::info!("Reached pipeline end successfully!");
 }

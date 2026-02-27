@@ -20,7 +20,7 @@ fn ui() -> Result<(), Box<dyn std::error::Error>> {
 		test_stderr_prefix: "//@stderr".into(),
 		test_line_prefix: "//~ ".into(),
 
-		overwrite_tests: false,
+		overwrite_tests: bless,
 	}
 	.run_tests()
 	.map_err(|_| "golden tests failed")?;

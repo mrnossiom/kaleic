@@ -366,8 +366,6 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	fn codegen_body(&mut self, decl: &ty::FnDecl, block: &hir::Block) -> Result<()> {
-		tracing::trace!(id = ?block.id, "codegen_body");
-
 		let bb = self.ctx.append_basic_block(self.function, "entry");
 		self.builder.position_at_end(bb);
 
@@ -395,8 +393,6 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	fn codegen_block(&mut self, block: &hir::Block) -> Result<MaybeValue<'ctx>> {
-		tracing::trace!(id = ?block.id, "codegen_block");
-
 		for stmt in &block.stmts {
 			let should_stop_block_codegen = self.codegen_stmt(stmt)?;
 			if should_stop_block_codegen {
@@ -412,7 +408,6 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	fn codegen_stmt(&mut self, stmt: &hir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
-		tracing::trace!(id = ?stmt.id, "codegen_stmt");
 		match &stmt.kind {
 			hir::StmtKind::Expr { expr } => Ok(self.codegen_expr(expr)?.is_never()),
 			hir::StmtKind::Let {
@@ -464,7 +459,6 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue<'ctx>> {
-		tracing::trace!(id = ?expr.id, "codegen_expr");
 		let value = match &expr.kind {
 			hir::ExprKind::Literal { lit, sym } => {
 				let sym = self.scx.symbols.resolve(*sym);
@@ -599,7 +593,6 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 		conseq: &hir::Block,
 		altern: Option<&hir::Block>,
 	) -> Result<MaybeValue<'ctx>> {
-		tracing::trace!(id = ?cond.id, "codegen_if");
 		let condition = match self.codegen_expr(cond)? {
 			MaybeValue::Value(val) => val.into_int_value(),
 			MaybeValue::Zst => bug!("a zero-sized type cannot be used as a condition"),
@@ -675,8 +668,6 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 		left: &hir::Expr,
 		right: &hir::Expr,
 	) -> Result<MaybeValue<'ctx>> {
-		tracing::trace!("codegen_bin_op");
-
 		let lhs = self.codegen_expr(left)?;
 		let rhs = self.codegen_expr(right)?;
 

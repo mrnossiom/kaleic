@@ -21,26 +21,6 @@ use crate::{
 	session::{Diagnostic, SessionCtx, SourceFile, Span},
 };
 
-macro_rules! fn_name {
-	() => {{
-		const fn f() {}
-		fn type_name_of<T>(_: T) -> &'static str {
-			std::any::type_name::<T>()
-		}
-		let name = type_name_of(f);
-		let mut segments = name.rsplit("::");
-		// skip `f`
-		_ = segments.next();
-		segments.next().unwrap()
-	}};
-}
-
-macro_rules! debug_parser {
-	($self:expr) => {
-		tracing::trace!(tkn = ?$self.token, "{:<30}", fn_name!());
-	}
-}
-
 pub fn parse_root(scx: &SessionCtx, source: &SourceFile) -> Root {
 	let mut p = Parser::new(scx, source);
 	match Root::parse(&mut p) {
@@ -260,8 +240,6 @@ impl Parser<'_> {
 impl Parser<'_> {
 	/// Parse an expression
 	fn parse_expr(&mut self) -> PResult<Expr> {
-		debug_parser!(self);
-
 		let lhs = self.parse_expr_single_and_postfix()?;
 		self.parse_expr_assoc_rest(None, lhs)
 	}
@@ -269,8 +247,6 @@ impl Parser<'_> {
 	/// Parse an expression right-hand side by eating association operators
 	/// (e.g. binary operators or assignment equal) while their precedence is higher.
 	fn parse_expr_assoc_rest(&mut self, precedence: Option<u32>, mut lhs: Expr) -> PResult<Expr> {
-		debug_parser!(self);
-
 		let lo = self.token.span;
 
 		while let Some(assoc_op) = self.eat_assoc_token_with_precedence(precedence) {
@@ -305,8 +281,6 @@ impl Parser<'_> {
 		&mut self,
 		prev_prec: Option<u32>,
 	) -> Option<Spanned<AssocOp>> {
-		debug_parser!(self);
-
 		if let Some(op) = AssocOp::from_token_kind(self.token.kind)
 			// only continue if next op precedence higher
 			&& prev_prec.is_none_or(|prev| prev <= op.precedence())
@@ -322,8 +296,6 @@ impl Parser<'_> {
 
 	/// Parse a single expression with postfix constructs
 	fn parse_expr_single_and_postfix(&mut self) -> PResult<Expr> {
-		debug_parser!(self);
-
 		let mut expr = self.parse_expr_single()?;
 		loop {
 			match self.parse_expr_postfix(expr)? {
@@ -389,8 +361,6 @@ impl Parser<'_> {
 	///
 	/// See [`Self::parse_expr`] for full expression parsing including binary operations
 	fn parse_expr_single(&mut self) -> PResult<Expr> {
-		debug_parser!(self);
-
 		let lo = self.token.span;
 
 		let kind = if self.eat(Not) {
@@ -430,7 +400,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Unary`] for [`UnaryOp::Not`]
 	fn parse_expr_not(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Not);
 
 		let expr = Box::new(self.parse_expr()?);
@@ -441,7 +410,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Unary`] for [`UnaryOp::Minus`]
 	fn parse_expr_neg(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Dash);
 
 		let expr = Box::new(self.parse_expr()?);
@@ -452,7 +420,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Literal`]
 	fn parse_expr_literal(&mut self) -> ExprKind {
-		debug_parser!(self);
 		assert!(matches!(self.token.kind, TokenKind::Literal(_, _)));
 
 		let TokenKind::Literal(kind, sym) = self.token.kind else {
@@ -470,8 +437,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Access`]
 	fn parse_expr_access(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
-
 		let path = self.parse_path()?;
 
 		Ok(ExprKind::Access { path })
@@ -479,7 +444,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Paren`]
 	fn parse_expr_paren(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, OpenParen);
 
 		let expr = Box::new(self.parse_expr()?);
@@ -490,7 +454,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::If`]
 	fn parse_expr_if(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(If));
 
 		let cond = Box::new(self.parse_expr()?);
@@ -510,7 +473,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Return`]
 	fn parse_expr_return(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Return));
 
 		// TODO: bad for recovery
@@ -521,7 +483,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Break`]
 	fn parse_expr_break(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Break));
 
 		let label_span = self.token.span;
@@ -539,7 +500,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Continue`]
 	fn parse_expr_continue(&mut self) -> PResult<ExprKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Continue));
 
 		let label_span = self.token.span;
@@ -556,8 +516,6 @@ impl Parser<'_> {
 
 impl Parse for Root {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
-		debug_parser!(p);
-
 		let items = p.parse_until::<Item>(Eof)?;
 
 		Ok(Self { items })
@@ -566,8 +524,6 @@ impl Parse for Root {
 
 impl Parse for Item {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
-		debug_parser!(p);
-
 		let lo = p.token.span;
 
 		let kind = if p.eat(Keyword(Fn)) {
@@ -599,7 +555,6 @@ impl Parse for Item {
 
 impl Parse for Function {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
-		debug_parser!(p);
 		debug_assert_eq!(p.last_token.kind, Keyword(Fn));
 
 		let (name, decl) = p.parse_fn_decl()?;
@@ -626,7 +581,6 @@ impl Parse for Function {
 
 impl Parse for TypeAlias {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
-		debug_parser!(p);
 		debug_assert_eq!(p.last_token.kind, Keyword(Type));
 
 		let name = p.expect_ident()?;
@@ -649,7 +603,6 @@ impl Parse for TypeAlias {
 impl Parser<'_> {
 	/// Parse [`Function`] with [`Function::externess`] set to some ABI.
 	fn parse_item_extern(&mut self) -> PResult<ItemKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Extern));
 
 		let abi = self.parse_expr()?;
@@ -663,7 +616,6 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::Struct`]
 	fn parse_item_struct(&mut self) -> PResult<ItemKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Struct));
 
 		let name = self.expect_ident()?;
@@ -699,7 +651,6 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::Enum`]
 	fn parse_item_enum(&mut self) -> PResult<ItemKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Enum));
 
 		let name = self.expect_ident()?;
@@ -717,7 +668,6 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::Trait`]
 	fn parse_item_trait(&mut self) -> PResult<ItemKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(Trait));
 
 		let name = self.expect_ident()?;
@@ -735,7 +685,6 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::TraitImpl`]
 	fn parse_item_trait_impl(&mut self) -> PResult<ItemKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Keyword(For));
 
 		let type_ = self.parse_path()?;
@@ -753,8 +702,6 @@ impl Parser<'_> {
 
 	/// Parse [`FieldDef`]
 	fn parse_field_def(&mut self) -> PResult<FieldDef> {
-		debug_parser!(self);
-
 		let lo = self.token.span;
 
 		let name = self.expect_ident()?;
@@ -770,8 +717,6 @@ impl Parser<'_> {
 
 	/// Parse [`Variant`] and [`VariantKind`]
 	fn parse_variant_def(&mut self) -> PResult<Variant> {
-		debug_parser!(self);
-
 		let lo = self.token.span;
 
 		let name = self.expect_ident()?;
@@ -796,8 +741,6 @@ impl Parser<'_> {
 
 	/// Parse [`TraitItem`]
 	fn parse_trait_member(&mut self) -> PResult<TraitItem> {
-		debug_parser!(self);
-
 		let Item { kind, span, .. } = Item::parse(self)?;
 
 		let kind = match kind {
@@ -813,8 +756,6 @@ impl Parser<'_> {
 	}
 
 	fn parse_fn_decl(&mut self) -> PResult<(Ident, FnDecl)> {
-		debug_parser!(self);
-
 		let name = self.expect_ident()?;
 		let args_lo = self.token.span;
 		let generics = self.parse_generics_def()?;
@@ -835,8 +776,6 @@ impl Parser<'_> {
 	}
 
 	fn parse_param(&mut self) -> PResult<Param> {
-		debug_parser!(self);
-
 		let name = self.expect_ident()?;
 		self.expect(Colon)?;
 		let ty = self.parse_ty()?;
@@ -844,8 +783,6 @@ impl Parser<'_> {
 	}
 
 	fn parse_path(&mut self) -> PResult<Path> {
-		debug_parser!(self);
-
 		let mut segments = Vec::new();
 		segments.push(self.expect_ident()?);
 		segments.extend(self.parse_while(ColonColon, Self::expect_ident)?);
@@ -883,8 +820,6 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::FnCall`]
 	fn parse_fn_call(&mut self, expr: Expr) -> PResult<ExprKind> {
-		debug_parser!(self);
-
 		let args_lo = self.token.span;
 		self.expect(OpenParen)?;
 		let args = self.parse_seq_rest(OpenParen, CloseParen, Comma, Parser::parse_expr)?;
@@ -903,8 +838,6 @@ impl Parser<'_> {
 /// Types
 impl Parser<'_> {
 	fn parse_ty(&mut self) -> PResult<Ty> {
-		debug_parser!(self);
-
 		let lo = self.token.span;
 
 		let kind = if matches!(self.token.kind, Ident(_)) {
@@ -923,7 +856,6 @@ impl Parser<'_> {
 	}
 
 	fn parse_ty_path(&mut self) -> PResult<TyKind> {
-		debug_parser!(self);
 		debug_assert!(matches!(self.token.kind, Ident(_)));
 
 		let path = self.parse_path()?;
@@ -933,7 +865,6 @@ impl Parser<'_> {
 
 	/// Parse [`TyKind::Pointer`]
 	fn parse_ty_pointer(&mut self) -> PResult<TyKind> {
-		debug_parser!(self);
 		debug_assert_eq!(self.last_token.kind, Ampersand);
 
 		let ty = Box::new(self.parse_ty()?);
@@ -943,8 +874,6 @@ impl Parser<'_> {
 
 	/// Parse `"<" <ty> ">"`
 	fn parse_ty_generics(&mut self) -> PResult<Vec<Ty>> {
-		debug_parser!(self);
-
 		let mut finished = false;
 
 		let mut seq = Vec::new();
@@ -963,8 +892,6 @@ impl Parser<'_> {
 /// Statements
 impl Parser<'_> {
 	fn parse_stmt(&mut self) -> PResult<Stmt> {
-		debug_parser!(self);
-
 		let lo = self.token.span;
 		let kind = match self.token.kind {
 			Keyword(Loop) => self.parse_stmt_loop()?,
@@ -1001,16 +928,12 @@ impl Parser<'_> {
 	}
 
 	fn parse_stmt_loop(&mut self) -> PResult<StmtKind> {
-		debug_parser!(self);
-
 		self.expect(Keyword(Loop))?;
 		let body = Box::new(self.parse_block()?);
 		Ok(StmtKind::Loop { body })
 	}
 
 	fn parse_stmt_while(&mut self) -> PResult<StmtKind> {
-		debug_parser!(self);
-
 		self.expect(Keyword(While))?;
 		let check = Box::new(self.parse_expr()?);
 		let body = Box::new(self.parse_block()?);
@@ -1018,8 +941,6 @@ impl Parser<'_> {
 	}
 
 	fn parse_stmt_let(&mut self) -> PResult<StmtKind> {
-		debug_parser!(self);
-
 		self.expect(Keyword(Let))?;
 
 		let mutable = self.eat(Keyword(Mut));
@@ -1053,8 +974,6 @@ impl Parser<'_> {
 
 impl Parser<'_> {
 	fn parse_block(&mut self) -> PResult<Block> {
-		debug_parser!(self);
-
 		let lo = self.token.span;
 		self.expect(OpenBrace)?;
 		let stmts = self.parse_until_func(CloseBrace, Self::parse_stmt)?;

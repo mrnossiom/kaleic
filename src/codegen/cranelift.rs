@@ -349,8 +349,6 @@ impl FunctionGenerator<'_, '_> {
 	}
 
 	fn codegen_body(&mut self, decl: &ty::FnDecl, block: &hir::Block) -> Result<()> {
-		tracing::trace!(id = ?block.id, "codegen_body");
-
 		let entry_block = self.builder.create_block();
 		self.builder
 			.append_block_params_for_function_params(entry_block);
@@ -382,8 +380,6 @@ impl FunctionGenerator<'_, '_> {
 	}
 
 	fn codegen_block(&mut self, block: &hir::Block) -> Result<MaybeValue> {
-		tracing::trace!(id = ?block.id, "codegen_block");
-
 		for stmt in &block.stmts {
 			let should_stop_block_codegen = self.codegen_stmt(stmt)?;
 			if should_stop_block_codegen {
@@ -399,8 +395,6 @@ impl FunctionGenerator<'_, '_> {
 	}
 
 	fn codegen_stmt(&mut self, stmt: &hir::Stmt) -> Result<bool /* should_stop_block_codegen */> {
-		tracing::trace!(id = ?stmt.id, "codegen_stmt");
-
 		match &stmt.kind {
 			hir::StmtKind::Expr { expr } => match self.codegen_expr(expr)? {
 				MaybeValue::Value(_) | MaybeValue::Zst => {}
@@ -450,7 +444,6 @@ impl FunctionGenerator<'_, '_> {
 	}
 
 	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue> {
-		tracing::trace!(id = ?expr.id, "codegen_expr");
 		let value = match &expr.kind {
 			hir::ExprKind::Literal { lit, sym } => {
 				let sym = self.scx.symbols.resolve(*sym);
@@ -600,7 +593,6 @@ impl FunctionGenerator<'_, '_> {
 		left: &hir::Expr,
 		right: &hir::Expr,
 	) -> Result<Value> {
-		tracing::trace!("codegen_bin_op");
 		// cannot be zst
 		let lhs = self.codegen_expr(left)?;
 		let rhs = self.codegen_expr(right)?;
@@ -646,7 +638,6 @@ impl FunctionGenerator<'_, '_> {
 		let then_block = self.builder.create_block();
 		let else_block = altern.as_ref().map(|_| self.builder.create_block());
 		let cont_block = self.builder.create_block();
-		tracing::trace!(?then_block, ?else_block, ?cont_block, "codegen_if");
 
 		let condition = match self.codegen_expr(cond)? {
 			MaybeValue::Value(val) => val,

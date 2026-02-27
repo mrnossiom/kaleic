@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use kaleic::{driver, session::SessionCtx};
-use tracing_subscriber::{EnvFilter, FmtSubscriber, fmt::time};
 
 mod options {
 	use clap::ValueEnum;
@@ -90,12 +89,6 @@ struct Args {
 }
 
 fn main() {
-	FmtSubscriber::builder()
-		.with_env_filter(EnvFilter::from_default_env())
-		.with_timer(time::Uptime::default())
-		.with_writer(std::io::stderr)
-		.init();
-
 	let args = Args::parse();
 
 	let mut scx = SessionCtx::default();

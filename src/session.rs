@@ -237,7 +237,7 @@ impl DiagnosticCtx {
 
 		let cache = self.source_map.read();
 		if let Err(err) = diag.report.write(&*cache, io::stderr()) {
-			tracing::error!(?err, "could not print diagnostic");
+			eprintln!("could not print diagnostic: {err:?}");
 		}
 
 		#[cfg(feature = "debug")]
