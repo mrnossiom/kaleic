@@ -30,16 +30,16 @@ fn foo(option: Option) { }
 enum Option { Foo, Bar }
 
 fn main() {
-	var maybe = .Some(10);
+	let maybe = .Some(10);
 	match maybe {
 		.Some()
 		.None => {}
 		else => {}
 	}
 
-	var baz = Baz { content: 10 };
-	var inner = baz.content;
-	var _ { content } = &baz;
+	let baz = Baz { content: 10 };
+	let inner = baz.content;
+	let _ { content } = &baz;
 
 	foo(.Foo);
 }
