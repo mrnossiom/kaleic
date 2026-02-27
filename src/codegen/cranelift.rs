@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Write as _, path::Path, sync::Arc};
 use cranelift::prelude::{isa::TargetIsa, *};
 use cranelift_control::ControlPlane;
 use cranelift_jit::JITModule;
-use cranelift_module::{FuncId, Linkage, Module, default_libcall_names};
+use cranelift_module::{DataDescription, FuncId, Linkage, Module, default_libcall_names};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::{
@@ -11,7 +11,6 @@ use crate::{
 	bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, Function, Struct},
-	lexer,
 	session::{PrintKind, SessionCtx, Symbol},
 	ty::{self, TyCtx, TyKind},
 };
@@ -67,7 +66,7 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 				ty::PrimitiveKind::Float => Some(types::F32),
 				ty::PrimitiveKind::Str => todo!(),
 			},
-			ty::TyKind::Pointer(_kind) => todo!(),
+			ty::TyKind::Pointer(_kind) => Some(self.isa.pointer_type()),
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
@@ -176,8 +175,8 @@ impl<M: Module> Generator<'_, M> {
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
 
-			ty_env: &ty_env,
-			typeck_results: &typeck_results,
+			ty_env,
+			typeck_results,
 
 			builder,
 			functions: &self.functions,
@@ -231,7 +230,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 
 					// TODO: react to abi attribute
 					// TODO: change to hidden by default
-					let func_id = self.declare_func(name.sym, &decl, Linkage::Hidden).unwrap();
+					let func_id = self.declare_func(name.sym, decl, Linkage::Hidden).unwrap();
 					function_ids.insert(item.id, func_id);
 				}
 				hir::ItemKind::Extern { items } => {
@@ -246,7 +245,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 								};
 
 								let _func_id =
-									self.declare_func(name.sym, &decl, Linkage::Import).unwrap();
+									self.declare_func(name.sym, decl, Linkage::Import).unwrap();
 							}
 						}
 					}
@@ -273,7 +272,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, &decl, &body).unwrap();
+					self.define_func(*func_id, decl, body).unwrap();
 				}
 
 				hir::ItemKind::TraitImpl { .. } => todo!(),
@@ -422,49 +421,49 @@ impl FunctionGenerator<'_, '_> {
 				}
 				MaybeValue::Never => {}
 			},
-			hir::StmtKind::Loop { block } => {
-				let loop_ = self.builder.create_block();
-				let cont = self.builder.create_block();
-
-				self.loop_stack.push((loop_, cont));
-
-				self.builder.ins().jump(loop_, &[]);
-
-				self.builder.switch_to_block(loop_);
-
-				self.codegen_block(block)?;
-				self.builder.ins().jump(loop_, &[]);
-
-				self.builder.seal_block(loop_);
-
-				self.builder.switch_to_block(cont);
-				self.builder.seal_block(cont);
-
-				self.loop_stack.pop();
-			}
 		}
 		Ok(false)
 	}
 
 	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue> {
 		let value = match &expr.kind {
-			hir::ExprKind::Literal { lit, sym } => {
-				let sym = self.scx.symbols.resolve(*sym);
-				let value = match lit {
-					lexer::LiteralKind::Integer => {
-						let ty = self.typeck_results.get(&expr.id).unwrap();
-						let int_ty = self.to_cl_type(ty).unwrap();
-						self.builder
-							.ins()
-							.iconst(int_ty, sym.parse::<i64>().unwrap())
-					}
-					lexer::LiteralKind::Float => {
-						self.builder.ins().f64const(sym.parse::<f64>().unwrap())
-					}
-					lexer::LiteralKind::Str => todo!(),
-				};
+			hir::ExprKind::LiteralInt { sym } => {
+				let lit = self.scx.symbols.resolve(*sym);
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let int_ty = self.to_cl_type(ty).unwrap();
+				let value = self
+					.builder
+					.ins()
+					.iconst(int_ty, lit.parse::<i64>().unwrap());
 				MaybeValue::Value(value)
 			}
+			hir::ExprKind::LiteralFloat { sym } => {
+				let lit = self.scx.symbols.resolve(*sym);
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let int_ty = self.to_cl_type(ty).unwrap();
+				// FIXME: take ty into account
+				let value = self.builder.ins().f64const(lit.parse::<f64>().unwrap());
+				MaybeValue::Value(value)
+			}
+			hir::ExprKind::LiteralStr { sym } => {
+				let lit = self.scx.symbols.resolve(*sym);
+				let data_id = self.module.declare_anonymous_data(false, false).unwrap();
+				let data = {
+					let mut data = DataDescription::new();
+					data.define(lit.into_boxed_str().into());
+					data
+				};
+				self.module.define_data(data_id, &data).unwrap();
+
+				let global_value = self.module.declare_data_in_func(data_id, self.builder.func);
+				let value = self
+					.builder
+					.ins()
+					.global_value(self.module.isa().pointer_type(), global_value);
+
+				MaybeValue::Value(value)
+			}
+
 			hir::ExprKind::Access { path } => {
 				let path = path.segments[0];
 				match self.values.get(&path.sym) {
@@ -517,6 +516,29 @@ impl FunctionGenerator<'_, '_> {
 				conseq,
 				altern,
 			} => self.codegen_if(cond, conseq, altern.as_deref())?,
+			hir::ExprKind::Loop { block } => {
+				let loop_ = self.builder.create_block();
+				let cont = self.builder.create_block();
+
+				self.loop_stack.push((loop_, cont));
+
+				self.builder.ins().jump(loop_, &[]);
+
+				self.builder.switch_to_block(loop_);
+
+				self.codegen_block(block)?;
+				self.builder.ins().jump(loop_, &[]);
+
+				self.builder.seal_block(loop_);
+
+				self.builder.switch_to_block(cont);
+				self.builder.seal_block(cont);
+
+				self.loop_stack.pop();
+
+				todo!()
+			}
+
 			hir::ExprKind::Method { expr, name, params } => todo!(),
 			hir::ExprKind::Field { expr, name: ident } => todo!(),
 			hir::ExprKind::Deref { expr } => todo!(),
@@ -652,8 +674,9 @@ impl FunctionGenerator<'_, '_> {
 		let ty = conseq
 			.ret
 			.as_ref()
-			.map(|ret| self.typeck_results.get(&ret.id).unwrap().clone())
-			.unwrap_or(TyKind::Primitive(ty::PrimitiveKind::Void));
+			.map_or(TyKind::Primitive(ty::PrimitiveKind::Void), |ret| {
+				self.typeck_results.get(&ret.id).unwrap().clone()
+			});
 
 		if let Some(ty) = self.to_cl_type(&ty) {
 			self.builder.append_block_param(cont_block, ty);

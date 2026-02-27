@@ -1,4 +1,5 @@
-// Unix start
+// #unsafe(no_mangle)
+#no_mangle
 fn _start() never {
     let status = main();
     exit(status)

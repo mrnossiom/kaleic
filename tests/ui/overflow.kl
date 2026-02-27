@@ -1,1 +1,3 @@
+//@args --no-std
+
 // TODO: make an example to check how overflow is handled

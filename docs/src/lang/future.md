@@ -248,3 +248,7 @@ fn boo(arg: Ty) {
   _ = make_blah()
 }
 ```
+
+### Hot-reloading
+
+Would be fun to play with that. Kind of like `dotnet watch`.

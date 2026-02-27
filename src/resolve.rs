@@ -111,11 +111,11 @@ impl<'tcx> TypeComputer<'tcx> {
 
 impl TypeComputer<'_> {
 	pub fn compute_env(&mut self, name_env: &NameEnvironment) {
-		for (_sym, item) in &name_env.types {
-			let ty = self.compute_item(item);
+		for item in name_env.types.values() {
+			self.compute_item(item);
 		}
 		for (sym, item) in &name_env.values {
-			let ty = self.compute_item(item);
+			self.compute_item(item);
 		}
 	}
 
@@ -174,7 +174,7 @@ impl TypeComputer<'_> {
 			}
 			hir::ItemKind::Extern { items } => {
 				for item in items {
-					self.compute_item(&item.clone().into())
+					self.compute_item(&item.clone().into());
 				}
 				return;
 			}
@@ -211,7 +211,7 @@ impl TypeComputer<'_> {
 		ty::FnDecl { inputs, output }
 	}
 
-	fn lower_field_def(&mut self, hir::FieldDef { name, ty }: &hir::FieldDef) -> ty::FieldDef {
+	fn lower_field_def(&self, hir::FieldDef { name, ty }: &hir::FieldDef) -> ty::FieldDef {
 		ty::FieldDef {
 			name: *name,
 			ty: self.tcx.lower_ty(ty).as_no_infer().unwrap(),

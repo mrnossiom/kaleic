@@ -148,6 +148,7 @@ impl TyCtx<'_> {
 		match &ty.kind {
 			ast::TyKind::Path(path) => self.lower_path_ty(path),
 			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
+			ast::TyKind::Reference(ty) => todo!(),
 			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Void),
 			ast::TyKind::ImplicitInfer => TyKind::Infer(self.next_infer_tag(), Infer::Generic),
 		}
@@ -176,16 +177,13 @@ impl TyCtx<'_> {
 		} else {
 			let borrow = self.name_env.borrow();
 			let item_map = borrow.as_ref().unwrap();
-			match item_map.types.get(&path.sym) {
-				Some(item) => {
-					// TODO: we could access the real type directly if we sorted
-					// in some kind of topological order
-					TyKind::Ref(item.id)
-				}
-				None => {
-					eprintln!("item {:?} doesn't exist", path.sym);
-					TyKind::Error
-				}
+			if let Some(item) = item_map.types.get(&path.sym) {
+				// TODO: we could access the real type directly if we sorted
+				// in some kind of topological order
+				TyKind::Ref(item.id)
+			} else {
+				eprintln!("item {:?} doesn't exist", path.sym);
+				TyKind::Error
 			}
 		}
 	}
@@ -201,7 +199,7 @@ pub struct Inferer<'tcx> {
 	pub(crate) body: &'tcx hir::Block,
 
 	pub(crate) local_env: HashMap<Symbol, Vec<TyKind<Infer>>>,
-	// get this span out of here once we have an easy NodeId -> Span way
+	// FIXME: get this span out of here once we have an easy NodeId -> Span way
 	pub(crate) expr_type: HashMap<(Span, hir::NodeId), TyKind<Infer>>,
 	pub(crate) infer_map: HashMap<InferTag, TyKind<Infer>>,
 }
@@ -245,7 +243,7 @@ pub struct FnDecl {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Struct {
-	pub generics: Vec<Ident>,
+	pub generics: ast::Generics,
 	pub fields: Vec<FieldDef>,
 }
 
@@ -257,7 +255,7 @@ pub struct FieldDef {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Enum {
-	pub generics: Vec<Ident>,
+	pub generics: ast::Generics,
 	pub variants: Vec<Variant>,
 }
 

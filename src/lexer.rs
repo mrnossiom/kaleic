@@ -7,7 +7,7 @@ use crate::ast::Ident;
 use crate::session::{BytePos, SessionCtx, Span, Symbol};
 
 #[allow(clippy::enum_glob_use)]
-use crate::lexer::{Keyword::*, LiteralKind::*, TokenKind::*};
+use crate::lexer::{Keyword::*, TokenKind::*};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Spacing {
@@ -41,9 +41,12 @@ impl Token {
 			(Gt, Gt) => Shr,
 
 			(Colon, Colon) => ColonColon,
+			(Pound, Pound) => PoundPound,
 
 			(Ampersand, Ampersand) => todo!("for recovery, see `and` kw"),
 			(BitwiseOr, BitwiseOr) => todo!("for recovery, see `or` kw"),
+
+			(TokenKind::Ident(ident), LiteralStr(sym)) => todo!("resolve cstr and custom strings"),
 
 			(_, _) => return None,
 		};
@@ -64,7 +67,9 @@ impl Token {
 pub enum TokenKind {
 	Ident(Symbol),
 	Keyword(Keyword),
-	Literal(LiteralKind, Symbol),
+	LiteralStr(Symbol),
+	LiteralInt(Symbol),
+	LiteralFloat(Symbol),
 
 	OpenParen,
 	CloseParen,
@@ -117,12 +122,16 @@ pub enum TokenKind {
 	Dot,
 	/// `&`
 	Ampersand,
+	/// `#`
+	Pound,
 	/// `=`
 	Eq,
 	/// `::`
 	ColonColon,
 	/// `'`
 	Apostrophe,
+	/// `##`
+	PoundPound,
 
 	/// Fallback token for unrecognized lexeme
 	Unknown,
@@ -136,7 +145,9 @@ impl fmt::Display for TokenKind {
 		match self {
 			Ident(_) => write!(f, "an identifier"),
 			Keyword(_) => write!(f, "a keyword"),
-			Literal(kind, _) => write!(f, "a {kind} literal"),
+			LiteralStr(_) => write!(f, "a string literal"),
+			LiteralInt(_) => write!(f, "a integer literal"),
+			LiteralFloat(_) => write!(f, "a float literal"),
 
 			OpenParen => write!(f, "an opening parenthesis"),
 			CloseParen => write!(f, "a closing parenthesis"),
@@ -177,27 +188,11 @@ impl fmt::Display for TokenKind {
 
 			ColonColon => write!(f, "a path separator"),
 			Apostrophe => write!(f, "an apostrophe"),
+			Pound => write!(f, "a pound sign"),
+			PoundPound => write!(f, "a double pound sign"),
 
 			Unknown => write!(f, "an unknown token"),
 			Eof => write!(f, "the end of the file"),
-		}
-	}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiteralKind {
-	Integer,
-	Float,
-	Str,
-}
-
-impl fmt::Display for LiteralKind {
-	/// Should fit in the sentence "a {} literal"
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Integer => write!(f, "integer"),
-			Float => write!(f, "float"),
-			Str => write!(f, "string"),
 		}
 	}
 }
@@ -245,6 +240,7 @@ pub struct Lexer<'scx, 'src> {
 	scx: &'scx SessionCtx,
 
 	source: &'src str,
+	start_pos: BytePos,
 	chars: Chars<'src>,
 	token: Option<char>,
 	offset: BytePos,
@@ -254,14 +250,15 @@ pub struct Lexer<'scx, 'src> {
 
 impl<'scx, 'src> Lexer<'scx, 'src> {
 	#[must_use]
-	pub fn new(scx: &'scx SessionCtx, source: &'src str, offset: BytePos) -> Self {
+	pub fn new(scx: &'scx SessionCtx, source: &'src str, start_pos: BytePos) -> Self {
 		let chars = source.chars();
 		Self {
 			scx,
 			source,
+			start_pos,
 			chars,
 			token: None,
-			offset,
+			offset: start_pos,
 
 			next_glued: None,
 		}
@@ -288,12 +285,16 @@ impl<'scx, 'src> Lexer<'scx, 'src> {
 		}
 	}
 
+	fn pos_to_source_idx(&self, pos: BytePos) -> usize {
+		(pos - self.start_pos).to_usize()
+	}
+
 	fn str_from_to(&self, start: BytePos, end: BytePos) -> &str {
-		&self.source[start.to_usize()..end.to_usize()]
+		&self.source[self.pos_to_source_idx(start)..self.pos_to_source_idx(end)]
 	}
 
 	fn str_from(&self, start: BytePos) -> &str {
-		&self.source[start.to_usize()..self.offset.to_usize()]
+		self.str_from_to(start, self.offset)
 	}
 
 	fn is_eof(&self) -> bool {
@@ -350,16 +351,15 @@ impl Lexer<'_, '_> {
 				c if c.is_ascii_digit() => {
 					self.bump_while(|c| char::is_ascii_digit(&c));
 					// avoid to eat the dot if this is a mac call after
-					let kind = if self.first() == '.' && !is_ident_start(self.second()) {
+					if self.first() == '.' && !is_ident_start(self.second()) {
 						self.bump();
 						// TODO: ensure that the float indeed has a digit after the dot
 						assert!(self.token.is_some_and(|c| char::is_ascii_digit(&c)));
 						self.bump_while(|c| char::is_ascii_digit(&c));
-						Float
+						LiteralFloat(self.scx.symbols.intern(self.str_from(start)))
 					} else {
-						Integer
-					};
-					Literal(kind, self.scx.symbols.intern(self.str_from(start)))
+						LiteralInt(self.scx.symbols.intern(self.str_from(start)))
+					}
 				}
 
 				'"' => {
@@ -379,7 +379,7 @@ impl Lexer<'_, '_> {
 						start + BytePos::from_u32(1),
 						self.offset - BytePos::from_u32(1),
 					);
-					Literal(Str, self.scx.symbols.intern(symbol))
+					LiteralStr(self.scx.symbols.intern(symbol))
 				}
 
 				// Non-significative whitespace
@@ -429,6 +429,7 @@ impl Lexer<'_, '_> {
 				';' => Semi,
 
 				'&' => Ampersand,
+				'#' => Pound,
 
 				_ => Unknown,
 			};

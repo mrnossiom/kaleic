@@ -3,7 +3,7 @@ use std::{fmt::Write as _, fs};
 use ariadne::ReportKind;
 
 use crate::{
-	lowerer, parser,
+	ast, lowerer, parser,
 	pretty_print::pretty_print,
 	session::{Diagnostic, PrintKind, Report, SessionCtx, Span},
 	ty,
@@ -13,28 +13,53 @@ pub fn pipeline(scx: &SessionCtx) {
 	_ = fs::remove_dir_all(&scx.options.debug_output);
 	fs::create_dir_all(&scx.options.debug_output).unwrap();
 
-	let filename = scx.options.input.as_ref().unwrap_or_else(|| {
+	if scx.options.inputs.is_empty() {
 		let report = Report::build(ReportKind::Error, Span::DUMMY)
-			.with_message("expected an input filename");
+			.with_message("expected at least one input file");
 		scx.dcx().emit_fatal(&Diagnostic::new(report))
-	});
-
-	let source = scx
-		.source_map
-		.write()
-		.load_source_from_file(filename)
-		.unwrap();
-
-	// parsing source
-	let ast = parser::parse_root(scx, &source);
-	if scx.options.print.contains(&PrintKind::Ast) {
-		let mut artefact = scx.register_artefact("ast.txt");
-		write!(artefact, "{ast:#?}").unwrap();
 	}
-	if scx.options.print.contains(&PrintKind::AstPretty) {
-		let mut artefact = scx.register_artefact("ast-pretty.txt");
-		pretty_print(&ast, &mut artefact).unwrap();
-	}
+
+	let ast = scx
+		.options
+		.inputs
+		.iter()
+		.map(|filename| {
+			let source = scx
+				.source_map
+				.write()
+				.load_source_from_file(filename)
+				.unwrap();
+
+			// parsing source
+			let ast = parser::parse_root(scx, &source);
+			if scx.options.print.contains(&PrintKind::Ast) {
+				let mut artefact = scx.register_artefact(&format!(
+					"ast.{}.txt",
+					filename.file_stem().unwrap().display()
+				));
+				write!(artefact, "{ast:#?}").unwrap();
+			}
+			if scx.options.print.contains(&PrintKind::AstPretty) {
+				let mut artefact = scx.register_artefact(&format!(
+					"ast-pretty.{}.txt",
+					filename.file_stem().unwrap().display()
+				));
+				pretty_print(&ast, &mut artefact).unwrap();
+			}
+
+			ast
+		})
+		.fold(
+			ast::Root {
+				attrs: Vec::new(),
+				items: Vec::new(),
+			},
+			|mut final_, cur| {
+				final_.attrs.extend(cur.attrs);
+				final_.items.extend(cur.items);
+				final_
+			},
+		);
 
 	scx.dcx().check_sane_or_exit();
 
@@ -73,7 +98,7 @@ pub fn pipeline(scx: &SessionCtx) {
 	if scx.options.print.contains(&PrintKind::TypeEnvironment) {
 		let env = tcx.ty_env.borrow();
 		let mut artefact = scx.register_artefact("type-environment.txt");
-		for (name, ty) in env.as_ref().unwrap().iter() {
+		for (name, ty) in env.as_ref().unwrap() {
 			writeln!(artefact, "{name:?}: {ty:?}").unwrap();
 		}
 		writeln!(artefact).unwrap();
@@ -102,7 +127,7 @@ pub fn pipeline(scx: &SessionCtx) {
 		backend.codegen_root(&hir);
 
 		let main_object = scx.options.output.join("main.o");
-		let object = backend.write_object(&main_object);
+		backend.write_object(&main_object);
 
 		// link to binary
 		let mut cmd = std::process::Command::new("wild");
@@ -117,7 +142,5 @@ pub fn pipeline(scx: &SessionCtx) {
 		cmd.arg(&binary);
 
 		cmd.status().unwrap();
-
-		eprintln!("Successfully linked binary to `{}`!", binary.display());
 	}
 }

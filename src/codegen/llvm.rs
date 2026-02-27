@@ -17,7 +17,6 @@ use crate::{
 	ast, bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, Function, Struct},
-	lexer,
 	session::{PrintKind, SessionCtx, Symbol},
 	ty::{self, TyCtx, TyKind},
 };
@@ -122,7 +121,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 	}
 
 	fn define_func(
-		&mut self,
+		&self,
 		func_val: FunctionValue<'ctx>,
 		decl: &ty::FnDecl,
 		body: &hir::Block,
@@ -140,7 +139,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 			ty_env,
 			typeck_results,
 
-			ctx: &*self.ctx,
+			ctx: self.ctx,
 			module: &self.module,
 			builder: &self.builder,
 			function: func_val,
@@ -171,7 +170,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 	}
 }
 
-impl<'ctx> CodeGenBackend for Generator<'_, '_> {
+impl CodeGenBackend for Generator<'_, '_> {
 	fn codegen_root(&mut self, hir: &hir::Root) {
 		let mut function_ids = HashMap::new();
 
@@ -197,7 +196,7 @@ impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 									todo!()
 								};
 
-								let _func_id = self.declare_func(name.sym, &decl).unwrap();
+								let _func_id = self.declare_func(name.sym, decl).unwrap();
 							}
 						}
 					}
@@ -224,7 +223,7 @@ impl<'ctx> CodeGenBackend for Generator<'_, '_> {
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, &decl, &body).unwrap();
+					self.define_func(*func_id, decl, body).unwrap();
 				}
 
 				hir::ItemKind::TraitImpl { .. } => todo!(),
@@ -356,7 +355,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	fn to_llvm_type(&self, ty: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
 		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
-				ty::PrimitiveKind::Void => Some(self.empty_ty.into()),
+				ty::PrimitiveKind::Void => Some(self.empty_ty),
 				ty::PrimitiveKind::Never => None,
 				ty::PrimitiveKind::Bool => Some(self.ctx.i8_type().into()),
 				ty::PrimitiveKind::UnsignedInt | ty::PrimitiveKind::SignedInt => {
@@ -445,7 +444,117 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				self.variables.insert(name.sym, place);
 				Ok(expr_value.is_never())
 			}
-			hir::StmtKind::Loop { block } => {
+		}
+	}
+
+	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue<'ctx>> {
+		let value = match &expr.kind {
+			hir::ExprKind::LiteralStr { sym } => {
+				let sym = self.scx.symbols.resolve(*sym);
+
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.to_llvm_type(ty).unwrap();
+
+				let val = todo!();
+				MaybeValue::Value(val)
+			}
+			hir::ExprKind::LiteralInt { sym } => {
+				let sym = self.scx.symbols.resolve(*sym);
+
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.to_llvm_type(ty).unwrap();
+
+				let value = ty
+					.into_int_type()
+					.const_int(sym.parse::<u64>().unwrap(), true)
+					.as_basic_value_enum();
+
+				MaybeValue::Value(value)
+			}
+			hir::ExprKind::LiteralFloat { sym } => {
+				let sym = self.scx.symbols.resolve(*sym);
+
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.to_llvm_type(ty).unwrap();
+
+				let value = ty
+					.into_float_type()
+					.const_float(sym.parse::<f64>().unwrap())
+					.as_basic_value_enum();
+
+				MaybeValue::Value(value)
+			}
+			hir::ExprKind::Access { path } => {
+				let place = *self.variables.get(&path.simple().sym).unwrap();
+
+				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.to_llvm_type(ty).unwrap();
+
+				let value = self
+					.builder
+					.build_load(ty, place, &self.scx.symbols.resolve(path.simple().sym))
+					.unwrap()
+					.as_basic_value_enum();
+
+				MaybeValue::Value(value)
+			}
+			hir::ExprKind::Assign { target, value } => {
+				let hir::ExprKind::Access { path } = &target.kind else {
+					todo!("invalid lvalue");
+				};
+
+				let place = *self.variables.get(&path.simple().sym).unwrap();
+				let expr_value = self.codegen_expr(value)?;
+				match expr_value {
+					MaybeValue::Value(value) => {
+						self.builder.build_store(place, value).unwrap();
+					}
+					MaybeValue::Zst | MaybeValue::Never => {}
+				}
+
+				expr_value
+			}
+			hir::ExprKind::Binary { op, left, right } => self.codegen_bin_op(*op, left, right)?,
+
+			hir::ExprKind::Unary { op, expr } => todo!(),
+			hir::ExprKind::Method { expr, name, params } => todo!(),
+			hir::ExprKind::Field { expr, name } => todo!(),
+			hir::ExprKind::Deref { expr } => todo!(),
+
+			hir::ExprKind::FnCall { expr, args } => {
+				let hir::ExprKind::Access { path } = &expr.kind else {
+					todo!("not a fn")
+				};
+				let fn_name = self.scx.symbols.resolve(path.simple().sym);
+				let func = self.module.get_function(&fn_name).unwrap();
+				if args.bit.len() != func.count_params() as usize {
+					return Err("fn call args count mismatch");
+				}
+
+				let mut argsz = Vec::new();
+				for arg in &args.bit {
+					let val = self.codegen_expr(arg)?;
+					// TODO
+					if let Some(Some(val)) = val.as_value_enum() {
+						argsz.push(val.into());
+					}
+				}
+
+				let call = self.builder.build_call(func, &argsz, "").unwrap();
+				let value = call.try_as_basic_value().basic();
+				// TODO: handle never
+				match value {
+					Some(val) => MaybeValue::Value(val),
+					None => MaybeValue::Zst,
+				}
+			}
+
+			hir::ExprKind::If {
+				cond,
+				conseq,
+				altern,
+			} => self.codegen_if(cond, conseq, altern.as_deref())?,
+			hir::ExprKind::Loop { block } => {
 				let loop_ = self.ctx.append_basic_block(self.function, "loop");
 				let cont = self.ctx.append_basic_block(self.function, "cont");
 
@@ -464,98 +573,9 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 
 				self.loop_stack.pop();
 
-				Ok(false)
+				// Ok(false)
+				todo!()
 			}
-		}
-	}
-
-	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue<'ctx>> {
-		let value = match &expr.kind {
-			hir::ExprKind::Literal { lit, sym } => {
-				let sym = self.scx.symbols.resolve(*sym);
-
-				let ty = self.typeck_results.get(&expr.id).unwrap();
-				let ty = self.to_llvm_type(ty).unwrap();
-
-				let val = match lit {
-					lexer::LiteralKind::Integer => ty
-						.into_int_type()
-						.const_int(sym.parse::<u64>().unwrap(), true)
-						.as_basic_value_enum(),
-					lexer::LiteralKind::Float => todo!(),
-					lexer::LiteralKind::Str => todo!(),
-				};
-				MaybeValue::Value(val)
-			}
-			hir::ExprKind::Access { path } => {
-				let place = *self.variables.get(&path.simple().sym).unwrap();
-
-				let ty = self.typeck_results.get(&expr.id).unwrap();
-				let ty = self.to_llvm_type(ty).unwrap();
-
-				let value = self
-					.builder
-					.build_load(ty, place, &self.scx.symbols.resolve(path.simple().sym))
-					.unwrap()
-					.as_basic_value_enum();
-
-				MaybeValue::Value(value.clone())
-			}
-			hir::ExprKind::Assign { target, value } => {
-				let hir::ExprKind::Access { path } = &target.kind else {
-					todo!("invalid lvalue");
-				};
-
-				let place = *self.variables.get(&path.simple().sym).unwrap();
-				let expr_value = self.codegen_expr(value)?;
-				match expr_value {
-					MaybeValue::Value(value) => {
-						self.builder.build_store(place, value).unwrap();
-					}
-					MaybeValue::Zst | MaybeValue::Never => {}
-				};
-
-				expr_value
-			}
-			hir::ExprKind::Binary { op, left, right } => self.codegen_bin_op(*op, left, right)?,
-
-			hir::ExprKind::Unary { op, expr } => todo!(),
-			hir::ExprKind::Method { expr, name, params } => todo!(),
-			hir::ExprKind::Field { expr, name: ident } => todo!(),
-			hir::ExprKind::Deref { expr } => todo!(),
-
-			hir::ExprKind::FnCall { expr, args } => {
-				let hir::ExprKind::Access { path } = &expr.kind else {
-					todo!("not a fn")
-				};
-				let fn_name = self.scx.symbols.resolve(path.simple().sym);
-				let func = self.module.get_function(&fn_name).unwrap();
-				if args.bit.len() != func.count_params() as usize {
-					return Err("fn call args count mismatch");
-				}
-
-				let mut argsz = Vec::new();
-				for arg in &args.bit {
-					let val = self.codegen_expr(&arg)?;
-					// TODO
-					if let Some(Some(val)) = val.as_value_enum() {
-						argsz.push(val.into());
-					}
-				}
-
-				let call = self.builder.build_call(func, &argsz, "").unwrap();
-				let value = call.try_as_basic_value().basic();
-				// TODO: handle never
-				match value {
-					Some(val) => MaybeValue::Value(val),
-					None => MaybeValue::Zst,
-				}
-			}
-			hir::ExprKind::If {
-				cond,
-				conseq,
-				altern,
-			} => self.codegen_if(cond, conseq, altern.as_deref())?,
 
 			hir::ExprKind::Return { expr } => {
 				if let Some(expr) = expr {
@@ -569,7 +589,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 					}
 				} else {
 					self.builder.build_return(None).unwrap();
-				};
+				}
 
 				MaybeValue::Never
 			}
@@ -582,8 +602,8 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 						MaybeValue::Value(value) => {}
 						MaybeValue::Zst | MaybeValue::Never => {}
 					}
-				} else {
 				}
+
 				self.builder.build_unconditional_branch(cont).unwrap();
 				MaybeValue::Never
 			}
@@ -618,8 +638,9 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 		let ty = conseq
 			.ret
 			.as_ref()
-			.map(|ret| self.typeck_results.get(&ret.id).unwrap().clone())
-			.unwrap_or(TyKind::Primitive(ty::PrimitiveKind::Void));
+			.map_or(TyKind::Primitive(ty::PrimitiveKind::Void), |ret| {
+				self.typeck_results.get(&ret.id).unwrap().clone()
+			});
 		let ty = self.to_llvm_type(&ty);
 
 		let ret_ptr = ty

@@ -8,15 +8,19 @@ use std::{fmt, mem, ops::ControlFlow};
 
 use ariadne::{Label, Report, ReportKind};
 
-use crate::lexer::{Keyword::*, LiteralKind::*, TokenKind::*};
+#[expect(
+	clippy::enum_glob_use,
+	reason = "single glob usage here, reduces code size"
+)]
+use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
-		BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Ident, Item, ItemKind, NodeId,
-		Param, Path, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp,
-		Variant, VariantKind,
+		Attr, AttrMeta, BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Generics,
+		Ident as Id, Item, ItemKind, NodeId, Param, Path, Root, ShortCircuitOp, Spanned, Stmt,
+		StmtKind, Ty, TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
 	},
 	bug, errors,
-	lexer::{Lexer, Token, TokenKind},
+	lexer::{Keyword as Kw, Lexer, Token, TokenKind},
 	session::{Diagnostic, SessionCtx, SourceFile, Span},
 };
 
@@ -61,8 +65,8 @@ impl AssocOp {
 			TokenKind::EqEq => Self::Binary(BinaryOp::EqEq),
 			TokenKind::Ne => Self::Binary(BinaryOp::Ne),
 			TokenKind::Eq => Self::Assign,
-			TokenKind::Keyword(And) => Self::ShortCircuit(ShortCircuitOp::And),
-			TokenKind::Keyword(Or) => Self::ShortCircuit(ShortCircuitOp::Or),
+			TokenKind::Keyword(Kw::And) => Self::ShortCircuit(ShortCircuitOp::And),
+			TokenKind::Keyword(Kw::Or) => Self::ShortCircuit(ShortCircuitOp::Or),
 			_ => return None,
 		};
 		Some(kind)
@@ -99,10 +103,16 @@ struct Parser<'scx> {
 
 impl<'scx> Parser<'scx> {
 	fn new(scx: &'scx SessionCtx, file: &'scx SourceFile) -> Self {
+		let SourceFile {
+			name: _,
+			content,
+			offset,
+		} = &file;
+
 		let mut parser = Self {
 			scx,
 
-			lexer: Lexer::new(scx, &file.content, file.offset),
+			lexer: Lexer::new(scx, content, *offset),
 
 			token: Token::DUMMY,
 			last_token: Token::DUMMY,
@@ -147,13 +157,13 @@ impl Parser<'_> {
 		}
 	}
 
-	fn eat_ident(&mut self) -> Option<Ident> {
+	fn eat_ident(&mut self) -> Option<Id> {
 		self.token.as_ident().inspect(|_| {
 			self.bump();
 		})
 	}
 
-	fn expect_ident(&mut self) -> PResult<Ident> {
+	fn expect_ident(&mut self) -> PResult<Id> {
 		self.eat_ident().ok_or_else(|| {
 			let placeholder = self.scx.symbols.intern("_");
 			let report = errors::parser::expected_token_kind(Ident(placeholder), self.token);
@@ -165,6 +175,9 @@ impl Parser<'_> {
 		start.to(self.last_token.span)
 	}
 
+	/// Parse a separated sequence with a starting and ending token
+	///
+	/// e.g. `(foo, bar,)`, `(bar, baz)`
 	fn parse_seq_rest<T: fmt::Debug>(
 		&mut self,
 		start: TokenKind,
@@ -207,14 +220,15 @@ impl Parser<'_> {
 		Ok(many)
 	}
 
+	/// Keep parsing using `parse` while we can eat `start`
 	fn parse_while<T>(
 		&mut self,
-		sep: TokenKind,
+		start: TokenKind,
 		mut parse: impl FnMut(&mut Self) -> PResult<T>,
 	) -> PResult<Vec<T>> {
 		let mut many = Vec::new();
-		while self.eat(sep) {
-			many.push(parse(self)?);
+		while self.eat(start) {
+			many.push((parse(self))?);
 		}
 		Ok(many)
 	}
@@ -331,7 +345,7 @@ impl Parser<'_> {
 				ExprKind::Deref {
 					expr: Box::new(expr),
 				}
-			} else if self.eat(Keyword(Match)) {
+			} else if self.eat(Keyword(Kw::Match)) {
 				// `<expr> . match { <arms> }`
 				let arms = self.parse_expr_match();
 				ExprKind::Match {
@@ -362,28 +376,35 @@ impl Parser<'_> {
 	fn parse_expr_single(&mut self) -> PResult<Expr> {
 		let lo = self.token.span;
 
-		let kind = if self.eat(Keyword(Not)) {
+		let kind = if self.eat(Keyword(Kw::Not)) {
 			self.parse_expr_not()?
 		} else if self.eat(Dash) {
 			self.parse_expr_neg()?
 		} else if matches!(self.token.kind, Ident(_)) {
 			self.parse_expr_access()?
-		} else if matches!(self.token.kind, Literal(_, _)) {
-			self.parse_expr_literal()
+		} else if let LiteralStr(sym) = self.token.kind {
+			self.bump();
+			// TODO: handle prefixed strings (e.g. c"content")
+			ExprKind::LiteralStr { sym }
+		} else if let LiteralInt(sym) = self.token.kind {
+			self.bump();
+			ExprKind::LiteralInt { sym }
+		} else if let LiteralFloat(sym) = self.token.kind {
+			self.bump();
+			ExprKind::LiteralFloat { sym }
 		} else if self.eat(OpenParen) {
 			self.parse_expr_paren()?
-		} else if self.eat(Keyword(If)) {
+		} else if self.eat(Keyword(Kw::If)) {
 			self.parse_expr_if()?
-		}
-		// TODO: make loops be expressions
-		// else if self.eat(Keyword(While) {
-		// 	self.parse_expr_while()?
-		// }
-		else if self.eat(Keyword(Return)) {
+		} else if self.eat(Keyword(Kw::While)) {
+			self.parse_expr_while()?
+		} else if self.eat(Keyword(Kw::Loop)) {
+			self.parse_expr_loop()?
+		} else if self.eat(Keyword(Kw::Return)) {
 			self.parse_expr_return()?
-		} else if self.eat(Keyword(Break)) {
+		} else if self.eat(Keyword(Kw::Break)) {
 			self.parse_expr_break()?
-		} else if self.eat(Keyword(Continue)) {
+		} else if self.eat(Keyword(Kw::Continue)) {
 			self.parse_expr_continue()?
 		} else {
 			let report = errors::parser::expected_construct_no_match("an expression", self.token);
@@ -417,23 +438,6 @@ impl Parser<'_> {
 		Ok(ExprKind::Unary { op, expr })
 	}
 
-	/// Parse [`ExprKind::Literal`]
-	fn parse_expr_literal(&mut self) -> ExprKind {
-		assert!(matches!(self.token.kind, TokenKind::Literal(_, _)));
-
-		let TokenKind::Literal(kind, sym) = self.token.kind else {
-			bug!("should be called when on a literal");
-		};
-		self.bump();
-
-		match kind {
-			Integer => ExprKind::Literal { lit: Integer, sym },
-			Float => ExprKind::Literal { lit: Float, sym },
-			// handle prefixed strings (e.g. c"content")
-			Str => ExprKind::Literal { lit: Str, sym },
-		}
-	}
-
 	/// Parse [`ExprKind::Access`]
 	fn parse_expr_access(&mut self) -> PResult<ExprKind> {
 		let path = self.parse_path()?;
@@ -453,11 +457,11 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::If`]
 	fn parse_expr_if(&mut self) -> PResult<ExprKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(If));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::If));
 
 		let cond = Box::new(self.parse_expr()?);
 		let conseq = Box::new(self.parse_block()?);
-		let altern = if self.eat(Keyword(Else)) {
+		let altern = if self.eat(Keyword(Kw::Else)) {
 			Some(Box::new(self.parse_block()?))
 		} else {
 			None
@@ -470,9 +474,19 @@ impl Parser<'_> {
 		})
 	}
 
+	/// Parse [`ExprKind::WhileLoop`]
+	fn parse_expr_while(&mut self) -> PResult<ExprKind> {
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::While));
+
+		let check = Box::new(self.parse_expr()?);
+		let body = Box::new(self.parse_block()?);
+
+		Ok(ExprKind::WhileLoop { check, body })
+	}
+
 	/// Parse [`ExprKind::Return`]
 	fn parse_expr_return(&mut self) -> PResult<ExprKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Return));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Return));
 
 		// TODO: bad for recovery
 		let expr = self.parse_expr().ok().map(Box::new);
@@ -482,7 +496,7 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Break`]
 	fn parse_expr_break(&mut self) -> PResult<ExprKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Break));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Break));
 
 		let label_span = self.token.span;
 		let label = if self.eat(TokenKind::Apostrophe) {
@@ -499,7 +513,7 @@ impl Parser<'_> {
 
 	/// Parse [`ExprKind::Continue`]
 	fn parse_expr_continue(&mut self) -> PResult<ExprKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Continue));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Continue));
 
 		let label_span = self.token.span;
 		let label = if self.eat(TokenKind::Apostrophe) {
@@ -515,9 +529,11 @@ impl Parser<'_> {
 
 impl Parse for Root {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
+		let attrs = p.parse_while(TokenKind::PoundPound, |p| p.parse_attr(&AttrKind::Parent))?;
+
 		let items = p.parse_until::<Item>(Eof)?;
 
-		Ok(Self { items })
+		Ok(Self { attrs, items })
 	}
 }
 
@@ -525,22 +541,24 @@ impl Parse for Item {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
 		let lo = p.token.span;
 
-		let kind = if p.eat(Keyword(Fn)) {
+		let attrs = p.parse_while(TokenKind::Pound, |p| p.parse_attr(&AttrKind::Next))?;
+
+		let kind = if p.eat(Keyword(Kw::Fn)) {
 			ItemKind::Function(Parse::parse(p)?)
-		} else if p.eat(Keyword(Unsafe)) {
+		} else if p.eat(Keyword(Kw::Unsafe)) {
 			p.parse_item_unsafe_extern()?
-		} else if p.eat(Keyword(Extern)) {
+		} else if p.eat(Keyword(Kw::Extern)) {
 			todo!("recover to unsafe extern block");
 			p.parse_item_unsafe_extern()?
-		} else if p.eat(Keyword(Struct)) {
+		} else if p.eat(Keyword(Kw::Struct)) {
 			p.parse_item_struct()?
-		} else if p.eat(Keyword(Enum)) {
+		} else if p.eat(Keyword(Kw::Enum)) {
 			p.parse_item_enum()?
-		} else if p.eat(Keyword(Trait)) {
+		} else if p.eat(Keyword(Kw::Trait)) {
 			p.parse_item_trait()?
-		} else if p.eat(Keyword(For)) {
+		} else if p.eat(Keyword(Kw::For)) {
 			p.parse_item_trait_impl()?
-		} else if p.eat(Keyword(Type)) {
+		} else if p.eat(Keyword(Kw::Type)) {
 			ItemKind::TypeAlias(TypeAlias::parse(p)?)
 		} else {
 			let report = errors::parser::expected_construct_no_match("an item", p.token);
@@ -549,6 +567,7 @@ impl Parse for Item {
 
 		Ok(Self {
 			kind,
+			attrs,
 			span: p.close_span(lo),
 			id: p.make_node_id(),
 		})
@@ -557,7 +576,7 @@ impl Parse for Item {
 
 impl Parse for Function {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
-		debug_assert_eq!(p.last_token.kind, Keyword(Fn));
+		debug_assert_eq!(p.last_token.kind, Keyword(Kw::Fn));
 
 		let (name, decl) = p.parse_fn_decl()?;
 		let body = if p.check(OpenBrace) {
@@ -578,7 +597,7 @@ impl Parse for Function {
 
 impl Parse for TypeAlias {
 	fn parse(p: &mut Parser) -> Result<Self, Diagnostic> {
-		debug_assert_eq!(p.last_token.kind, Keyword(Type));
+		debug_assert_eq!(p.last_token.kind, Keyword(Kw::Type));
 
 		let name = p.expect_ident()?;
 		let alias = if p.eat(Eq) {
@@ -600,9 +619,9 @@ impl Parse for TypeAlias {
 impl Parser<'_> {
 	/// Parse [`Extern`] block of items
 	fn parse_item_unsafe_extern(&mut self) -> PResult<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Unsafe));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Unsafe));
 
-		self.expect(Keyword(Extern))?;
+		self.expect(Keyword(Kw::Extern))?;
 
 		self.expect(OpenBrace)?;
 		let items = self.parse_until_func(CloseBrace, |p| Item::parse(p))?;
@@ -612,7 +631,7 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::Struct`]
 	fn parse_item_struct(&mut self) -> PResult<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Struct));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Struct));
 
 		let name = self.expect_ident()?;
 		let generics = self.parse_generics_def()?;
@@ -625,7 +644,7 @@ impl Parser<'_> {
 				.into_iter()
 				.enumerate()
 				.map(|(i, ty)| FieldDef {
-					name: Ident::new(self.scx.symbols.intern(&i.to_string()), ty.span),
+					name: Id::new(self.scx.symbols.intern(&i.to_string()), ty.span),
 					span: ty.span,
 					ty,
 				})
@@ -647,7 +666,7 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::Enum`]
 	fn parse_item_enum(&mut self) -> PResult<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Enum));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Enum));
 
 		let name = self.expect_ident()?;
 		let generics = self.parse_generics_def()?;
@@ -664,7 +683,7 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::Trait`]
 	fn parse_item_trait(&mut self) -> PResult<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(Trait));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Trait));
 
 		let name = self.expect_ident()?;
 		let generics = self.parse_generics_def()?;
@@ -681,10 +700,10 @@ impl Parser<'_> {
 
 	/// Parse [`ItemKind::TraitImpl`]
 	fn parse_item_trait_impl(&mut self) -> PResult<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Keyword(For));
+		debug_assert_eq!(self.last_token.kind, Keyword(Kw::For));
 
 		let type_ = self.parse_path()?;
-		self.expect(Keyword(Impl))?;
+		self.expect(Keyword(Kw::Impl))?;
 		let trait_ = self.parse_path()?;
 		self.expect(OpenBrace)?;
 		let members = self.parse_until_func(CloseBrace, Item::parse)?;
@@ -735,7 +754,7 @@ impl Parser<'_> {
 		})
 	}
 
-	fn parse_fn_decl(&mut self) -> PResult<(Ident, FnDecl)> {
+	fn parse_fn_decl(&mut self) -> PResult<(Id, FnDecl)> {
 		let name = self.expect_ident()?;
 		let args_lo = self.token.span;
 		let generics = self.parse_generics_def()?;
@@ -776,9 +795,9 @@ impl Parser<'_> {
 		Ok(Path { segments, generics })
 	}
 
-	fn parse_generics_def(&mut self) -> PResult<Vec<Ident>> {
+	fn parse_generics_def(&mut self) -> PResult<Generics> {
 		if !self.check(Lt) {
-			return Ok(vec![]);
+			return Ok(Generics(vec![]));
 		}
 
 		// TODO: this is a modified expansion of
@@ -795,7 +814,7 @@ impl Parser<'_> {
 			finished = !self.eat(Comma);
 		}
 
-		Ok(generics)
+		Ok(Generics(generics))
 	}
 
 	/// Parse [`ExprKind::FnCall`]
@@ -822,8 +841,10 @@ impl Parser<'_> {
 
 		let kind = if matches!(self.token.kind, Ident(_)) {
 			self.parse_ty_path()?
-		} else if self.eat(Ampersand) {
+		} else if self.eat(Star) {
 			self.parse_ty_pointer()?
+		} else if self.eat(Ampersand) {
+			self.parse_ty_reference()?
 		} else {
 			let report = errors::parser::expected_construct_no_match("a type", self.token);
 			return Err(Diagnostic::new(report));
@@ -843,9 +864,18 @@ impl Parser<'_> {
 		Ok(TyKind::Path(path))
 	}
 
+	/// Parse [`TyKind::Reference`]
+	fn parse_ty_reference(&mut self) -> PResult<TyKind> {
+		debug_assert_eq!(self.last_token.kind, Ampersand);
+
+		let ty = Box::new(self.parse_ty()?);
+
+		Ok(TyKind::Reference(ty))
+	}
+
 	/// Parse [`TyKind::Pointer`]
 	fn parse_ty_pointer(&mut self) -> PResult<TyKind> {
-		debug_assert_eq!(self.last_token.kind, Ampersand);
+		debug_assert_eq!(self.last_token.kind, Star);
 
 		let ty = Box::new(self.parse_ty()?);
 
@@ -874,15 +904,13 @@ impl Parser<'_> {
 	fn parse_stmt(&mut self) -> PResult<Stmt> {
 		let lo = self.token.span;
 		let kind = match self.token.kind {
-			Keyword(Loop) => self.parse_stmt_loop()?,
-			Keyword(While) => self.parse_stmt_while()?,
 			// Keyword(For) => self.parse_stmt_for()?,
 			Semi => {
 				self.expect(Semi)?;
 				StmtKind::Empty
 			}
 
-			Keyword(Let) => self.parse_stmt_let()?,
+			Keyword(Kw::Let) => self.parse_stmt_let()?,
 
 			Eof => {
 				let report = Report::build(ReportKind::Error, self.token.span)
@@ -907,23 +935,16 @@ impl Parser<'_> {
 		})
 	}
 
-	fn parse_stmt_loop(&mut self) -> PResult<StmtKind> {
-		self.expect(Keyword(Loop))?;
+	fn parse_expr_loop(&mut self) -> PResult<ExprKind> {
+		self.expect(Keyword(Kw::Loop))?;
 		let body = Box::new(self.parse_block()?);
-		Ok(StmtKind::Loop { body })
-	}
-
-	fn parse_stmt_while(&mut self) -> PResult<StmtKind> {
-		self.expect(Keyword(While))?;
-		let check = Box::new(self.parse_expr()?);
-		let body = Box::new(self.parse_block()?);
-		Ok(StmtKind::WhileLoop { check, body })
+		Ok(ExprKind::Loop { body })
 	}
 
 	fn parse_stmt_let(&mut self) -> PResult<StmtKind> {
-		self.expect(Keyword(Let))?;
+		self.expect(Keyword(Kw::Let))?;
 
-		let mutable = self.eat(Keyword(Mut));
+		let mutable = self.eat(Keyword(Kw::Mut));
 
 		let name = self.expect_ident()?;
 
@@ -964,4 +985,44 @@ impl Parser<'_> {
 			id: self.make_node_id(),
 		})
 	}
+
+	fn parse_attr(&mut self, kind: &AttrKind) -> PResult<Attr> {
+		match kind {
+			AttrKind::Parent => debug_assert!(matches!(self.last_token.kind, PoundPound)),
+			AttrKind::Next => debug_assert!(matches!(self.last_token.kind, Pound)),
+		}
+
+		let lo = self.last_token.span;
+
+		let path = self.parse_path()?;
+
+		let meta = if self.eat(OpenParen) {
+			let exprs = self.parse_seq_rest(OpenParen, CloseParen, Comma, Parser::parse_expr)?;
+			AttrMeta::Tuple(exprs)
+		} else if self.eat(OpenBrace) {
+			let exprs = self.parse_seq_rest(OpenBrace, CloseBrace, Comma, Parser::parse_expr)?;
+			AttrMeta::Map(todo!())
+		} else if self.eat(OpenBracket) {
+			let exprs =
+				self.parse_seq_rest(OpenBracket, CloseBracket, Comma, Parser::parse_expr)?;
+			AttrMeta::List(exprs)
+		} else {
+			AttrMeta::None
+		};
+
+		Ok(Attr {
+			path,
+			meta,
+			span: self.close_span(lo),
+			id: self.make_node_id(),
+		})
+	}
+}
+
+/// What should the attr attach to
+enum AttrKind {
+	/// `##path`
+	Parent,
+	/// `#path`
+	Next,
 }

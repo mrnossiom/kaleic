@@ -1,11 +1,8 @@
 //! Abstract Syntax Tree
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
-use crate::{
-	lexer::LiteralKind,
-	session::{Span, Symbol},
-};
+use crate::session::{Span, Symbol};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(pub u32);
@@ -60,7 +57,27 @@ impl<T> Spanned<T> {
 
 #[derive(Debug)]
 pub struct Root {
+	pub attrs: Vec<Attr>,
 	pub items: Vec<Item>,
+}
+
+#[derive(Debug)]
+pub struct Attr {
+	pub path: Path,
+	pub meta: AttrMeta,
+	pub span: Span,
+	pub id: NodeId,
+}
+
+#[derive(Debug)]
+pub enum AttrMeta {
+	None,
+	/// `#path(foo, bar)`
+	Tuple(Vec<Expr>),
+	/// `#path{key=value, key2=value2}`
+	Map(HashMap<Ident, Expr>),
+	/// `#path[blah1, blah2, blah3]`
+	List(Vec<Expr>),
 }
 
 #[derive(Debug)]
@@ -147,8 +164,13 @@ pub enum ExprKind {
 	Access {
 		path: Path,
 	},
-	Literal {
-		lit: LiteralKind,
+	LiteralStr {
+		sym: Symbol,
+	},
+	LiteralInt {
+		sym: Symbol,
+	},
+	LiteralFloat {
 		sym: Symbol,
 	},
 
@@ -189,6 +211,15 @@ pub enum ExprKind {
 	Match {
 		expr: Box<Expr>,
 		arms: Vec<()>,
+	},
+	/// `loop <body>`
+	WhileLoop {
+		check: Box<Expr>,
+		body: Box<Block>,
+	},
+	/// `while <check> <body>`
+	Loop {
+		body: Box<Block>,
 	},
 
 	/// <expr> . <ident> ( <expr>* )
@@ -260,8 +291,10 @@ pub enum TyKind {
 	/// See [`Path`]
 	Path(Path),
 
-	/// `& <ty>`
+	/// `* <ty>`
 	Pointer(Box<Ty>),
+	/// `& <ty>`
+	Reference(Box<Ty>),
 
 	// TODO: unit or void? choose
 	Unit,
@@ -271,7 +304,6 @@ pub enum TyKind {
 }
 
 #[derive(Debug, Clone)]
-
 pub struct Path {
 	pub segments: Vec<Ident>,
 	pub generics: Vec<Ty>,
@@ -289,6 +321,7 @@ impl Path {
 #[derive(Debug)]
 pub struct Item {
 	pub kind: ItemKind,
+	pub attrs: Vec<Attr>,
 	pub span: Span,
 	pub id: NodeId,
 }
@@ -308,6 +341,9 @@ pub struct Function {
 	pub body: Option<Box<Block>>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Generics(pub Vec<Ident>);
+
 #[derive(Debug)]
 pub enum ItemKind {
 	Function(Function),
@@ -315,19 +351,19 @@ pub enum ItemKind {
 	/// `struct <name> <generics> { <fields>* }`
 	Struct {
 		name: Ident,
-		generics: Vec<Ident>,
+		generics: Generics,
 		fields: Vec<FieldDef>,
 	},
 	/// `enum <name> <generics> { <variant>* }`
 	Enum {
 		name: Ident,
-		generics: Vec<Ident>,
+		generics: Generics,
 		variants: Vec<Variant>,
 	},
 	/// `trait <name> <generics> { <items>* }`
 	Trait {
 		name: Ident,
-		generics: Vec<Ident>,
+		generics: Generics,
 		members: Vec<Item>,
 	},
 
@@ -379,11 +415,6 @@ pub struct Stmt {
 
 #[derive(Debug)]
 pub enum StmtKind {
-	/// `loop <body>`
-	Loop { body: Box<Block> },
-	/// `while <check> <body>`
-	WhileLoop { check: Box<Expr>, body: Box<Block> },
-
 	/// `let [ mut ] <name> [ : <ty> ] = <expr> ;`
 	Let {
 		ident: Ident,

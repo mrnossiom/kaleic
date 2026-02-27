@@ -3,8 +3,7 @@
 use std::fmt;
 
 use crate::{
-	ast::{self, BinaryOp, Ident, Spanned, UnaryOp},
-	lexer::LiteralKind,
+	ast::{self, Ident, Spanned},
 	session::{Span, Symbol},
 };
 
@@ -33,14 +32,14 @@ pub struct Item {
 #[derive(Debug, Clone)]
 pub struct Struct {
 	pub name: Ident,
-	pub generics: Vec<Ident>,
+	pub generics: ast::Generics,
 	pub fields: Vec<FieldDef>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Enum {
 	pub name: Ident,
-	pub generics: Vec<Ident>,
+	pub generics: ast::Generics,
 	pub variants: Vec<EnumVariant>,
 }
 
@@ -53,7 +52,7 @@ pub enum ItemKind {
 
 	Trait {
 		name: ast::Ident,
-		generics: Vec<ast::Ident>,
+		generics: ast::Generics,
 		members: Vec<TraitItem>,
 	},
 	TraitImpl {
@@ -102,10 +101,10 @@ pub enum TraitItemKind {
 	Function(Function),
 }
 
-impl Into<Item> for TraitItem {
-	fn into(self) -> Item {
-		let Self { kind, span, id } = self;
-		Item {
+impl From<TraitItem> for Item {
+	fn from(val: TraitItem) -> Self {
+		let TraitItem { kind, span, id } = val;
+		Self {
 			kind: kind.into(),
 			span,
 			id,
@@ -113,11 +112,11 @@ impl Into<Item> for TraitItem {
 	}
 }
 
-impl Into<ItemKind> for TraitItemKind {
-	fn into(self) -> ItemKind {
-		match self {
-			Self::Function(func) => ItemKind::Function(func),
-			Self::TypeAlias(ty) => ItemKind::TypeAlias(ty),
+impl From<TraitItemKind> for ItemKind {
+	fn from(val: TraitItemKind) -> Self {
+		match val {
+			TraitItemKind::Function(func) => Self::Function(func),
+			TraitItemKind::TypeAlias(ty) => Self::TypeAlias(ty),
 		}
 	}
 }
@@ -134,10 +133,10 @@ pub enum ExternItemKind {
 	Function(Function),
 }
 
-impl Into<Item> for ExternItem {
-	fn into(self) -> Item {
-		let Self { kind, span, id } = self;
-		Item {
+impl From<ExternItem> for Item {
+	fn from(val: ExternItem) -> Self {
+		let ExternItem { kind, span, id } = val;
+		Self {
 			kind: kind.into(),
 			span,
 			id,
@@ -145,10 +144,10 @@ impl Into<Item> for ExternItem {
 	}
 }
 
-impl Into<ItemKind> for ExternItemKind {
-	fn into(self) -> ItemKind {
-		match self {
-			Self::Function(func) => ItemKind::Function(func),
+impl From<ExternItemKind> for ItemKind {
+	fn from(val: ExternItemKind) -> Self {
+		match val {
+			ExternItemKind::Function(func) => Self::Function(func),
 		}
 	}
 }
@@ -195,11 +194,6 @@ pub enum StmtKind {
 		value: Box<Expr>,
 		mutable: bool,
 	},
-
-	// move these to expr
-	Loop {
-		block: Box<Block>,
-	},
 }
 
 #[derive(Debug, Clone)]
@@ -211,20 +205,25 @@ pub struct Expr {
 
 #[derive(Debug, Clone)]
 pub enum ExprKind {
+	LiteralInt {
+		sym: Symbol,
+	},
+	LiteralFloat {
+		sym: Symbol,
+	},
+	LiteralStr {
+		sym: Symbol,
+	},
 	Access {
 		path: ast::Path,
 	},
-	Literal {
-		lit: LiteralKind,
-		sym: Symbol,
-	},
 
 	Unary {
-		op: Spanned<UnaryOp>,
+		op: Spanned<ast::UnaryOp>,
 		expr: Box<Expr>,
 	},
 	Binary {
-		op: Spanned<BinaryOp>,
+		op: Spanned<ast::BinaryOp>,
 		left: Box<Expr>,
 		right: Box<Expr>,
 	},
@@ -238,6 +237,10 @@ pub enum ExprKind {
 		cond: Box<Expr>,
 		conseq: Box<Block>,
 		altern: Option<Box<Block>>,
+	},
+	// Match { },
+	Loop {
+		block: Box<Block>,
 	},
 
 	Method {

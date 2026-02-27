@@ -39,7 +39,8 @@ extern "internal" fn add(a: uint, b: uint) uint;
 extern "internal" fn sub(a: uint, b: uint) uint;
 extern "internal" fn mul(a: uint, b: uint) uint;
 extern "internal" fn div(a: uint, b: uint) uint;
-extern "internal" fn rem(a: uint, b: uint) uint;
+extern "internal" fn urem(a: uint, b: uint) uint;
+extern "internal" fn srem(a: uint, b: uint) uint;
 
 extern "internal" fn shl(a: uint, b: uint) uint;
 extern "internal" fn shr(a: uint, b: uint) uint;

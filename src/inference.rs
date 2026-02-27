@@ -4,7 +4,6 @@ use crate::{
 	ast::{self, UnaryOp},
 	errors,
 	hir::{self, ExprKind},
-	lexer,
 	ty::{Infer, Inferer, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
@@ -72,20 +71,16 @@ impl Inferer<'_> {
 				self.infer_expr(expr);
 			}
 			hir::StmtKind::Let {
-				name: ident,
+				name,
 				value,
 				ty,
 				mutable,
 			} => {
-				let explicit_ty = self.tcx.lower_ty(&ty);
+				let explicit_ty = self.tcx.lower_ty(ty);
 				let expr_ty = self.infer_expr(value);
 				self.unify(&explicit_ty, &expr_ty);
 
-				self.local_env.entry(ident.sym).or_default().push(expr_ty);
-			}
-			hir::StmtKind::Loop { block } => {
-				let block_ty = self.infer_block(block);
-				self.unify(&TyKind::Primitive(PrimitiveKind::Void), &block_ty);
+				self.local_env.entry(name.sym).or_default().push(expr_ty);
 			}
 		}
 	}
@@ -93,13 +88,13 @@ impl Inferer<'_> {
 	fn infer_expr(&mut self, expr: &hir::Expr) -> TyKind<Infer> {
 		let ty = match &expr.kind {
 			hir::ExprKind::Access { path } => self.resolve_var_ty(path),
-			hir::ExprKind::Literal { lit, sym } => match lit {
-				lexer::LiteralKind::Integer => {
-					TyKind::Infer(self.tcx.next_infer_tag(), Infer::Integer)
-				}
-				lexer::LiteralKind::Float => TyKind::Infer(self.tcx.next_infer_tag(), Infer::Float),
-				lexer::LiteralKind::Str => TyKind::Primitive(PrimitiveKind::Str),
-			},
+			hir::ExprKind::LiteralStr { sym } => TyKind::Primitive(PrimitiveKind::Str),
+			hir::ExprKind::LiteralInt { sym } => {
+				TyKind::Infer(self.tcx.next_infer_tag(), Infer::Integer)
+			}
+			hir::ExprKind::LiteralFloat { sym } => {
+				TyKind::Infer(self.tcx.next_infer_tag(), Infer::Float)
+			}
 
 			hir::ExprKind::Unary { op, expr } => {
 				let expr_ty = self.infer_expr(expr);
@@ -181,6 +176,11 @@ impl Inferer<'_> {
 
 				self.unify(&conseq_ty, &altern_ty)
 			}
+			hir::ExprKind::Loop { block } => {
+				let block_ty = self.infer_block(block);
+				self.unify(&TyKind::Primitive(PrimitiveKind::Void), &block_ty);
+				todo!()
+			}
 
 			hir::ExprKind::Method { expr, name, params } => todo!(),
 			hir::ExprKind::Field { expr, name: ident } => todo!(),
@@ -196,9 +196,9 @@ impl Inferer<'_> {
 				self.unify(&target_ty, &value_ty)
 			}
 
-			hir::ExprKind::Return { .. }
-			| hir::ExprKind::Break { .. }
-			| hir::ExprKind::Continue { .. } => TyKind::Primitive(PrimitiveKind::Never),
+			hir::ExprKind::Return { expr } => TyKind::Primitive(PrimitiveKind::Never),
+			hir::ExprKind::Break { expr, label } => TyKind::Primitive(PrimitiveKind::Never),
+			hir::ExprKind::Continue { label } => TyKind::Primitive(PrimitiveKind::Never),
 		};
 
 		// TODO

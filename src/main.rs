@@ -72,7 +72,9 @@ mod options {
 // this has no default option, default options are in the options struct
 #[derive(clap::Parser)]
 struct Args {
-	pub input: Option<PathBuf>,
+	pub inputs: Vec<PathBuf>,
+	#[clap(long)]
+	pub no_std: bool,
 
 	#[clap(long)]
 	pub jit: bool,
@@ -94,7 +96,15 @@ fn main() {
 	let mut scx = SessionCtx::default();
 
 	let SessionCtx { options, .. } = &mut scx;
-	options.input = args.input;
+	options.inputs = args.inputs;
+	if !args.no_std {
+		options.inputs.extend([
+			"std/rt.kl".into(),
+			"std/libc.kl".into(),
+			// "std/arith.kl".into(),
+		]);
+	}
+
 	options.jit = args.jit;
 	args.backend.inspect(|value| options.backend = value.into());
 	args.linker.inspect(|value| options.linker = value.into());

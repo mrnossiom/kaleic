@@ -1,6 +1,7 @@
 //! Common data for front related operations
 
 use std::{
+	cell::Cell,
 	cmp,
 	collections::HashSet,
 	fmt, fs,
@@ -60,16 +61,22 @@ impl Span {
 	}
 }
 
+// FIXME: ariadne api doesn't allow a source_map api with lightweight span
+// this relies on internal behaviour and should be replace with a custom implementation
+thread_local! {
+	static OFFSET_HACK: Cell<usize> = const { Cell::new(0) };
+}
+
 impl ariadne::Span for Span {
 	type SourceId = BytePos;
 	fn source(&self) -> &Self::SourceId {
 		&self.start
 	}
 	fn start(&self) -> usize {
-		self.start.to_usize()
+		self.start.to_usize() - OFFSET_HACK.get()
 	}
 	fn end(&self) -> usize {
-		self.end.to_usize()
+		self.end.to_usize() - OFFSET_HACK.get()
 	}
 }
 
@@ -279,7 +286,7 @@ pub enum OutputKind {
 
 #[derive(Debug)]
 pub struct Options {
-	pub input: Option<PathBuf>,
+	pub inputs: Vec<PathBuf>,
 
 	pub jit: bool,
 	pub backend: Backend,
@@ -293,14 +300,14 @@ pub struct Options {
 impl Default for Options {
 	fn default() -> Self {
 		Self {
-			input: Default::default(),
+			inputs: Vec::default(),
 			jit: true,
-			backend: Default::default(),
-			linker: Default::default(),
+			backend: Backend::default(),
+			linker: Linker::default(),
 
 			output: PathBuf::from(".cache/kaleic"),
 			debug_output: PathBuf::from(".cache/kaleic/debug"),
-			print: Default::default(),
+			print: HashSet::default(),
 		}
 	}
 }
@@ -341,22 +348,9 @@ pub struct SourceMap {
 
 impl SourceMap {
 	pub fn load_source_from_file(&mut self, path: &Path) -> io::Result<Rc<SourceFile>> {
-		let filename = path
-			.file_name()
-			.ok_or_else(|| io::Error::other("expected a source file"))?;
 		let src = std::fs::read_to_string(path)?;
 
-		let filename = filename.to_string_lossy();
-
-		let ext = filename.split('.').next_back().unwrap_or("");
-		#[expect(clippy::manual_assert, reason = "to be replaced")]
-		if ext != "kl" {
-			// TODO: use diagnostic ctx
-			panic!("file extension is not `kl`")
-		}
-
-		let source = self.load_source(&filename, src);
-		Ok(source)
+		Ok(self.load_source(&path.to_string_lossy(), src))
 	}
 
 	pub fn load_source(&mut self, name: &str, src: String) -> Rc<SourceFile> {
@@ -404,7 +398,10 @@ impl ariadne::Cache<BytePos> for &SourceMap {
 	type Storage = String;
 	fn fetch(&mut self, id: &BytePos) -> Result<&ariadne::Source<Self::Storage>, impl fmt::Debug> {
 		let file_idx = self.lookup_source_file_idx(*id);
-		Result::<_, &'static str>::Ok(&self.diagnostic_sources[file_idx.to_usize()])
+		let source = &self.sources[file_idx.to_usize()];
+		OFFSET_HACK.set(source.offset.to_usize());
+		let source = &self.diagnostic_sources[file_idx.to_usize()];
+		Result::<_, &'static str>::Ok(source)
 	}
 	fn display<'a>(&self, id: &'a BytePos) -> Option<impl fmt::Display + 'a> {
 		let file_idx = self.lookup_source_file_idx(*id);

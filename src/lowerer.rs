@@ -9,8 +9,8 @@ use crate::{
 };
 
 pub fn lower_root(scx: &SessionCtx, source: &ast::Root) -> hir::Root {
-	let mut l = Lowerer::new(scx);
-	source.lower(&mut l)
+	let l = Lowerer::new(scx);
+	source.lower(&l)
 }
 
 pub trait Lower {
@@ -62,7 +62,7 @@ impl<Out, L: Lower<Out = Out>, I: Iterator<Item = L> + Sized> IterLower<Out, L> 
 
 trait IterDiagnostics<T>: Iterator<Item = Result<T, Diagnostic>> + Sized {
 	fn collect_diagnostics(self, dcx: &DiagnosticCtx) -> impl Iterator<Item = T> {
-		self.into_iter().flat_map(|item| match item {
+		self.into_iter().filter_map(|item| match item {
 			Ok(item) => Some(item),
 			Err(diag) => {
 				dcx.emit(&diag);
@@ -84,7 +84,7 @@ impl<Out: 'static, T: Lower<Out = Out>> Lower for &T {
 impl Lower for ast::Root {
 	type Out = hir::Root;
 	fn lower(&self, l: &Lowerer) -> Self::Out {
-		let Self { items } = &self;
+		let Self { attrs, items } = &self;
 		let items = items.iter().lower_iter(l).collect();
 		Self::Out { items }
 	}
@@ -103,7 +103,12 @@ impl Lower for ast::NodeId {
 impl Lower for ast::Item {
 	type Out = hir::Item;
 	fn lower(&self, l: &Lowerer) -> Self::Out {
-		let Self { kind, span, id } = &self;
+		let Self {
+			kind,
+			attrs,
+			span,
+			id,
+		} = &self;
 		let kind = match &kind {
 			ast::ItemKind::Function(func) => hir::ItemKind::Function(func.lower(l)),
 
@@ -280,11 +285,6 @@ impl Lower for ast::Stmt {
 	fn lower(&self, l: &Lowerer) -> Self::Out {
 		let Self { kind, span, id } = &self;
 		let kind = match &kind {
-			ast::StmtKind::Loop { body } => hir::StmtKind::Loop {
-				block: body.lower_box(l),
-			},
-			ast::StmtKind::WhileLoop { check, body } => lower_while_loop(l, check, body),
-
 			ast::StmtKind::Let {
 				ident,
 				ty,
@@ -392,10 +392,9 @@ impl Lower for ast::Expr {
 		let Self { kind, span, id } = &self;
 		let kind = match kind {
 			ast::ExprKind::Access { path } => hir::ExprKind::Access { path: path.clone() },
-			ast::ExprKind::Literal { lit, sym } => hir::ExprKind::Literal {
-				lit: *lit,
-				sym: *sym,
-			},
+			ast::ExprKind::LiteralStr { sym } => hir::ExprKind::LiteralStr { sym: *sym },
+			ast::ExprKind::LiteralInt { sym } => hir::ExprKind::LiteralInt { sym: *sym },
+			ast::ExprKind::LiteralFloat { sym } => hir::ExprKind::LiteralFloat { sym: *sym },
 
 			ast::ExprKind::Paren { expr } => expr.lower(l).kind,
 			ast::ExprKind::Unary { op, expr } => lower_unary(l, *op, expr),
@@ -418,6 +417,11 @@ impl Lower for ast::Expr {
 				altern: l.lower_opt_box(altern.as_deref()),
 			},
 			ast::ExprKind::Match { expr, arms } => todo!(),
+
+			ast::ExprKind::Loop { body } => hir::ExprKind::Loop {
+				block: body.lower_box(l),
+			},
+			ast::ExprKind::WhileLoop { check, body } => lower_while_loop(l, check, body),
 
 			ast::ExprKind::Method { expr, name, params } => hir::ExprKind::Method {
 				expr: Box::new(expr.lower(l)),
@@ -456,7 +460,7 @@ impl Lower for ast::Expr {
 }
 
 /// Lower an AST `while cond { body }` to an HIR `loop { if cond { body } else { break } }`
-fn lower_while_loop(l: &Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::StmtKind {
+fn lower_while_loop(l: &Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::ExprKind {
 	let break_expr = hir::Expr {
 		kind: hir::ExprKind::Break {
 			expr: None,
@@ -489,7 +493,7 @@ fn lower_while_loop(l: &Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::St
 		id: l.make_new_node_id(),
 	};
 
-	hir::StmtKind::Loop {
+	hir::ExprKind::Loop {
 		block: Box::new(loop_blk),
 	}
 }

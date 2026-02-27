@@ -40,10 +40,10 @@ impl Backend {
 	pub fn jit_backend<'tcx>(&self, tcx: &'tcx TyCtx<'tcx>) -> Option<Box<dyn JitBackend + 'tcx>> {
 		match self {
 			#[cfg(feature = "backend-cranelift")]
-			Backend::Cranelift => Some(Box::new(CraneliftBackend::new_jit(&tcx))),
+			Self::Cranelift => Some(Box::new(CraneliftBackend::new_jit(tcx))),
 			#[cfg(feature = "backend-llvm")]
-			Backend::Llvm => Some(Box::new(LlvmBackend::new_jit(&tcx))),
-			Backend::NoBackend => None,
+			Self::Llvm => Some(Box::new(LlvmBackend::new_jit(tcx))),
+			Self::NoBackend => None,
 		}
 	}
 
@@ -53,10 +53,10 @@ impl Backend {
 	) -> Option<Box<dyn ObjectBackend + 'tcx>> {
 		match self {
 			#[cfg(feature = "backend-cranelift")]
-			Backend::Cranelift => Some(Box::new(CraneliftBackend::new_object(&tcx))),
+			Self::Cranelift => Some(Box::new(CraneliftBackend::new_object(tcx))),
 			#[cfg(feature = "backend-llvm")]
-			Backend::Llvm => Some(Box::new(LlvmBackend::new_object(&tcx))),
-			Backend::NoBackend => None,
+			Self::Llvm => Some(Box::new(LlvmBackend::new_object(tcx))),
+			Self::NoBackend => None,
 		}
 	}
 }

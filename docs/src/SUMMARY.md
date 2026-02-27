@@ -14,6 +14,8 @@
 
   - [Match](./lang/syntax/match.md)
 
+  - [Attributes](./lang/syntax/attributes.md)
+
 - [Future](./lang/future.md)
 
   - [Effects](./lang/future/effects.md)
@@ -31,4 +33,3 @@
   - [Type Checking](./compiler/pipeline/type-checking.md)
 
   - [Code Generation](./compiler/pipeline/code-generation.md)
-
