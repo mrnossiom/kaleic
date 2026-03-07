@@ -109,12 +109,7 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Item {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self {
-				kind,
-				attrs,
-				span,
-				id,
-			} = &self;
+			let Self { kind, attrs, span } = &self;
 
 			for attr in attrs {
 				attr.pprint(f)?;
@@ -278,7 +273,7 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Expr {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { kind, span, id } = &self;
+			let Self { kind, span } = &self;
 
 			Ok(())
 		}
@@ -378,12 +373,14 @@ mod ast_pp {
 				Self::Return { expr } => {
 					write!(f, "return")?;
 					if let Some(expr) = expr {
+						write!(f, " ")?;
 						expr.pprint(f)?;
 					}
 				}
 				Self::Break { expr, label } => {
-					write!(f, "break")?;
+					write!(f, "break ")?;
 					if let Some(expr) = expr {
+						write!(f, " ")?;
 						expr.pprint(f)?;
 					}
 				}
@@ -453,11 +450,7 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Block {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self {
-				stmts,
-				span: _,
-				id: _,
-			} = &self;
+			let Self { stmts, span: _ } = &self;
 			write!(f, "{{")?;
 			f.with_indent(|f| {
 				for stmt in stmts {
@@ -474,11 +467,7 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Stmt {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self {
-				kind,
-				span: _,
-				id: _,
-			} = &self;
+			let Self { kind, span: _ } = &self;
 			kind.pprint(f)?;
 			Ok(())
 		}
@@ -567,12 +556,7 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Attr {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self {
-				path,
-				meta,
-				span,
-				id,
-			} = self;
+			let Self { path, meta, span } = self;
 
 			write!(f, "#")?;
 			path.pprint(f)?;
@@ -714,11 +698,11 @@ mod hir_pp {
 			write!(f, "fn ")?;
 			name.sym.pprint(f)?;
 			write!(f, "(")?;
-			f.write_seq_oneline(&decl.inputs, |f, param| param.pprint(f), ", ")?;
+			f.write_seq_oneline(&decl.params, |f, param| param.pprint(f), ", ")?;
 			write!(f, ")")?;
 
 			write!(f, " ")?;
-			decl.output.pprint(f)?;
+			decl.ret.pprint(f)?;
 
 			if let Some(body) = &body {
 				write!(f, " ")?;
@@ -857,6 +841,10 @@ mod hir_pp {
 					sym.pprint(f)?;
 				}
 
+				Self::Unit => {
+					write!(f, "()")?;
+				}
+
 				Self::Unary { op, expr } => {
 					op.bit.pprint(f)?;
 					expr.pprint(f)?;
@@ -917,16 +905,12 @@ mod hir_pp {
 					value.pprint(f)?;
 				}
 				Self::Return { expr } => {
-					write!(f, "return")?;
-					if let Some(expr) = expr {
-						expr.pprint(f)?;
-					}
+					write!(f, "return ")?;
+					expr.pprint(f)?;
 				}
 				Self::Break { expr, label } => {
-					write!(f, "break")?;
-					if let Some(expr) = expr {
-						expr.pprint(f)?;
-					}
+					write!(f, "break ")?;
+					expr.pprint(f)?;
 				}
 				Self::Continue { label } => write!(f, "continue")?,
 			}

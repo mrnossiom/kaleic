@@ -1,16 +1,17 @@
-use std::{collections::HashMap, fmt::Write as _, path::Path, sync::Arc};
+use std::{fmt::Write as _, path::Path, sync::Arc};
 
 use cranelift::prelude::{isa::TargetIsa, *};
 use cranelift_control::ControlPlane;
 use cranelift_jit::JITModule;
 use cranelift_module::{DataDescription, FuncId, Linkage, Module, default_libcall_names};
 use cranelift_object::{ObjectBuilder, ObjectModule};
+use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, BinaryOp},
 	bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
-	hir::{self, Enum, Function, Struct},
+	hir::{self, Enum, ExprId, Function, ItemId, Struct},
 	session::{PrintKind, SessionCtx, Symbol},
 	ty::{self, TyCtx, TyKind},
 };
@@ -24,16 +25,6 @@ pub enum MaybeValue {
 	Never,
 }
 
-impl MaybeValue {
-	fn with_slice(&self, func: impl FnOnce(&[Value])) {
-		match self {
-			Self::Value(val) => func(&[*val]),
-			Self::Zst => func(&[]),
-			Self::Never => {}
-		}
-	}
-}
-
 pub struct Generator<'tcx, M: Module> {
 	tcx: &'tcx TyCtx<'tcx>,
 
@@ -41,7 +32,7 @@ pub struct Generator<'tcx, M: Module> {
 	isa: Arc<dyn TargetIsa + 'static>,
 	builder_context: FunctionBuilderContext,
 
-	functions: HashMap<Symbol, FuncId>,
+	functions: FxHashMap<Symbol, FuncId>,
 }
 
 impl<'tcx, M: Module> Generator<'tcx, M> {
@@ -51,7 +42,7 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 			module,
 			isa,
 			builder_context: FunctionBuilderContext::new(),
-			functions: HashMap::new(),
+			functions: FxHashMap::default(),
 		}
 	}
 
@@ -60,7 +51,7 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 	fn to_cl_type(&self, ty: &ty::TyKind) -> Option<Type> {
 		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
-				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
+				ty::PrimitiveKind::Unit | ty::PrimitiveKind::Never => None,
 				ty::PrimitiveKind::Bool => Some(types::I8),
 				ty::PrimitiveKind::UnsignedInt | ty::PrimitiveKind::SignedInt => Some(types::I32),
 				ty::PrimitiveKind::Float => Some(types::F32),
@@ -70,9 +61,7 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(ref_) => {
-				self.to_cl_type(&self.tcx.ty_env.borrow().as_ref().unwrap()[&ref_])
-			}
+			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.tcx.ty_env.borrow()[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
@@ -167,10 +156,8 @@ impl<M: Module> Generator<'_, M> {
 
 		let builder = FunctionBuilder::new(&mut context.func, &mut self.builder_context);
 
-		let borrow = self.tcx.ty_env.borrow();
-		let ty_env = borrow.as_ref().unwrap();
-		let borrow = self.tcx.typeck_results.borrow();
-		let typeck_results = borrow.as_ref().unwrap();
+		let ty_env = &self.tcx.ty_env.borrow();
+		let typeck_results = &self.tcx.typeck_results.borrow();
 
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
@@ -183,7 +170,7 @@ impl<M: Module> Generator<'_, M> {
 			module: &mut self.module,
 			isa: self.isa.clone(),
 
-			values: HashMap::new(),
+			values: FxHashMap::default(),
 			loop_stack: Vec::default(),
 		};
 
@@ -218,13 +205,13 @@ impl<M: Module> Generator<'_, M> {
 
 impl<M: Module> CodeGenBackend for Generator<'_, M> {
 	fn codegen_root(&mut self, hir: &hir::Root) {
-		let mut function_ids = HashMap::new();
+		let mut function_ids = FxHashMap::default();
 
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let borrow = self.tcx.ty_env.borrow();
-					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
+					let ty_env = self.tcx.ty_env.borrow();
+					let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
 						todo!()
 					};
 
@@ -237,10 +224,8 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					for item in items {
 						match &item.kind {
 							hir::ExternItemKind::Function(Function { name, decl, body }) => {
-								let borrow = self.tcx.ty_env.borrow();
-								let TyKind::Fn(decl) =
-									borrow.as_ref().unwrap().get(&item.id).unwrap()
-								else {
+								let ty_env = self.tcx.ty_env.borrow();
+								let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
 									todo!()
 								};
 
@@ -262,7 +247,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let borrow = self.tcx.ty_env.borrow();
-					let TyKind::Fn(decl) = borrow.as_ref().unwrap().get(&item.id).unwrap() else {
+					let TyKind::Fn(decl) = borrow.get(&item.item_id()).unwrap() else {
 						todo!()
 					};
 
@@ -296,8 +281,10 @@ impl JitBackend for Generator<'_, JITModule> {
 		let main = self.tcx.scx.symbols.intern("main");
 		let main_id = self.functions.get(&main).unwrap();
 		let func = self.module.get_finalized_function(*main_id);
+
 		// TODO: this is unsafe as some functions ask for arguments, and lot a more reasons
-		#[allow(unsafe_code)]
+		// TODO: actually enforce main signature
+		// SAFETY: main signature is enforced
 		let main = unsafe { std::mem::transmute::<*const u8, fn() -> i32>(func) };
 
 		main()
@@ -315,15 +302,15 @@ impl ObjectBackend for Generator<'_, ObjectModule> {
 pub struct FunctionGenerator<'scx, 'bld> {
 	scx: &'scx SessionCtx,
 
-	ty_env: &'scx HashMap<hir::NodeId, ty::TyKind>,
-	typeck_results: &'scx HashMap<hir::NodeId, ty::TyKind>,
+	ty_env: &'scx FxHashMap<ItemId, ty::TyKind>,
+	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
 
 	builder: FunctionBuilder<'bld>,
-	functions: &'bld HashMap<Symbol, FuncId>,
+	functions: &'bld FxHashMap<Symbol, FuncId>,
 	module: &'bld mut dyn Module,
 	isa: Arc<dyn TargetIsa + 'static>,
 
-	values: HashMap<Symbol, Option<Variable>>,
+	values: FxHashMap<Symbol, Option<Variable>>,
 	loop_stack: Vec<(Block, Block)>,
 }
 
@@ -333,7 +320,7 @@ impl FunctionGenerator<'_, '_> {
 	fn to_cl_type(&self, ty: &ty::TyKind) -> Option<Type> {
 		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
-				ty::PrimitiveKind::Void | ty::PrimitiveKind::Never => None,
+				ty::PrimitiveKind::Unit | ty::PrimitiveKind::Never => None,
 				ty::PrimitiveKind::Bool => Some(types::I8),
 				ty::PrimitiveKind::UnsignedInt | ty::PrimitiveKind::SignedInt => Some(types::I32),
 				ty::PrimitiveKind::Float => Some(types::F32),
@@ -373,11 +360,11 @@ impl FunctionGenerator<'_, '_> {
 			self.values.insert(ident.sym, Some(variable));
 		}
 
-		let return_value = self.codegen_block(block)?;
-		return_value.with_slice(|vals| {
-			self.builder.ins().return_(vals);
-		});
-
+		match self.codegen_block(block)? {
+			MaybeValue::Value(value) => _ = self.builder.ins().return_(&[value]),
+			MaybeValue::Zst => _ = self.builder.ins().return_(&[]),
+			MaybeValue::Never => {}
+		}
 		Ok(())
 	}
 
@@ -409,7 +396,7 @@ impl FunctionGenerator<'_, '_> {
 				mutable: _,
 			} => match self.codegen_expr(value)? {
 				MaybeValue::Value(expr_value) => {
-					let ty = self.typeck_results.get(&value.id).unwrap();
+					let ty = self.typeck_results.get(&value.expr_id()).unwrap();
 					let ty = self.to_cl_type(ty).unwrap();
 					let variable = self.builder.declare_var(ty);
 					self.builder.def_var(variable, expr_value);
@@ -429,7 +416,7 @@ impl FunctionGenerator<'_, '_> {
 		let value = match &expr.kind {
 			hir::ExprKind::LiteralInt { sym } => {
 				let lit = self.scx.symbols.resolve(*sym);
-				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.typeck_results.get(&expr.expr_id()).unwrap();
 				let int_ty = self.to_cl_type(ty).unwrap();
 				let value = self
 					.builder
@@ -439,7 +426,7 @@ impl FunctionGenerator<'_, '_> {
 			}
 			hir::ExprKind::LiteralFloat { sym } => {
 				let lit = self.scx.symbols.resolve(*sym);
-				let ty = self.typeck_results.get(&expr.id).unwrap();
+				let ty = self.typeck_results.get(&expr.expr_id()).unwrap();
 				let int_ty = self.to_cl_type(ty).unwrap();
 				// FIXME: take ty into account
 				let value = self.builder.ins().f64const(lit.parse::<f64>().unwrap());
@@ -473,6 +460,8 @@ impl FunctionGenerator<'_, '_> {
 				}
 			}
 
+			hir::ExprKind::Unit => MaybeValue::Zst,
+
 			hir::ExprKind::Unary { op, expr } => todo!("codegen unary {op:?} {expr:?}"),
 
 			hir::ExprKind::Binary { op, left, right } => {
@@ -495,9 +484,7 @@ impl FunctionGenerator<'_, '_> {
 				let mut argsz = Vec::new();
 				for arg in &args.bit {
 					match self.codegen_expr(arg)? {
-						MaybeValue::Value(expr_value) => {
-							argsz.push(expr_value);
-						}
+						MaybeValue::Value(expr_value) => argsz.push(expr_value),
 						MaybeValue::Zst | MaybeValue::Never => {}
 					}
 				}
@@ -520,6 +507,11 @@ impl FunctionGenerator<'_, '_> {
 				let loop_ = self.builder.create_block();
 				let cont = self.builder.create_block();
 
+				let block_ty = &self.typeck_results[&expr.expr_id()];
+				if let Some(block_ty) = self.to_cl_type(block_ty) {
+					self.builder.append_block_param(cont, block_ty);
+				}
+
 				self.loop_stack.push((loop_, cont));
 
 				self.builder.ins().jump(loop_, &[]);
@@ -536,11 +528,16 @@ impl FunctionGenerator<'_, '_> {
 
 				self.loop_stack.pop();
 
-				todo!()
+				let block_params = self.builder.block_params(cont);
+				match block_params.len() {
+					0 => MaybeValue::Zst,
+					1 => MaybeValue::Value(block_params[0]),
+					_ => panic!(),
+				}
 			}
 
 			hir::ExprKind::Method { expr, name, params } => todo!(),
-			hir::ExprKind::Field { expr, name: ident } => todo!(),
+			hir::ExprKind::Field { expr, name } => todo!(),
 			hir::ExprKind::Deref { expr } => todo!(),
 
 			hir::ExprKind::Assign { target, value } => {
@@ -553,28 +550,17 @@ impl FunctionGenerator<'_, '_> {
 				};
 
 				let maybe_value = self.codegen_expr(value)?;
-				match maybe_value {
-					MaybeValue::Value(expr_value) => {
-						self.builder.def_var(variable, expr_value);
-					}
-					MaybeValue::Zst | MaybeValue::Never => {}
+				if let MaybeValue::Value(expr_value) = maybe_value {
+					self.builder.def_var(variable, expr_value);
 				}
 				maybe_value
 			}
 
 			hir::ExprKind::Return { expr } => {
-				if let Some(expr) = expr {
-					match self.codegen_expr(expr)? {
-						MaybeValue::Value(expr_value) => {
-							self.builder.ins().return_(&[expr_value]);
-						}
-						MaybeValue::Zst => {
-							self.builder.ins().return_(&[]);
-						}
-						MaybeValue::Never => {}
-					}
-				} else {
-					self.builder.ins().return_(&[]);
+				match self.codegen_expr(expr)? {
+					MaybeValue::Value(expr_value) => _ = self.builder.ins().return_(&[expr_value]),
+					MaybeValue::Zst => _ = self.builder.ins().return_(&[]),
+					MaybeValue::Never => {}
 				}
 
 				MaybeValue::Never
@@ -582,18 +568,12 @@ impl FunctionGenerator<'_, '_> {
 			hir::ExprKind::Break { expr, label } => {
 				let (_, cont) = *self.loop_stack.last().unwrap();
 
-				if let Some(expr) = expr {
-					match self.codegen_expr(expr)? {
-						MaybeValue::Value(expr_value) => {
-							self.builder.ins().jump(cont, &[expr_value.into()]);
-						}
-						MaybeValue::Zst => {
-							self.builder.ins().jump(cont, &[]);
-						}
-						MaybeValue::Never => {}
+				match self.codegen_expr(expr)? {
+					MaybeValue::Value(expr_value) => {
+						_ = self.builder.ins().jump(cont, &[expr_value.into()]);
 					}
-				} else {
-					self.builder.ins().jump(cont, &[]);
+					MaybeValue::Zst => _ = self.builder.ins().jump(cont, &[]),
+					MaybeValue::Never => {}
 				}
 
 				MaybeValue::Never
@@ -622,9 +602,8 @@ impl FunctionGenerator<'_, '_> {
 		let lhs = self.codegen_expr(left)?;
 		let rhs = self.codegen_expr(right)?;
 
-		let (lhs, rhs) = match (lhs, rhs) {
-			(MaybeValue::Value(lhs), MaybeValue::Value(rhs)) => (lhs, rhs),
-			_ => panic!(),
+		let (MaybeValue::Value(lhs), MaybeValue::Value(rhs)) = (lhs, rhs) else {
+			panic!()
 		};
 
 		let ins = self.builder.ins();
@@ -674,8 +653,8 @@ impl FunctionGenerator<'_, '_> {
 		let ty = conseq
 			.ret
 			.as_ref()
-			.map_or(TyKind::Primitive(ty::PrimitiveKind::Void), |ret| {
-				self.typeck_results.get(&ret.id).unwrap().clone()
+			.map_or(TyKind::Primitive(ty::PrimitiveKind::Unit), |ret| {
+				self.typeck_results.get(&ret.expr_id()).unwrap().clone()
 			});
 
 		if let Some(ty) = self.to_cl_type(&ty) {
@@ -691,13 +670,12 @@ impl FunctionGenerator<'_, '_> {
 		);
 		self.builder.switch_to_block(then_block);
 		self.builder.seal_block(then_block);
+
 		match self.codegen_block(conseq)? {
 			MaybeValue::Value(then_ret) => {
-				self.builder.ins().jump(cont_block, &[then_ret.into()]);
+				_ = self.builder.ins().jump(cont_block, &[then_ret.into()]);
 			}
-			MaybeValue::Zst => {
-				self.builder.ins().jump(cont_block, &[]);
-			}
+			MaybeValue::Zst => _ = self.builder.ins().jump(cont_block, &[]),
 			MaybeValue::Never => {}
 		}
 		if let Some(altern) = altern {
@@ -709,16 +687,15 @@ impl FunctionGenerator<'_, '_> {
 
 			match self.codegen_block(altern)? {
 				MaybeValue::Value(else_ret) => {
-					self.builder.ins().jump(cont_block, &[else_ret.into()]);
+					_ = self.builder.ins().jump(cont_block, &[else_ret.into()]);
 				}
-				MaybeValue::Zst => {
-					self.builder.ins().jump(cont_block, &[]);
-				}
+				MaybeValue::Zst => _ = self.builder.ins().jump(cont_block, &[]),
 				MaybeValue::Never => {}
 			}
 		}
 		self.builder.switch_to_block(cont_block);
 		self.builder.seal_block(cont_block);
+
 		let block_params = self.builder.block_params(cont_block);
 		Ok(match block_params.len() {
 			0 => MaybeValue::Zst,

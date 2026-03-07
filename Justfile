@@ -1,5 +1,5 @@
 _default:
-	@just --list --unsorted --list-heading '' --list-prefix '—— '
+	@just --list --unsorted --list-heading '' --list-prefix '— '
 
 # Build kaleic in debug mode
 build *args:
@@ -11,7 +11,7 @@ compile *args:
 
 # Compile the given program and execute with the given args
 exec program *args:
-	cargo run -F debug -- {{program}}
+	just compile {{program}}
 	.cache/kaleic/binary.elf {{args}}
 
 serve-docs:

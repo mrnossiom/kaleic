@@ -650,6 +650,7 @@ dependencies = [
  "inkwell",
  "insta",
  "parking_lot",
+ "rustc-hash",
  "string-interner",
  "target-lexicon",
 ]

@@ -3,25 +3,26 @@
 All the syntax here are thoughts on language design that may or may not be interesting to implement in a language.
 Most of the syntax here came from a quick though, is bad and needs to be bikeshed.
 
+Modern programming languages should optimize for readability.
+
+## Reading
+
+- [Left to Right Programming (Programs Should Be Valid as They Are Typed)](https://graic.net/p/left-to-right-programming)
+
+  When writing a fragment of code,
+  the sooner you give context information, the sooner the language server is able to help you back.
+  That is by giving type information, methods and functions discovery, etc.
+
 ## Syntax Samples
 
 Many of the tests shown here are usual constructs in programming but tried in a left-to-right syntax.
 I would like to explore the LTR design space.
 
-### Attributes
-
-Which syntax to use?
-
-```kalei
-@attr
-@attr()
-@attr{}
-fn item() {}
-```
-
 ### `is` operator
 
 - Motivation: LTR programming
+
+  Would work especially well with path inference.
 
 Equiv. (Rust) `if let <pattern> = <expr>`
 
@@ -30,6 +31,8 @@ let option = Some(42);
 if option is Some(num) { }
 if option.is Some(num) { }
 ```
+
+- [Rust RFC (Accepted): If Let (GitHub)](https://rust-lang.github.io/rfcs/0160-if-let.html)
 
 ### `not` postfix operator
 
@@ -252,3 +255,23 @@ fn boo(arg: Ty) {
 ### Hot-reloading
 
 Would be fun to play with that. Kind of like `dotnet watch`.
+
+### Path inference
+
+```kalei
+enum InferKind {
+  Infer,
+  NoInfer,
+}
+
+fn foo(qrcode: InferKind);
+
+foo(.Infer);
+
+match InferKind.Infer {
+  .Infer -> {}
+  .NoInfer -> {}
+}
+```
+
+- [Rust RFC (Open): Path Inference - GitHub](https://github.com/rust-lang/rfcs/pull/3444)

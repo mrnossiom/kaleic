@@ -16,10 +16,10 @@ use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
 		Attr, AttrMeta, BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Generics,
-		Ident as Id, Item, ItemKind, NodeId, Param, Path, Root, ShortCircuitOp, Spanned, Stmt,
-		StmtKind, Ty, TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
+		Ident as Id, Item, ItemKind, Param, Path, Root, ShortCircuitOp, Spanned, Stmt, StmtKind,
+		Ty, TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
 	},
-	bug, errors,
+	errors,
 	lexer::{Keyword as Kw, Lexer, Token, TokenKind},
 	session::{Diagnostic, SessionCtx, SourceFile, Span},
 };
@@ -238,15 +238,6 @@ impl Parser<'_> {
 	fn look_ahead(&self) -> TokenKind {
 		self.lexer.clone().next().map_or(Eof, |tkn| tkn.kind)
 	}
-
-	fn make_node_id(&mut self) -> NodeId {
-		let node_id = NodeId(self.next_node_id);
-		self.next_node_id = self
-			.next_node_id
-			.checked_add(1)
-			.unwrap_or_else(|| bug!("tried to construct too much `parser::NodeId`s"));
-		node_id
-	}
 }
 
 /// Expressions
@@ -284,7 +275,6 @@ impl Parser<'_> {
 			lhs = Expr {
 				kind: new_kind,
 				span: self.close_span(lo),
-				id: self.make_node_id(),
 			};
 		}
 		Ok(lhs)
@@ -366,7 +356,6 @@ impl Parser<'_> {
 		Ok(ControlFlow::Continue(Expr {
 			kind,
 			span: self.close_span(lo),
-			id: self.make_node_id(),
 		}))
 	}
 
@@ -414,7 +403,6 @@ impl Parser<'_> {
 		Ok(Expr {
 			kind,
 			span: self.close_span(lo),
-			id: self.make_node_id(),
 		})
 	}
 
@@ -547,9 +535,6 @@ impl Parse for Item {
 			ItemKind::Function(Parse::parse(p)?)
 		} else if p.eat(Keyword(Kw::Unsafe)) {
 			p.parse_item_unsafe_extern()?
-		} else if p.eat(Keyword(Kw::Extern)) {
-			todo!("recover to unsafe extern block");
-			p.parse_item_unsafe_extern()?
 		} else if p.eat(Keyword(Kw::Struct)) {
 			p.parse_item_struct()?
 		} else if p.eat(Keyword(Kw::Enum)) {
@@ -560,6 +545,8 @@ impl Parse for Item {
 			p.parse_item_trait_impl()?
 		} else if p.eat(Keyword(Kw::Type)) {
 			ItemKind::TypeAlias(TypeAlias::parse(p)?)
+		} else if p.eat(Keyword(Kw::Extern)) {
+			todo!("recover to unsafe extern block");
 		} else {
 			let report = errors::parser::expected_construct_no_match("an item", p.token);
 			return Err(Diagnostic::new(report));
@@ -569,7 +556,6 @@ impl Parse for Item {
 			kind,
 			attrs,
 			span: p.close_span(lo),
-			id: p.make_node_id(),
 		})
 	}
 }
@@ -931,7 +917,6 @@ impl Parser<'_> {
 		Ok(Stmt {
 			kind,
 			span: self.close_span(lo),
-			id: self.make_node_id(),
 		})
 	}
 
@@ -982,7 +967,6 @@ impl Parser<'_> {
 		Ok(Block {
 			stmts,
 			span: self.close_span(lo),
-			id: self.make_node_id(),
 		})
 	}
 
@@ -1014,7 +998,6 @@ impl Parser<'_> {
 			path,
 			meta,
 			span: self.close_span(lo),
-			id: self.make_node_id(),
 		})
 	}
 }

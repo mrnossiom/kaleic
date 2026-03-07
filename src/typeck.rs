@@ -1,8 +1,6 @@
 #![cfg(false)]
 //! Next inference engine
 
-use std::collections::HashMap;
-
 use crate::{
 	ast::Stmt,
 	hir::{self, Enum, Expr, Function, ItemKind, NodeId, Struct, TypeAlias},
@@ -13,14 +11,14 @@ use crate::{
 pub struct TypeCheck<'tcx> {
 	tcx: &'tcx ty::TyCtx<'tcx>,
 
-	expr_types: HashMap<NodeId, TyKind>,
+	expr_types: FxHashMap<NodeId, TyKind>,
 }
 
 impl<'tcx> TypeCheck<'tcx> {
 	pub fn new(tcx: &'tcx ty::TyCtx) -> Self {
 		Self {
 			tcx,
-			expr_types: HashMap::new(),
+			expr_types: FxHashMap::new(),
 		}
 	}
 
@@ -104,7 +102,7 @@ impl FunctionTck {
 		todo!()
 	}
 
-	fn infer_fn(&self, func: &Function) -> HashMap<NodeId, TyKind> {
+	fn infer_fn(&self, func: &Function) -> FxHashMap<NodeId, TyKind> {
 		let ctx = InferCx::default();
 
 		todo!()

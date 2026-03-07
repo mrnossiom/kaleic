@@ -1,9 +1,9 @@
-use std::{fmt::Write as _, fs};
+use std::{fmt::Write as _, fs, process::Command};
 
 use ariadne::ReportKind;
 
 use crate::{
-	ast, lowerer, parser,
+	ast, codegen, lowerer, parser,
 	pretty_print::pretty_print,
 	session::{Diagnostic, PrintKind, Report, SessionCtx, Span},
 	ty,
@@ -81,8 +81,7 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	tcx.collect_items(&hir);
 	if scx.options.print.contains(&PrintKind::CollectedItems) {
-		let item_map = tcx.name_env.borrow();
-		let name_environment = item_map.as_ref().unwrap();
+		let name_environment = tcx.name_env.borrow();
 		let mut artefact = scx.register_artefact("name-environment.txt");
 		writeln!(artefact, "> Type items:").unwrap();
 		for (name, item) in &name_environment.types {
@@ -98,7 +97,7 @@ pub fn pipeline(scx: &SessionCtx) {
 	if scx.options.print.contains(&PrintKind::TypeEnvironment) {
 		let env = tcx.ty_env.borrow();
 		let mut artefact = scx.register_artefact("type-environment.txt");
-		for (name, ty) in env.as_ref().unwrap() {
+		for (name, ty) in env.iter() {
 			writeln!(artefact, "{name:?}: {ty:?}").unwrap();
 		}
 		writeln!(artefact).unwrap();
@@ -116,9 +115,10 @@ pub fn pipeline(scx: &SessionCtx) {
 		};
 
 		backend.codegen_root(&hir);
+		backend.finalize();
 		let status = backend.call_main();
 
-		eprintln!("Finished execution! Exited with {status}.");
+		eprintln!("Exited with {status}");
 	} else {
 		let Some(mut backend) = scx.options.backend.object_backend(&tcx) else {
 			panic!("cannot codegen for backend {:?}", scx.options.backend)
@@ -130,7 +130,12 @@ pub fn pipeline(scx: &SessionCtx) {
 		backend.write_object(&main_object);
 
 		// link to binary
-		let mut cmd = std::process::Command::new("wild");
+
+		let mut cmd = match scx.options.linker {
+			codegen::Linker::Ld => Command::new("ld"),
+			codegen::Linker::Lld => Command::new("lld"),
+			codegen::Linker::Wild => Command::new("wild"),
+		};
 
 		cmd.arg(&main_object);
 

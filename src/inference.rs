@@ -1,10 +1,14 @@
 use std::sync::atomic::Ordering;
 
+use rustc_hash::FxHashMap;
+
 use crate::{
 	ast::{self, UnaryOp},
 	errors,
-	hir::{self, ExprKind},
-	ty::{Infer, Inferer, Param, PrimitiveKind, TyCtx, TyKind},
+	hir::{self, ExprId, ExprKind, ItemId},
+	resolve::NameEnvironment,
+	session::Symbol,
+	ty::{self, Infer, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -15,6 +19,52 @@ impl TyCtx<'_> {
 		InferTag(self.infer_tag_count.fetch_add(1, Ordering::Relaxed))
 	}
 }
+
+#[derive(Debug)]
+pub struct Inferer<'tcx> {
+	pub tcx: &'tcx TyCtx<'tcx>,
+	pub name_env: &'tcx NameEnvironment,
+	pub ty_env: &'tcx FxHashMap<ItemId, TyKind>,
+
+	pub decl: &'tcx ty::FnDecl,
+	pub body: &'tcx hir::Block,
+
+	pub local_env: FxHashMap<Symbol, Vec<TyKind<Infer>>>,
+	pub return_ty: TyKind<Infer>,
+	pub expr_type: FxHashMap<ExprId, TyKind<Infer>>,
+	pub infer_map: FxHashMap<InferTag, TyKind<Infer>>,
+
+	// TODO: support labels
+	pub loops: Vec<TyKind<Infer>>,
+}
+
+impl<'tcx> Inferer<'tcx> {
+	#[must_use]
+	pub fn new(
+		tcx: &'tcx TyCtx,
+		decl: &'tcx ty::FnDecl,
+		body: &'tcx hir::Block,
+		name_env: &'tcx NameEnvironment,
+		ty_env: &'tcx FxHashMap<ItemId, TyKind>,
+	) -> Self {
+		Self {
+			tcx,
+			name_env,
+			ty_env,
+
+			decl,
+			body,
+
+			local_env: FxHashMap::default(),
+			return_ty: TyKind::Error,
+			expr_type: FxHashMap::default(),
+			infer_map: FxHashMap::default(),
+
+			loops: Vec::new(),
+		}
+	}
+}
+
 impl Inferer<'_> {
 	fn resolve_var_ty(&self, var: &ast::Path) -> TyKind<Infer> {
 		let var = var.simple();
@@ -25,9 +75,9 @@ impl Inferer<'_> {
 		{
 			// search in the locals defined, respecting shadowing
 			ty.clone()
-		} else if let Some(ty) = self.name_env.values.get(&var.sym) {
+		} else if let Some(id) = self.name_env.values.get(&var.sym) {
 			// search values in the whole project
-			self.ty_env.get(&ty.id).unwrap().clone().as_infer()
+			self.ty_env.get(id).unwrap().clone().as_infer()
 		} else {
 			let report = errors::ty::variable_not_in_scope(var.span);
 			self.tcx.scx.dcx().emit_build(report);
@@ -45,8 +95,11 @@ impl Inferer<'_> {
 				.push(ty.clone().as_infer());
 		});
 
-		let ret_ty = self.infer_block(self.body);
-		self.unify(&self.decl.output.clone().as_infer(), &ret_ty);
+		let expected = self.decl.output.clone().as_infer();
+		self.return_ty = expected.clone();
+
+		let ty = self.infer_block(self.body);
+		self.unify(&expected, &ty);
 	}
 
 	fn infer_block(&mut self, block: &hir::Block) -> TyKind<Infer> {
@@ -57,7 +110,7 @@ impl Inferer<'_> {
 		let expected_ret_ty = block
 			.ret
 			.as_ref()
-			.map_or(TyKind::Primitive(PrimitiveKind::Void), |expr| {
+			.map_or(TyKind::Primitive(PrimitiveKind::Unit), |expr| {
 				self.infer_expr(expr)
 			});
 
@@ -170,20 +223,27 @@ impl Inferer<'_> {
 				// if no `else` part, then it must return Unit
 				let altern_ty = altern
 					.as_ref()
-					.map_or(TyKind::Primitive(PrimitiveKind::Void), |altern| {
+					.map_or(TyKind::Primitive(PrimitiveKind::Unit), |altern| {
 						self.infer_block(altern)
 					});
 
 				self.unify(&conseq_ty, &altern_ty)
 			}
 			hir::ExprKind::Loop { block } => {
+				self.loops
+					.push(TyKind::Infer(self.tcx.next_infer_tag(), Infer::Generic));
+
 				let block_ty = self.infer_block(block);
-				self.unify(&TyKind::Primitive(PrimitiveKind::Void), &block_ty);
-				todo!()
+				// enforce no ret loop
+				self.unify(&TyKind::Primitive(PrimitiveKind::Unit), &block_ty);
+
+				self.loops.pop().unwrap()
 			}
 
+			hir::ExprKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
+
 			hir::ExprKind::Method { expr, name, params } => todo!(),
-			hir::ExprKind::Field { expr, name: ident } => todo!(),
+			hir::ExprKind::Field { expr, name } => todo!(),
 			hir::ExprKind::Deref { expr } => todo!("ensure expr ty is pointer"),
 
 			hir::ExprKind::Assign { target, value } => {
@@ -196,17 +256,31 @@ impl Inferer<'_> {
 				self.unify(&target_ty, &value_ty)
 			}
 
-			hir::ExprKind::Return { expr } => TyKind::Primitive(PrimitiveKind::Never),
-			hir::ExprKind::Break { expr, label } => TyKind::Primitive(PrimitiveKind::Never),
-			hir::ExprKind::Continue { label } => TyKind::Primitive(PrimitiveKind::Never),
+			hir::ExprKind::Return { expr } => {
+				let ty = self.infer_expr(expr);
+				self.unify(&self.return_ty.clone(), &ty);
+
+				TyKind::Primitive(PrimitiveKind::Never)
+			}
+			hir::ExprKind::Break { expr, label } => {
+				let ty = self.infer_expr(expr);
+				let Some(expected) = self.loops.last().cloned() else {
+					todo!("break not in a loop")
+				};
+				self.unify(&expected, &ty);
+
+				TyKind::Primitive(PrimitiveKind::Never)
+			}
+			hir::ExprKind::Continue { label } => {
+				if self.loops.is_empty() {
+					todo!()
+				}
+				TyKind::Primitive(PrimitiveKind::Never)
+			}
 		};
 
 		// TODO
-		assert!(
-			self.expr_type
-				.insert((expr.span, expr.id), ty.clone())
-				.is_none()
-		);
+		assert!(self.expr_type.insert(expr.expr_id(), ty.clone()).is_none());
 
 		ty
 	}

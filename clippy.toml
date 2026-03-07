@@ -1,0 +1,4 @@
+[[disallowed-types]]
+path = "std::collections::HashMap"
+replacement = "rustc_hash::FxHashMap"
+reason = "use stable collection instead"

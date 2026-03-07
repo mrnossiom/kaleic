@@ -17,12 +17,13 @@ pub mod typeck;
 pub mod ast;
 pub mod hir;
 
+// TODO: remove ffi module
 pub mod ffi;
 
 /// Used when reaching a branch that breaks an assumption made
 #[macro_export]
 macro_rules! bug {
-	($msg:literal) => {
-		panic!(concat!("bug triggered: ", $msg))
+	($msg:tt) => {
+		panic!("ICE: {}", format_args!($msg))
 	};
 }

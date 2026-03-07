@@ -1,12 +1,14 @@
-use std::{cell::RefCell, collections::HashMap, fmt, sync::atomic::AtomicU32};
+use std::{cell::RefCell, fmt, sync::atomic::AtomicU32};
+
+use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, Ident},
 	bug, errors,
-	hir::{self, Function, NodeId},
-	inference::InferTag,
+	hir::{self, ExprId, Function, ItemId},
+	inference::{InferTag, Inferer},
 	resolve::{self, NameEnvironment},
-	session::{SessionCtx, Span, Symbol},
+	session::{SessionCtx, Span},
 };
 
 #[derive(Debug)]
@@ -16,9 +18,10 @@ pub struct TyCtx<'scx> {
 	// TODO: this is going to disappear
 	pub(crate) infer_tag_count: AtomicU32,
 
-	pub(crate) name_env: RefCell<Option<NameEnvironment>>,
-	pub ty_env: RefCell<Option<HashMap<hir::NodeId, TyKind>>>,
-	pub typeck_results: RefCell<Option<HashMap<NodeId, TyKind>>>,
+	// TODO: get rid of refcells
+	pub name_env: RefCell<NameEnvironment>,
+	pub ty_env: RefCell<FxHashMap<ItemId, TyKind>>,
+	pub typeck_results: RefCell<FxHashMap<ExprId, TyKind>>,
 }
 
 impl<'scx> TyCtx<'scx> {
@@ -41,18 +44,17 @@ impl TyCtx<'_> {
 	pub fn collect_items(&self, hir: &hir::Root) {
 		let mut cltr = resolve::Collector::new(self);
 		cltr.collect_root(hir);
-		self.name_env.replace(Some(cltr.name_env));
+		self.name_env.replace(cltr.name_env);
 	}
 
 	/// Uses the collection step to map every item to a concrete type
 	pub(crate) fn compute_items_type(&self, hir: &hir::Root) {
 		let mut ty_computer = resolve::TypeComputer::new(self);
 
-		let binding = self.name_env.borrow();
-		let name_env = binding.as_ref().unwrap();
-		ty_computer.compute_env(name_env);
+		let name_env = self.name_env.borrow();
+		ty_computer.compute_root(hir);
 
-		self.ty_env.replace(Some(ty_computer.ty_env));
+		self.ty_env.replace(ty_computer.types);
 	}
 
 	/// Computes inference for every function body and stores the result
@@ -65,29 +67,48 @@ impl TyCtx<'_> {
 
 	/// TODO: remove old inference
 	pub(crate) fn typeck_old(&self, hir: &hir::Root) {
-		let binding = self.ty_env.borrow();
-		let ty_env = binding.as_ref().unwrap();
-
-		let mut expr_tys = HashMap::new();
+		let mut expr_tys = FxHashMap::default();
 
 		for item in &hir.items {
-			match &item.kind {
-				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let body = body.as_ref().unwrap();
-
-					let TyKind::Fn(decl) = ty_env.get(&item.id).unwrap() else {
-						todo!()
-					};
-
-					let function_expr_tys = self.typeck_fn_old(*name, decl, body);
-					expr_tys.extend(function_expr_tys);
-				}
-				_ => {}
-			}
+			self.typeck_item_old(item, &mut expr_tys);
 		}
 
-		let old = self.typeck_results.borrow_mut().replace(expr_tys);
-		assert!(old.is_none());
+		*self.typeck_results.borrow_mut() = expr_tys;
+	}
+
+	fn typeck_item_old(&self, item: &hir::Item, expr_tys: &mut FxHashMap<ExprId, TyKind>) {
+		match &item.kind {
+			hir::ItemKind::Function(Function { name, decl, body }) => {
+				let Some(body) = body.as_ref() else { return };
+
+				let ty_env = self.ty_env.borrow();
+				let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
+					todo!()
+				};
+
+				let function_expr_tys = self.typeck_fn_old(*name, decl, body);
+				expr_tys.extend(function_expr_tys);
+			}
+			hir::ItemKind::Extern { items } => {
+				for item in items {
+					self.typeck_item_old(&item.clone().into(), expr_tys);
+				}
+			}
+			hir::ItemKind::Trait {
+				name,
+				generics,
+				members,
+			} => todo!(),
+			hir::ItemKind::TraitImpl {
+				type_,
+				trait_,
+				members,
+			} => todo!(),
+
+			hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::TypeAlias(_) => {
+				todo!()
+			}
+		}
 	}
 
 	#[must_use]
@@ -96,18 +117,16 @@ impl TyCtx<'_> {
 		name: Ident,
 		decl: &FnDecl,
 		body: &hir::Block,
-	) -> HashMap<NodeId, TyKind> {
-		let borrow = self.ty_env.borrow();
-		let ty_env = borrow.as_ref().unwrap();
-		let borrow = self.name_env.borrow();
-		let name_env = borrow.as_ref().unwrap();
+	) -> FxHashMap<ExprId, TyKind> {
+		let ty_env = self.ty_env.borrow();
+		let name_env = self.name_env.borrow();
 
-		let mut inferer = Inferer::new(self, decl, body, name_env, ty_env);
+		let mut inferer = Inferer::new(self, decl, body, &name_env, &ty_env);
 		inferer.infer_fn();
 
-		let mut expr_tys = HashMap::default();
+		let mut expr_tys = FxHashMap::default();
 
-		for ((span, node_id), ty_infer) in inferer.expr_type {
+		for (node_id, ty_infer) in inferer.expr_type {
 			match ty_infer.as_no_infer() {
 				Ok(ty) => {
 					expr_tys.insert(node_id, ty);
@@ -124,6 +143,7 @@ impl TyCtx<'_> {
 								expr_tys.insert(node_id, TyKind::Primitive(PrimitiveKind::Float));
 							}
 							Infer::Generic | Infer::Explicit => {
+								let span = todo!("get from expr_id");
 								let report = errors::ty::report_unconstrained(span);
 								self.scx.dcx().emit_build(report);
 							}
@@ -149,7 +169,7 @@ impl TyCtx<'_> {
 			ast::TyKind::Path(path) => self.lower_path_ty(path),
 			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
 			ast::TyKind::Reference(ty) => todo!(),
-			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Void),
+			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
 			ast::TyKind::ImplicitInfer => TyKind::Infer(self.next_infer_tag(), Infer::Generic),
 		}
 	}
@@ -160,7 +180,7 @@ impl TyCtx<'_> {
 		let primitive = match self.scx.symbols.resolve(path.sym).as_str() {
 			"_" => Some(TyKind::Infer(self.next_infer_tag(), Infer::Explicit)),
 
-			"void" => Some(TyKind::Primitive(PrimitiveKind::Void)),
+			"void" => Some(TyKind::Primitive(PrimitiveKind::Unit)),
 			"never" => Some(TyKind::Primitive(PrimitiveKind::Never)),
 
 			"bool" => Some(TyKind::Primitive(PrimitiveKind::Bool)),
@@ -175,56 +195,15 @@ impl TyCtx<'_> {
 		if let Some(primitive) = primitive {
 			primitive
 		} else {
-			let borrow = self.name_env.borrow();
-			let item_map = borrow.as_ref().unwrap();
-			if let Some(item) = item_map.types.get(&path.sym) {
+			let item_map = self.name_env.borrow();
+			if let Some(item_id) = item_map.types.get(&path.sym) {
 				// TODO: we could access the real type directly if we sorted
 				// in some kind of topological order
-				TyKind::Ref(item.id)
+				TyKind::Ref(*item_id)
 			} else {
 				eprintln!("item {:?} doesn't exist", path.sym);
 				TyKind::Error
 			}
-		}
-	}
-}
-
-#[derive(Debug)]
-pub struct Inferer<'tcx> {
-	pub(crate) tcx: &'tcx TyCtx<'tcx>,
-	pub(crate) name_env: &'tcx NameEnvironment,
-	pub(crate) ty_env: &'tcx HashMap<hir::NodeId, TyKind>,
-
-	pub(crate) decl: &'tcx FnDecl,
-	pub(crate) body: &'tcx hir::Block,
-
-	pub(crate) local_env: HashMap<Symbol, Vec<TyKind<Infer>>>,
-	// FIXME: get this span out of here once we have an easy NodeId -> Span way
-	pub(crate) expr_type: HashMap<(Span, hir::NodeId), TyKind<Infer>>,
-	pub(crate) infer_map: HashMap<InferTag, TyKind<Infer>>,
-}
-
-impl<'tcx> Inferer<'tcx> {
-	#[must_use]
-	pub fn new(
-		tcx: &'tcx TyCtx,
-		decl: &'tcx FnDecl,
-		body: &'tcx hir::Block,
-		name_env: &'tcx NameEnvironment,
-		ty_env: &'tcx HashMap<hir::NodeId, TyKind>,
-	) -> Self {
-		Self {
-			tcx,
-			name_env,
-			ty_env,
-
-			decl,
-			body,
-
-			local_env: HashMap::default(),
-			expr_type: HashMap::default(),
-
-			infer_map: HashMap::default(),
 		}
 	}
 }
@@ -280,7 +259,7 @@ pub enum TyKind<InferKind = NoInfer> {
 
 	// TODO: remove
 	/// Refers to the type of another item
-	Ref(hir::NodeId),
+	Ref(ItemId),
 
 	Infer(InferTag, InferKind),
 	Error,
@@ -307,7 +286,7 @@ impl<T: fmt::Display> fmt::Display for TyKind<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrimitiveKind {
-	Void,
+	Unit,
 	Never,
 
 	Bool,
@@ -322,7 +301,7 @@ impl fmt::Display for PrimitiveKind {
 	// Should fit in the sentence "found primitive {}"
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Void => write!(f, "void"),
+			Self::Unit => write!(f, "()"),
 			Self::Never => write!(f, "never"),
 
 			Self::Bool => write!(f, "bool"),

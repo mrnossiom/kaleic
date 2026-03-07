@@ -1,18 +1,10 @@
 //! Abstract Syntax Tree
 
-use std::{collections::HashMap, fmt};
+use std::fmt;
+
+use rustc_hash::FxHashMap;
 
 use crate::session::{Span, Symbol};
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub u32);
-
-impl fmt::Debug for NodeId {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		// ast node id -> aid
-		write!(f, "aid#{}", self.0)
-	}
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Ident {
@@ -66,7 +58,6 @@ pub struct Attr {
 	pub path: Path,
 	pub meta: AttrMeta,
 	pub span: Span,
-	pub id: NodeId,
 }
 
 #[derive(Debug)]
@@ -75,7 +66,7 @@ pub enum AttrMeta {
 	/// `#path(foo, bar)`
 	Tuple(Vec<Expr>),
 	/// `#path{key=value, key2=value2}`
-	Map(HashMap<Ident, Expr>),
+	Map(FxHashMap<Ident, Expr>),
 	/// `#path[blah1, blah2, blah3]`
 	List(Vec<Expr>),
 }
@@ -84,7 +75,6 @@ pub enum AttrMeta {
 pub struct Expr {
 	pub kind: ExprKind,
 	pub span: Span,
-	pub id: NodeId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,7 +253,6 @@ pub enum ExprKind {
 pub struct Block {
 	pub stmts: Vec<Stmt>,
 	pub span: Span,
-	pub id: NodeId,
 }
 
 #[derive(Debug)]
@@ -296,7 +285,7 @@ pub enum TyKind {
 	/// `& <ty>`
 	Reference(Box<Ty>),
 
-	// TODO: unit or void? choose
+	// TODO: replace with tuple definition
 	Unit,
 
 	/// Corresponds to the explicit `_` token
@@ -311,6 +300,12 @@ pub struct Path {
 
 impl Path {
 	// TODO: remove, really resolve paths
+	pub fn new_simple(id: Ident) -> Self {
+		Self {
+			segments: vec![id],
+			generics: Vec::new(),
+		}
+	}
 	pub fn simple(&self) -> Ident {
 		assert_eq!(self.segments.len(), 1);
 		assert_eq!(self.generics.len(), 0);
@@ -323,7 +318,6 @@ pub struct Item {
 	pub kind: ItemKind,
 	pub attrs: Vec<Attr>,
 	pub span: Span,
-	pub id: NodeId,
 }
 
 /// `type <name> [ = <ty> ] ;`
@@ -410,7 +404,6 @@ pub enum VariantKind {
 pub struct Stmt {
 	pub kind: StmtKind,
 	pub span: Span,
-	pub id: NodeId,
 }
 
 #[derive(Debug)]

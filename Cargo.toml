@@ -9,6 +9,7 @@ bumpalo = "3"
 clap = { version = "4", features = ["derive"] }
 index_vec = "0.1"
 parking_lot = "0.12"
+rustc-hash = "2"
 string-interner = "0.19"
 
 # Cranelift backend
@@ -52,7 +53,7 @@ backend-cranelift = [
 unused_variables = "allow"
 
 # not forbid because jit-ing is inherently unsafe
-unsafe_code = "deny"
+unsafe_code = "allow"
 [lints.rustdoc]
 all = "warn"
 [lints.clippy]

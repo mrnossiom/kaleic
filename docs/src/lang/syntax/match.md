@@ -22,7 +22,7 @@ foo.method().match { <arms> }
 foo.method().match { <arms> }.continue()
 ```
 
-- [Open Rust RFC: Postfix match - GitHub](https://github.com/rust-lang/rfcs/pull/3295)
+- [Rust RFC (Open): Postfix Match - GitHub](https://github.com/rust-lang/rfcs/pull/3295)
 
 ### Arms
 

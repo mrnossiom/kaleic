@@ -17,8 +17,15 @@ impl fmt::Debug for NodeId {
 	}
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ItemId(NodeId);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ExprId(NodeId);
+
 #[derive(Debug)]
 pub struct Root {
+	// pub attrs: FxHashMap<AttrName, AttrKind>
 	pub items: Vec<Item>,
 }
 
@@ -27,6 +34,12 @@ pub struct Item {
 	pub kind: ItemKind,
 	pub span: Span,
 	pub id: NodeId,
+}
+
+impl Item {
+	pub fn item_id(&self) -> ItemId {
+		ItemId(self.id)
+	}
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +141,12 @@ pub struct ExternItem {
 	pub id: NodeId,
 }
 
+impl ExternItem {
+	pub fn item_id(&self) -> ItemId {
+		ItemId(self.id)
+	}
+}
+
 #[derive(Debug, Clone)]
 pub enum ExternItemKind {
 	Function(Function),
@@ -160,8 +179,8 @@ pub struct FieldDef {
 
 #[derive(Debug, Clone)]
 pub struct FnDecl {
-	pub inputs: Vec<ast::Param>,
-	pub output: Box<ast::Ty>,
+	pub params: Vec<ast::Param>,
+	pub ret: Box<ast::Ty>,
 
 	pub span: Span,
 }
@@ -203,6 +222,12 @@ pub struct Expr {
 	pub id: NodeId,
 }
 
+impl Expr {
+	pub fn expr_id(&self) -> ExprId {
+		ExprId(self.id)
+	}
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
 	LiteralInt {
@@ -227,6 +252,9 @@ pub enum ExprKind {
 		left: Box<Expr>,
 		right: Box<Expr>,
 	},
+
+	// TODO: parse structs, enums, tuples (and records? anon struct)
+	Unit,
 
 	FnCall {
 		expr: Box<Expr>,
@@ -262,14 +290,14 @@ pub enum ExprKind {
 	},
 
 	Return {
-		expr: Option<Box<Expr>>,
+		expr: Box<Expr>,
 	},
 	Break {
-		expr: Option<Box<Expr>>,
-		label: Option<Ident>,
+		expr: Box<Expr>,
+		label: Option<Spanned<Ident>>,
 	},
 	Continue {
-		label: Option<Ident>,
+		label: Option<Spanned<Ident>>,
 	},
 }
 
