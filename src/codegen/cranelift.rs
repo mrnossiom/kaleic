@@ -61,7 +61,7 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.tcx.ty_env.borrow()[&ref_]),
+			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.tcx.type_env.borrow()[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
@@ -148,7 +148,13 @@ impl<M: Module> Generator<'_, M> {
 		Ok(func_id)
 	}
 
-	fn define_func(&mut self, func_id: FuncId, decl: &ty::FnDecl, body: &hir::Block) -> Result<()> {
+	fn define_func(
+		&mut self,
+		func_id: FuncId,
+		item_id: ItemId,
+		decl: &ty::FnDecl,
+		body: &hir::Block,
+	) -> Result<()> {
 		let mut context = self.module.make_context();
 
 		// TODO: this computes the signature a second time after declaration
@@ -156,13 +162,13 @@ impl<M: Module> Generator<'_, M> {
 
 		let builder = FunctionBuilder::new(&mut context.func, &mut self.builder_context);
 
-		let ty_env = &self.tcx.ty_env.borrow();
-		let typeck_results = &self.tcx.typeck_results.borrow();
+		let type_env = &self.tcx.type_env.borrow();
+		let typeck_results = &self.tcx.typeck_results.borrow_key(&item_id);
 
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
 
-			ty_env,
+			type_env,
 			typeck_results,
 
 			builder,
@@ -210,8 +216,8 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let ty_env = self.tcx.ty_env.borrow();
-					let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
+					let type_env = self.tcx.type_env.borrow();
+					let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap() else {
 						todo!()
 					};
 
@@ -220,12 +226,13 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					let func_id = self.declare_func(name.sym, decl, Linkage::Hidden).unwrap();
 					function_ids.insert(item.id, func_id);
 				}
-				hir::ItemKind::Extern { items } => {
+				hir::ItemKind::ForeignMod { items } => {
 					for item in items {
 						match &item.kind {
-							hir::ExternItemKind::Function(Function { name, decl, body }) => {
-								let ty_env = self.tcx.ty_env.borrow();
-								let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
+							hir::ForeignItemKind::Function(Function { name, decl, body }) => {
+								let type_env = self.tcx.type_env.borrow();
+								let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap()
+								else {
 									todo!()
 								};
 
@@ -246,7 +253,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let borrow = self.tcx.ty_env.borrow();
+					let borrow = self.tcx.type_env.borrow();
 					let TyKind::Fn(decl) = borrow.get(&item.item_id()).unwrap() else {
 						todo!()
 					};
@@ -257,14 +264,15 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, decl, body).unwrap();
+					self.define_func(*func_id, item.item_id(), decl, body)
+						.unwrap();
 				}
 
 				hir::ItemKind::TraitImpl { .. } => todo!(),
 
 				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
 
-				hir::ItemKind::Extern { .. }
+				hir::ItemKind::ForeignMod { .. }
 				| hir::ItemKind::TypeAlias(_)
 				| hir::ItemKind::Trait { .. } => {}
 			}
@@ -302,7 +310,7 @@ impl ObjectBackend for Generator<'_, ObjectModule> {
 pub struct FunctionGenerator<'scx, 'bld> {
 	scx: &'scx SessionCtx,
 
-	ty_env: &'scx FxHashMap<ItemId, ty::TyKind>,
+	type_env: &'scx FxHashMap<ItemId, ty::TyKind>,
 	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
 
 	builder: FunctionBuilder<'bld>,
@@ -330,7 +338,7 @@ impl FunctionGenerator<'_, '_> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(struct_) => todo!(),
 			ty::TyKind::Enum(enum_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.ty_env[&ref_]),
+			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.type_env[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}

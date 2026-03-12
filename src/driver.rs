@@ -3,8 +3,10 @@ use std::{fmt::Write as _, fs, process::Command};
 use ariadne::ReportKind;
 
 use crate::{
-	ast, codegen, lowerer, parser,
+	ast::{self, Visitor},
+	codegen, lowerer, parser,
 	pretty_print::pretty_print,
+	resolve,
 	session::{Diagnostic, PrintKind, Report, SessionCtx, Span},
 	ty,
 };
@@ -63,6 +65,22 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	scx.dcx().check_sane_or_exit();
 
+	let mut cltr = resolve::Collector::new(scx);
+	cltr.visit_root(&ast);
+	let name_env = cltr.name_env;
+
+	if scx.options.print.contains(&PrintKind::CollectedItems) {
+		let mut artefact = scx.register_artefact("name-environment.txt");
+		writeln!(artefact, "> Type items:").unwrap();
+		for (name, item) in &name_env.types {
+			writeln!(artefact, "{name:#?}: {item:?}").unwrap();
+		}
+		writeln!(artefact, "> Value items:").unwrap();
+		for (name, item) in &name_env.values {
+			writeln!(artefact, "{name:#?}: {item:?}").unwrap();
+		}
+	}
+
 	// lowering to HIR
 	let hir = lowerer::lower_root(scx, &ast);
 	if scx.options.print.contains(&PrintKind::HigherIr) {
@@ -78,24 +96,11 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	// type collection, inference and analysis
 	let tcx = ty::TyCtx::new(scx);
-
-	tcx.collect_items(&hir);
-	if scx.options.print.contains(&PrintKind::CollectedItems) {
-		let name_environment = tcx.name_env.borrow();
-		let mut artefact = scx.register_artefact("name-environment.txt");
-		writeln!(artefact, "> Type items:").unwrap();
-		for (name, item) in &name_environment.types {
-			writeln!(artefact, "{name:#?}: {item:?}").unwrap();
-		}
-		writeln!(artefact, "> Value items:").unwrap();
-		for (name, item) in &name_environment.values {
-			writeln!(artefact, "{name:#?}: {item:?}").unwrap();
-		}
-	}
+	tcx.name_env.put(name_env);
 
 	tcx.compute_items_type(&hir);
 	if scx.options.print.contains(&PrintKind::TypeEnvironment) {
-		let env = tcx.ty_env.borrow();
+		let env = tcx.type_env.borrow();
 		let mut artefact = scx.register_artefact("type-environment.txt");
 		for (name, ty) in env.iter() {
 			writeln!(artefact, "{name:?}: {ty:?}").unwrap();
@@ -103,8 +108,7 @@ pub fn pipeline(scx: &SessionCtx) {
 		writeln!(artefact).unwrap();
 	}
 
-	// tcx.typeck(&hir);
-	tcx.typeck_old(&hir);
+	tcx.typeck(&hir);
 
 	scx.dcx().check_sane_or_exit();
 

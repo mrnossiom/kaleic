@@ -353,8 +353,9 @@ impl Lexer<'_, '_> {
 					// avoid to eat the dot if this is a mac call after
 					if self.first() == '.' && !is_ident_start(self.second()) {
 						self.bump();
+
 						// TODO: ensure that the float indeed has a digit after the dot
-						assert!(self.token.is_some_and(|c| char::is_ascii_digit(&c)));
+						assert!(char::is_ascii_digit(&self.first()));
 						self.bump_while(|c| char::is_ascii_digit(&c));
 						LiteralFloat(self.scx.symbols.intern(self.str_from(start)))
 					} else {

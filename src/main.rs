@@ -78,6 +78,9 @@ struct Args {
 
 	#[clap(long)]
 	pub jit: bool,
+	/// Whether to optimize the code
+	#[clap(long)]
+	pub opt: bool,
 
 	#[clap(long)]
 	pub backend: Option<options::Backend>,
@@ -105,8 +108,9 @@ fn main() {
 		]);
 	}
 
-	options.jit = args.jit;
 	args.backend.inspect(|value| options.backend = value.into());
+	options.jit = args.jit;
+	options.opt = args.opt;
 	args.linker.inspect(|value| options.linker = value.into());
 	args.output.inspect(|value| options.output = value.into());
 	options.print.extend(args.print.into_iter().map(Into::into));

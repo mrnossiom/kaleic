@@ -1,10 +1,20 @@
-//! Abstract Syntax Tree
+//! **A**bstract **S**yntax **T**ree
 
 use std::fmt;
 
 use rustc_hash::FxHashMap;
 
 use crate::session::{Span, Symbol};
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeId(pub u32);
+
+impl fmt::Debug for NodeId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		// ast node id -> aid
+		write!(f, "aid#{}", self.0)
+	}
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Ident {
@@ -212,13 +222,13 @@ pub enum ExprKind {
 		body: Box<Block>,
 	},
 
-	/// <expr> . <ident> ( <expr>* )
+	/// `<expr> . <ident> ( <expr>* )`
 	Method {
 		expr: Box<Expr>,
 		name: Ident,
 		params: Vec<Expr>,
 	},
-	/// <expr> . <ident>
+	/// `<expr> . <ident>`
 	Field {
 		expr: Box<Expr>,
 		name: Ident,
@@ -287,9 +297,6 @@ pub enum TyKind {
 
 	// TODO: replace with tuple definition
 	Unit,
-
-	/// Corresponds to the explicit `_` token
-	ImplicitInfer,
 }
 
 #[derive(Debug, Clone)]
@@ -318,6 +325,7 @@ pub struct Item {
 	pub kind: ItemKind,
 	pub attrs: Vec<Attr>,
 	pub span: Span,
+	pub id: NodeId,
 }
 
 /// `type <name> [ = <ty> ] ;`
@@ -368,7 +376,8 @@ pub enum ItemKind {
 		members: Vec<Item>,
 	},
 
-	Extern {
+	/// `unsafe extern <abi> { <items>* }`
+	ForeignMod {
 		items: Vec<Item>,
 	},
 }
@@ -410,7 +419,7 @@ pub struct Stmt {
 pub enum StmtKind {
 	/// `let [ mut ] <name> [ : <ty> ] = <expr> ;`
 	Let {
-		ident: Ident,
+		name: Ident,
 		ty: Option<Box<Ty>>,
 		value: Option<Box<Expr>>,
 		mutable: bool,
@@ -424,4 +433,24 @@ pub enum StmtKind {
 
 	/// A single lonely `;`
 	Empty,
+}
+
+pub trait Visitor {
+	fn visit_root(&mut self, root: &Root);
+
+	fn visit_attrs(&mut self, attrs: &[Attr]) {
+		for attr in attrs {
+			self.visit_attr(attr);
+		}
+	}
+
+	fn visit_attr(&mut self, attrs: &Attr);
+
+	fn visit_items(&mut self, items: &[Item]) {
+		for item in items {
+			self.visit_item(item);
+		}
+	}
+
+	fn visit_item(&mut self, item: &Item);
 }

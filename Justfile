@@ -11,8 +11,14 @@ compile *args:
 
 # Compile the given program and execute with the given args
 exec program *args:
-	just compile {{program}}
-	.cache/kaleic/binary.elf {{args}}
+	#!/usr/bin/env bash
+	set -euo pipefail
+
+	compiler_flags=$(echo "{{args}}" | sed 's/ -- .*//; s/ --//')
+	program_args=$(echo "{{args}}" | sed -n 's/.* -- //p')
+
+	just compile {{program}} $compiler_flags
+	.cache/kaleic/binary.elf $program_args
 
 serve-docs:
 	mdbook serve docs

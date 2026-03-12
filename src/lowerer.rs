@@ -1,7 +1,5 @@
 //! AST to HIR lowering logic
 
-use std::sync::atomic::{self, AtomicU32};
-
 use crate::{
 	ast::{self, Spanned},
 	errors, hir,
@@ -9,16 +7,16 @@ use crate::{
 };
 
 pub fn lower_root(scx: &SessionCtx, source: &ast::Root) -> hir::Root {
-	let l = Lowerer::new(scx);
-	source.lower(&l)
+	let mut l = Lowerer::new(scx);
+	source.lower(&mut l)
 }
 
 pub trait Lower {
 	type Out;
 
-	fn lower(&self, l: &Lowerer) -> Self::Out;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out;
 
-	fn lower_box(&self, l: &Lowerer) -> Box<Self::Out> {
+	fn lower_box(&self, l: &mut Lowerer) -> Box<Self::Out> {
 		Box::new(self.lower(l))
 	}
 }
@@ -27,33 +25,34 @@ pub trait Lower {
 pub struct Lowerer<'scx> {
 	scx: &'scx SessionCtx,
 
-	next_node_id: AtomicU32,
+	next_node_id: u32,
 }
 
 impl<'scx> Lowerer<'scx> {
 	pub const fn new(scx: &'scx SessionCtx) -> Self {
 		Self {
 			scx,
-			next_node_id: AtomicU32::new(0),
+			next_node_id: 0,
 		}
 	}
 
-	fn make_new_node_id(&self) -> hir::NodeId {
-		let hid = self.next_node_id.fetch_add(1, atomic::Ordering::Relaxed);
-		hir::NodeId(hid)
+	fn make_node_id(&mut self) -> hir::NodeId {
+		let id = hir::NodeId(self.next_node_id);
+		self.next_node_id += 1;
+		id
 	}
 
-	fn lower_opt<O, L: Lower<Out = O>>(&self, opt: Option<&L>) -> Option<O> {
+	fn lower_opt<O, L: Lower<Out = O>>(&mut self, opt: Option<&L>) -> Option<O> {
 		opt.map(|item| item.lower(self))
 	}
 
-	fn lower_opt_box<O, L: Lower<Out = O>>(&self, opt: Option<&L>) -> Option<Box<O>> {
+	fn lower_opt_box<O, L: Lower<Out = O>>(&mut self, opt: Option<&L>) -> Option<Box<O>> {
 		self.lower_opt(opt).map(Box::new)
 	}
 }
 
 trait IterLower<Out, L: Lower<Out = Out>>: Iterator<Item = L> + Sized {
-	fn lower_iter(self, l: &Lowerer) -> impl Iterator<Item = Out> {
+	fn lower_iter(self, l: &mut Lowerer) -> impl Iterator<Item = Out> {
 		self.map(|item| item.lower(l))
 	}
 }
@@ -76,14 +75,14 @@ impl<T, I: Iterator<Item = Result<T, Diagnostic>> + Sized> IterDiagnostics<T> fo
 
 impl<Out: 'static, T: Lower<Out = Out>> Lower for &T {
 	type Out = Out;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		(*self).lower(l)
 	}
 }
 
 impl Lower for ast::Root {
 	type Out = hir::Root;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { attrs, items } = &self;
 		let items = items.iter().lower_iter(l).collect();
 		Self::Out { items }
@@ -92,20 +91,25 @@ impl Lower for ast::Root {
 
 impl Lower for ast::Item {
 	type Out = hir::Item;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
-		let Self { kind, attrs, span } = &self;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self {
+			kind,
+			attrs,
+			span,
+			id,
+		} = &self;
 
 		Self::Out {
 			kind: kind.lower(l),
 			span: *span,
-			id: l.make_new_node_id(),
+			id: l.make_node_id(),
 		}
 	}
 }
 
 impl Lower for ast::ItemKind {
 	type Out = hir::ItemKind;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		match &self {
 			Self::Function(func) => hir::ItemKind::Function(func.lower(l)),
 
@@ -138,44 +142,53 @@ impl Lower for ast::ItemKind {
 				name,
 				generics,
 				members,
-			} => hir::ItemKind::Trait {
-				name: *name,
-				generics: generics.clone(),
-				members: members
-					.iter()
-					.lower_iter(l)
-					.map(hir::TraitItem::try_from)
-					.collect_diagnostics(l.scx.dcx())
-					.collect(),
-			},
+			} => {
+				let scx = l.scx;
+				hir::ItemKind::Trait {
+					name: *name,
+					generics: generics.clone(),
+					members: members
+						.iter()
+						.lower_iter(l)
+						.map(TryFrom::try_from)
+						.collect_diagnostics(scx.dcx())
+						.collect(),
+				}
+			}
 			Self::TraitImpl {
 				type_,
 				trait_,
 				members,
-			} => hir::ItemKind::TraitImpl {
-				type_: type_.clone(),
-				trait_: trait_.clone(),
-				members: members
-					.iter()
-					.lower_iter(l)
-					.map(hir::TraitItem::try_from)
-					.collect_diagnostics(l.scx.dcx())
-					.collect(),
-			},
+			} => {
+				let scx = l.scx;
+				hir::ItemKind::TraitImpl {
+					type_: type_.clone(),
+					trait_: trait_.clone(),
+					members: members
+						.iter()
+						.lower_iter(l)
+						.map(TryFrom::try_from)
+						.collect_diagnostics(scx.dcx())
+						.collect(),
+				}
+			}
 
-			Self::Extern { items } => hir::ItemKind::Extern {
-				items: items
-					.iter()
-					.lower_iter(l)
-					.map(hir::ExternItem::try_from)
-					.collect_diagnostics(l.scx.dcx())
-					.collect(),
-			},
+			Self::ForeignMod { items } => {
+				let scx = l.scx;
+				hir::ItemKind::ForeignMod {
+					items: items
+						.iter()
+						.lower_iter(l)
+						.map(TryFrom::try_from)
+						.collect_diagnostics(scx.dcx())
+						.collect(),
+				}
+			}
 		}
 	}
 }
 
-impl TryFrom<hir::Item> for hir::TraitItem {
+impl TryFrom<hir::Item> for hir::Item<hir::TraitItemKind> {
 	type Error = Diagnostic;
 	fn try_from(value: hir::Item) -> Result<Self, Self::Error> {
 		let hir::Item { kind, span, id } = value;
@@ -191,12 +204,12 @@ impl TryFrom<hir::Item> for hir::TraitItem {
 	}
 }
 
-impl TryFrom<hir::Item> for hir::ExternItem {
+impl TryFrom<hir::Item> for hir::Item<hir::ForeignItemKind> {
 	type Error = Diagnostic;
 	fn try_from(value: hir::Item) -> Result<Self, Self::Error> {
 		let hir::Item { kind, span, id } = value;
 		let kind = if let hir::ItemKind::Function(func) = kind {
-			hir::ExternItemKind::Function(func)
+			hir::ForeignItemKind::Function(func)
 		} else {
 			// FIXME: adapt diagnostic
 			let diag = Diagnostic::new(errors::lowerer::incorrect_item_in_trait(span));
@@ -208,7 +221,7 @@ impl TryFrom<hir::Item> for hir::ExternItem {
 
 impl Lower for ast::Function {
 	type Out = hir::Function;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { name, decl, body } = &self;
 
 		Self::Out {
@@ -221,7 +234,7 @@ impl Lower for ast::Function {
 
 impl Lower for ast::Block {
 	type Out = hir::Block;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { stmts, span } = &self;
 
 		let mut out_stmts = Vec::new();
@@ -247,7 +260,7 @@ impl Lower for ast::Block {
 						kind: hir::StmtKind::Expr {
 							expr: Box::new(expr),
 						},
-						id: l.make_new_node_id(),
+						id: l.make_node_id(),
 					}
 				}
 				None => continue,
@@ -260,7 +273,7 @@ impl Lower for ast::Block {
 			stmts: out_stmts,
 			ret,
 			span: *span,
-			id: l.make_new_node_id(),
+			id: l.make_node_id(),
 		}
 	}
 }
@@ -272,23 +285,17 @@ pub enum StmtOrRet {
 
 impl Lower for ast::Stmt {
 	type Out = Option<StmtOrRet>;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { kind, span } = &self;
 		let kind = match &kind {
 			ast::StmtKind::Let {
-				ident,
+				name: ident,
 				ty,
 				value,
 				mutable,
 			} => hir::StmtKind::Let {
 				name: *ident,
-				ty: Box::new(ty.as_ref().map_or_else(
-					|| ast::Ty {
-						kind: ast::TyKind::ImplicitInfer,
-						span: ident.span.end(),
-					},
-					|ty| ty.as_ref().clone(),
-				)),
+				ty: ty.clone(),
 				// TODO: handle variable with no init value
 				value: value.as_ref().unwrap().lower_box(l),
 				mutable: *mutable,
@@ -305,14 +312,14 @@ impl Lower for ast::Stmt {
 		Some(StmtOrRet::Stmt(hir::Stmt {
 			kind,
 			span: *span,
-			id: l.make_new_node_id(),
+			id: l.make_node_id(),
 		}))
 	}
 }
 
 impl Lower for ast::TypeAlias {
 	type Out = hir::TypeAlias;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { name, alias } = &self;
 		let _ = l;
 		hir::TypeAlias {
@@ -324,7 +331,7 @@ impl Lower for ast::TypeAlias {
 
 impl Lower for ast::FnDecl {
 	type Out = hir::FnDecl;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { params, ret, span } = &self;
 		let _ = l;
 		let output = ret.clone().unwrap_or_else(|| ast::Ty {
@@ -341,7 +348,7 @@ impl Lower for ast::FnDecl {
 
 impl Lower for ast::FieldDef {
 	type Out = hir::FieldDef;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { name, ty, span } = &self;
 		let _ = l;
 		hir::FieldDef {
@@ -353,7 +360,7 @@ impl Lower for ast::FieldDef {
 
 impl Lower for ast::Variant {
 	type Out = hir::EnumVariant;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { name, kind, span } = &self;
 		let fields = match &kind {
 			ast::VariantKind::Bare => vec![],
@@ -378,7 +385,7 @@ impl Lower for ast::Variant {
 
 impl Lower for ast::Expr {
 	type Out = hir::Expr;
-	fn lower(&self, l: &Lowerer) -> Self::Out {
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { kind, span } = &self;
 		let kind = match kind {
 			ast::ExprKind::Access { path } => hir::ExprKind::Access { path: path.clone() },
@@ -448,26 +455,26 @@ impl Lower for ast::Expr {
 		hir::Expr {
 			kind,
 			span: *span,
-			id: l.make_new_node_id(),
+			id: l.make_node_id(),
 		}
 	}
 }
 
 /// Lower an AST `while cond { body }` to an HIR `loop { if cond { body } else { break } }`
-fn lower_while_loop(l: &Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::ExprKind {
+fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::ExprKind {
 	let break_expr = hir::Expr {
 		kind: hir::ExprKind::Break {
 			expr: Box::new(make_unit(l, Span::DUMMY)),
 			label: None,
 		},
 		span: body.span,
-		id: l.make_new_node_id(),
+		id: l.make_node_id(),
 	};
 	let altern_blk = hir::Block {
 		stmts: Vec::new(),
 		ret: Some(Box::new(break_expr)),
 		span: body.span,
-		id: l.make_new_node_id(),
+		id: l.make_node_id(),
 	};
 
 	let if_expr = hir::Expr {
@@ -477,14 +484,14 @@ fn lower_while_loop(l: &Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::Ex
 			altern: Some(Box::new(altern_blk)),
 		},
 		span: body.span,
-		id: l.make_new_node_id(),
+		id: l.make_node_id(),
 	};
 	let loop_blk = hir::Block {
 		stmts: Vec::new(),
 		ret: Some(Box::new(if_expr)),
 
 		span: body.span,
-		id: l.make_new_node_id(),
+		id: l.make_node_id(),
 	};
 
 	hir::ExprKind::Loop {
@@ -492,7 +499,7 @@ fn lower_while_loop(l: &Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir::Ex
 	}
 }
 
-fn lower_unary(l: &Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir::ExprKind {
+fn lower_unary(l: &mut Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir::ExprKind {
 	// TODO: same as lower_binary
 	hir::ExprKind::Unary {
 		op,
@@ -501,7 +508,7 @@ fn lower_unary(l: &Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir:
 }
 
 fn lower_binary(
-	l: &Lowerer,
+	l: &mut Lowerer,
 	op: Spanned<ast::BinaryOp>,
 	left: &ast::Expr,
 	right: &ast::Expr,
@@ -518,7 +525,7 @@ fn lower_binary(
 }
 
 fn lower_short_circuit(
-	l: &Lowerer,
+	l: &mut Lowerer,
 	op: Spanned<ast::ShortCircuitOp>,
 	left: &ast::Expr,
 	right: &ast::Expr,
@@ -531,19 +538,19 @@ fn lower_short_circuit(
 			let expr = hir::Expr {
 				kind,
 				span: right.span,
-				id: l.make_new_node_id(),
+				id: l.make_node_id(),
 			};
 			let right_block = hir::Block {
 				stmts: Vec::new(),
 				ret: Some(Box::new(expr)),
 				span: right.span,
-				id: l.make_new_node_id(),
+				id: l.make_node_id(),
 			};
 			let left_block = hir::Block {
 				stmts: Vec::new(),
 				ret: Some(right.lower_box(l)),
 				span: left.span,
-				id: l.make_new_node_id(),
+				id: l.make_node_id(),
 			};
 			(Box::new(left_block), Box::new(right_block))
 		}
@@ -554,19 +561,19 @@ fn lower_short_circuit(
 			let expr = hir::Expr {
 				kind,
 				span: right.span,
-				id: l.make_new_node_id(),
+				id: l.make_node_id(),
 			};
 			let right_block = hir::Block {
 				stmts: Vec::new(),
 				ret: Some(Box::new(expr)),
 				span: right.span,
-				id: l.make_new_node_id(),
+				id: l.make_node_id(),
 			};
 			let left_block = hir::Block {
 				stmts: Vec::new(),
 				ret: Some(right.lower_box(l)),
 				span: left.span,
-				id: l.make_new_node_id(),
+				id: l.make_node_id(),
 			};
 			(Box::new(right_block), Box::new(left_block))
 		}
@@ -579,10 +586,10 @@ fn lower_short_circuit(
 	}
 }
 
-fn make_unit(l: &Lowerer<'_>, span: Span) -> hir::Expr {
+fn make_unit(l: &mut Lowerer<'_>, span: Span) -> hir::Expr {
 	hir::Expr {
 		kind: hir::ExprKind::Unit,
 		span,
-		id: l.make_new_node_id(),
+		id: l.make_node_id(),
 	}
 }

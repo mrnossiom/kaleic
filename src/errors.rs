@@ -46,8 +46,10 @@ pub mod lowerer {
 }
 
 pub mod ty {
+	use ariadne::Color;
+
 	use super::*;
-	use crate::ty::{Infer, TyKind};
+	use crate::ty::{Infer, InferKind, TyKind};
 
 	pub fn report_unconstrained(ty_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, ty_span)
@@ -105,14 +107,36 @@ pub mod ty {
 		todo!("ty mismatch `{expected:?}` vs. `{actual:?}`");
 	}
 
-	pub fn infer_unification_mismatch(infer: Infer, actual_infer: Infer) -> ReportBuilder {
-		panic!(
-			"infer kind mismatch: expected infer {{{infer:?}}}, received infer {{{actual_infer:?}}}"
-		)
+	pub fn infer_kind_unification_mismatch(
+		infer: InferKind,
+		infer_span: Span,
+		actual_infer: InferKind,
+		actual_infer_span: Span,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, infer_span)
+			.with_message("mismatched types")
+			.with_label(
+				Label::new(actual_infer_span)
+					.with_message(format!("expected {infer}, found {actual_infer}"))
+					.with_color(Color::Red),
+			)
+			.with_label(
+				Label::new(infer_span)
+					.with_message("expected because of this expression")
+					.with_color(Color::Blue),
+			)
 	}
 
-	pub fn infer_ty_unification_mismatch(infer: Infer, ty: &TyKind<Infer>) -> ReportBuilder {
-		panic!("infer kind mismatch: expected infer {{{infer:?}}}, received ty {ty:?}")
+	pub fn infer_ty_unification_mismatch(
+		infer: InferKind,
+		infer_span: Span,
+		ty: &TyKind<Infer>,
+		ty_span: Span,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, infer_span)
+			.with_message("mismatched types")
+			.with_label(Label::new(infer_span).with_message(format!("expected {infer}")))
+			.with_label(Label::new(ty_span).with_message(format!("found {ty}")))
 	}
 
 	pub fn item_name_conflict(

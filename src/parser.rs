@@ -2,7 +2,7 @@
 //!
 //! Contains the recursive decent parser of the language.
 //!
-//! Entrypoint to parsing is [`Parser::parse_root`].
+//! Entrypoint to parsing is [`parse_root`].
 
 use std::{fmt, mem, ops::ControlFlow};
 
@@ -16,8 +16,8 @@ use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
 		Attr, AttrMeta, BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Generics,
-		Ident as Id, Item, ItemKind, Param, Path, Root, ShortCircuitOp, Spanned, Stmt, StmtKind,
-		Ty, TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
+		Ident as Id, Item, ItemKind, NodeId, Param, Path, Root, ShortCircuitOp, Spanned, Stmt,
+		StmtKind, Ty, TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
 	},
 	errors,
 	lexer::{Keyword as Kw, Lexer, Token, TokenKind},
@@ -124,6 +124,12 @@ impl<'scx> Parser<'scx> {
 		parser.bump();
 
 		parser
+	}
+
+	fn make_node_id(&mut self) -> crate::ast::NodeId {
+		let next_node_id = self.next_node_id;
+		self.next_node_id += 1;
+		NodeId(next_node_id)
 	}
 }
 
@@ -556,6 +562,7 @@ impl Parse for Item {
 			kind,
 			attrs,
 			span: p.close_span(lo),
+			id: p.make_node_id(),
 		})
 	}
 }
@@ -612,7 +619,7 @@ impl Parser<'_> {
 		self.expect(OpenBrace)?;
 		let items = self.parse_until_func(CloseBrace, |p| Item::parse(p))?;
 
-		Ok(ItemKind::Extern { items })
+		Ok(ItemKind::ForeignMod { items })
 	}
 
 	/// Parse [`ItemKind::Struct`]
@@ -950,7 +957,7 @@ impl Parser<'_> {
 		};
 
 		Ok(StmtKind::Let {
-			ident: name,
+			name,
 			ty,
 			value,
 			mutable,

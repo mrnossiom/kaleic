@@ -121,7 +121,7 @@ Which syntax to adopt?
 - `< >` collide with comparison operators and need special handling (e.g. Rust's turbofish)
 
 ```kalei
-fn forget[T](v: T) void;
+fn forget[T](v: T);
 fn substring['a](s: &'a str) &'a str;
 fn substring(s: &str) &str;
 

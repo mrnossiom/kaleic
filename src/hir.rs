@@ -1,4 +1,4 @@
-//! Higher IR
+//! **H**igher **IR**
 
 use std::fmt;
 
@@ -30,13 +30,13 @@ pub struct Root {
 }
 
 #[derive(Debug, Clone)]
-pub struct Item {
-	pub kind: ItemKind,
+pub struct Item<Kind = ItemKind> {
+	pub kind: Kind,
 	pub span: Span,
 	pub id: NodeId,
 }
 
-impl Item {
+impl<T> Item<T> {
 	pub fn item_id(&self) -> ItemId {
 		ItemId(self.id)
 	}
@@ -58,7 +58,8 @@ pub struct Enum {
 
 #[derive(Debug, Clone)]
 pub enum ItemKind {
-	// type env
+	Function(Function),
+
 	Struct(Struct),
 	Enum(Enum),
 	TypeAlias(TypeAlias),
@@ -66,18 +67,16 @@ pub enum ItemKind {
 	Trait {
 		name: ast::Ident,
 		generics: ast::Generics,
-		members: Vec<TraitItem>,
+		members: Vec<Item<TraitItemKind>>,
 	},
 	TraitImpl {
 		type_: ast::Path,
 		trait_: ast::Path,
-		members: Vec<TraitItem>,
+		members: Vec<Item<TraitItemKind>>,
 	},
 
-	// value env
-	Function(Function),
-	Extern {
-		items: Vec<ExternItem>,
+	ForeignMod {
+		items: Vec<Item<ForeignItemKind>>,
 	},
 }
 
@@ -102,73 +101,14 @@ pub struct EnumVariant {
 }
 
 #[derive(Debug, Clone)]
-pub struct TraitItem {
-	pub kind: TraitItemKind,
-	pub span: Span,
-	pub id: NodeId,
-}
-
-#[derive(Debug, Clone)]
 pub enum TraitItemKind {
 	TypeAlias(TypeAlias),
 	Function(Function),
 }
 
-impl From<TraitItem> for Item {
-	fn from(val: TraitItem) -> Self {
-		let TraitItem { kind, span, id } = val;
-		Self {
-			kind: kind.into(),
-			span,
-			id,
-		}
-	}
-}
-
-impl From<TraitItemKind> for ItemKind {
-	fn from(val: TraitItemKind) -> Self {
-		match val {
-			TraitItemKind::Function(func) => Self::Function(func),
-			TraitItemKind::TypeAlias(ty) => Self::TypeAlias(ty),
-		}
-	}
-}
-
 #[derive(Debug, Clone)]
-pub struct ExternItem {
-	pub kind: ExternItemKind,
-	pub span: Span,
-	pub id: NodeId,
-}
-
-impl ExternItem {
-	pub fn item_id(&self) -> ItemId {
-		ItemId(self.id)
-	}
-}
-
-#[derive(Debug, Clone)]
-pub enum ExternItemKind {
+pub enum ForeignItemKind {
 	Function(Function),
-}
-
-impl From<ExternItem> for Item {
-	fn from(val: ExternItem) -> Self {
-		let ExternItem { kind, span, id } = val;
-		Self {
-			kind: kind.into(),
-			span,
-			id,
-		}
-	}
-}
-
-impl From<ExternItemKind> for ItemKind {
-	fn from(val: ExternItemKind) -> Self {
-		match val {
-			ExternItemKind::Function(func) => Self::Function(func),
-		}
-	}
 }
 
 #[derive(Debug, Clone)]
@@ -208,8 +148,7 @@ pub enum StmtKind {
 
 	Let {
 		name: ast::Ident,
-		// Hinted ty
-		ty: Box<ast::Ty>,
+		ty: Option<Box<ast::Ty>>,
 		value: Box<Expr>,
 		mutable: bool,
 	},
@@ -306,4 +245,24 @@ pub enum Abi {
 	#[default]
 	Kalei,
 	C,
+}
+
+pub trait Visitor {
+	fn visit_root(&mut self, root: &Root);
+
+	// fn visit_attrs(&mut self, attrs: &[()]) {
+	// 	for attr in attrs {
+	// 		self.visit_attr(attr);
+	// 	}
+	// }
+
+	// fn visit_attr(&mut self, attrs: &());
+
+	fn visit_items(&mut self, items: &[Item]) {
+		for item in items {
+			self.visit_item(item);
+		}
+	}
+
+	fn visit_item<T>(&mut self, item: &Item<T>);
 }

@@ -1,30 +1,25 @@
-use std::sync::atomic::Ordering;
-
 use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, UnaryOp},
 	errors,
-	hir::{self, ExprId, ExprKind, ItemId},
+	hir::{self, ExprId, ExprKind, Function, ItemId},
 	resolve::NameEnvironment,
-	session::Symbol,
-	ty::{self, Infer, Param, PrimitiveKind, TyCtx, TyKind},
+	session::{Span, Symbol},
+	ty::{self, Infer, InferKind, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
+/// Type Variable Id
+///
+/// local to a function body
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InferTag(u32);
-
-impl TyCtx<'_> {
-	pub fn next_infer_tag(&self) -> InferTag {
-		InferTag(self.infer_tag_count.fetch_add(1, Ordering::Relaxed))
-	}
-}
+pub struct TypeVarId(u32);
 
 #[derive(Debug)]
 pub struct Inferer<'tcx> {
 	pub tcx: &'tcx TyCtx<'tcx>,
 	pub name_env: &'tcx NameEnvironment,
-	pub ty_env: &'tcx FxHashMap<ItemId, TyKind>,
+	pub type_env: &'tcx FxHashMap<ItemId, TyKind>,
 
 	pub decl: &'tcx ty::FnDecl,
 	pub body: &'tcx hir::Block,
@@ -32,7 +27,10 @@ pub struct Inferer<'tcx> {
 	pub local_env: FxHashMap<Symbol, Vec<TyKind<Infer>>>,
 	pub return_ty: TyKind<Infer>,
 	pub expr_type: FxHashMap<ExprId, TyKind<Infer>>,
-	pub infer_map: FxHashMap<InferTag, TyKind<Infer>>,
+	pub infer_map: FxHashMap<TypeVarId, TyKind<Infer>>,
+
+	next_ty_var_id: u32,
+	ty_var_expr_map: FxHashMap<TypeVarId, Span>,
 
 	// TODO: support labels
 	pub loops: Vec<TyKind<Infer>>,
@@ -45,12 +43,12 @@ impl<'tcx> Inferer<'tcx> {
 		decl: &'tcx ty::FnDecl,
 		body: &'tcx hir::Block,
 		name_env: &'tcx NameEnvironment,
-		ty_env: &'tcx FxHashMap<ItemId, TyKind>,
+		type_env: &'tcx FxHashMap<ItemId, TyKind>,
 	) -> Self {
 		Self {
 			tcx,
 			name_env,
-			ty_env,
+			type_env,
 
 			decl,
 			body,
@@ -60,9 +58,112 @@ impl<'tcx> Inferer<'tcx> {
 			expr_type: FxHashMap::default(),
 			infer_map: FxHashMap::default(),
 
+			next_ty_var_id: 0,
+			ty_var_expr_map: FxHashMap::default(),
+
 			loops: Vec::new(),
 		}
 	}
+
+	fn make_ty_var_id(&mut self, span: Span) -> TypeVarId {
+		let id = TypeVarId(self.next_ty_var_id);
+		self.ty_var_expr_map.insert(id, span);
+		self.next_ty_var_id = self.next_ty_var_id.strict_add(1);
+		id
+	}
+}
+
+pub fn infer_root(tcx: &TyCtx, root: &hir::Root) {
+	let hir::Root { items } = root;
+	for item in items {
+		match &item.kind {
+			hir::ItemKind::Function(Function { name, decl, body }) => {
+				let Some(body) = body.as_ref() else { todo!() };
+
+				let type_env = tcx.type_env.borrow();
+				let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap() else {
+					todo!()
+				};
+
+				let function_expr_tys = typeck_fn(tcx, *name, decl, body);
+				tcx.typeck_results
+					.put_key(item.item_id(), function_expr_tys);
+			}
+			hir::ItemKind::ForeignMod { items } => {
+				// TODO: do nothing?
+			}
+
+			hir::ItemKind::Trait {
+				name,
+				generics,
+				members,
+			} => todo!(),
+			hir::ItemKind::TraitImpl {
+				type_,
+				trait_,
+				members,
+			} => todo!(),
+
+			hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::TypeAlias(_) => {
+				todo!()
+			}
+		}
+	}
+}
+
+#[must_use]
+fn typeck_fn(
+	tcx: &TyCtx,
+	name: ast::Ident,
+	decl: &ty::FnDecl,
+	body: &hir::Block,
+) -> FxHashMap<ExprId, TyKind> {
+	let name_env = tcx.name_env.borrow();
+	let type_env = tcx.type_env.borrow();
+
+	let mut inferer = Inferer::new(tcx, decl, body, &name_env, &type_env);
+	inferer.infer_fn();
+
+	let mut expr_tys = FxHashMap::default();
+
+	for (node_id, ty_infer) in inferer.expr_type {
+		match ty_infer.as_no_infer() {
+			Ok(ty) => {
+				expr_tys.insert(node_id, ty);
+			}
+			Err(Infer {
+				tvid: mut tag,
+				kind,
+			}) => loop {
+				let Some(ty) = inferer.infer_map.get(&tag) else {
+					// set default types for expression that can be inferred via literals
+					match kind {
+						InferKind::Integer => {
+							expr_tys.insert(node_id, TyKind::Primitive(PrimitiveKind::SignedInt));
+						}
+						InferKind::Float => {
+							expr_tys.insert(node_id, TyKind::Primitive(PrimitiveKind::Float));
+						}
+						InferKind::Generic | InferKind::Explicit => {
+							let span = todo!("get from expr_id");
+							let report = errors::ty::report_unconstrained(span);
+							tcx.scx.dcx().emit_build(report);
+						}
+					}
+					break;
+				};
+				match ty.clone().as_no_infer() {
+					Ok(ty) => {
+						expr_tys.insert(node_id, ty);
+						break;
+					}
+					Err(Infer { tvid: next_tag, .. }) => tag = next_tag,
+				}
+			},
+		}
+	}
+
+	expr_tys
 }
 
 impl Inferer<'_> {
@@ -77,7 +178,8 @@ impl Inferer<'_> {
 			ty.clone()
 		} else if let Some(id) = self.name_env.values.get(&var.sym) {
 			// search values in the whole project
-			self.ty_env.get(id).unwrap().clone().as_infer()
+			let hir_id = todo!("resolve {id:?} for value {var:?}");
+			self.type_env.get(hir_id).unwrap().clone().as_infer()
 		} else {
 			let report = errors::ty::variable_not_in_scope(var.span);
 			self.tcx.scx.dcx().emit_build(report);
@@ -129,7 +231,14 @@ impl Inferer<'_> {
 				ty,
 				mutable,
 			} => {
-				let explicit_ty = self.tcx.lower_ty(ty);
+				let explicit_ty = if let Some(ty) = ty {
+					self.tcx.lower_ty(ty).as_infer()
+				} else {
+					TyKind::Infer(Infer {
+						tvid: self.make_ty_var_id(name.span),
+						kind: InferKind::Generic,
+					})
+				};
 				let expr_ty = self.infer_expr(value);
 				self.unify(&explicit_ty, &expr_ty);
 
@@ -138,16 +247,18 @@ impl Inferer<'_> {
 		}
 	}
 
-	fn infer_expr(&mut self, expr: &hir::Expr) -> TyKind<Infer> {
-		let ty = match &expr.kind {
+	fn infer_expr(&mut self, expr @ hir::Expr { kind, span, id: _ }: &hir::Expr) -> TyKind<Infer> {
+		let ty = match kind {
 			hir::ExprKind::Access { path } => self.resolve_var_ty(path),
 			hir::ExprKind::LiteralStr { sym } => TyKind::Primitive(PrimitiveKind::Str),
-			hir::ExprKind::LiteralInt { sym } => {
-				TyKind::Infer(self.tcx.next_infer_tag(), Infer::Integer)
-			}
-			hir::ExprKind::LiteralFloat { sym } => {
-				TyKind::Infer(self.tcx.next_infer_tag(), Infer::Float)
-			}
+			hir::ExprKind::LiteralInt { sym } => TyKind::Infer(Infer {
+				tvid: self.make_ty_var_id(*span),
+				kind: InferKind::Integer,
+			}),
+			hir::ExprKind::LiteralFloat { sym } => TyKind::Infer(Infer {
+				tvid: self.make_ty_var_id(*span),
+				kind: InferKind::Float,
+			}),
 
 			hir::ExprKind::Unary { op, expr } => {
 				let expr_ty = self.infer_expr(expr);
@@ -230,8 +341,11 @@ impl Inferer<'_> {
 				self.unify(&conseq_ty, &altern_ty)
 			}
 			hir::ExprKind::Loop { block } => {
-				self.loops
-					.push(TyKind::Infer(self.tcx.next_infer_tag(), Infer::Generic));
+				let tag = self.make_ty_var_id(block.ret.as_ref().map_or(Span::DUMMY, |e| e.span));
+				self.loops.push(TyKind::Infer(Infer {
+					tvid: tag,
+					kind: InferKind::Generic,
+				}));
 
 				let block_ty = self.infer_block(block);
 				// enforce no ret loop
@@ -279,8 +393,9 @@ impl Inferer<'_> {
 			}
 		};
 
+		let old = self.expr_type.insert(expr.expr_id(), ty.clone());
 		// TODO
-		assert!(self.expr_type.insert(expr.expr_id(), ty.clone()).is_none());
+		assert!(old.is_none());
 
 		ty
 	}
@@ -292,17 +407,15 @@ impl Inferer<'_> {
 	fn unify(&mut self, expected: &TyKind<Infer>, actual: &TyKind<Infer>) -> TyKind<Infer> {
 		match (expected, actual) {
 			(TyKind::Ref(expected_ref), ty) => {
-				let expected = self.ty_env[expected_ref].clone().as_infer();
+				let expected = self.type_env[expected_ref].clone().as_infer();
 				self.unify(&expected, ty)
 			}
 			(ty, TyKind::Ref(actual_ref)) => {
-				let actual = self.ty_env[actual_ref].clone().as_infer();
+				let actual = self.type_env[actual_ref].clone().as_infer();
 				self.unify(ty, &actual)
 			}
 
-			(TyKind::Infer(tag, infer), ty) | (ty, TyKind::Infer(tag, infer)) => {
-				self.unify_infer(*tag, *infer, ty)
-			}
+			(TyKind::Infer(infer), ty) | (ty, TyKind::Infer(infer)) => self.unify_infer(*infer, ty),
 			// infer and never have different meaning but both coerces to anything
 			// TODO: enforce that functions that return never cannot return anything else
 			// this in incorrect
@@ -321,32 +434,42 @@ impl Inferer<'_> {
 		}
 	}
 
-	fn unify_infer(&mut self, tag: InferTag, infer: Infer, other: &TyKind<Infer>) -> TyKind<Infer> {
-		let unified = match (infer, other) {
+	fn unify_infer(&mut self, infer: Infer, other: &TyKind<Infer>) -> TyKind<Infer> {
+		let unified = match (infer.kind, other) {
 			(
-				Infer::Integer,
+				InferKind::Integer,
 				ty @ TyKind::Primitive(PrimitiveKind::UnsignedInt | PrimitiveKind::SignedInt),
 			) => ty.clone(),
-			(Infer::Float, ty @ TyKind::Primitive(PrimitiveKind::Float)) => ty.clone(),
-			(Infer::Generic | Infer::Explicit, ty) => ty.clone(),
+			(InferKind::Float, ty @ TyKind::Primitive(PrimitiveKind::Float)) => ty.clone(),
+			(InferKind::Generic | InferKind::Explicit, ty) => ty.clone(),
 
-			(_, TyKind::Infer(tag, actual_infer)) => {
-				if infer == *actual_infer {
-					TyKind::Infer(*tag, *actual_infer)
+			(_, TyKind::Infer(actual_infer)) => {
+				if infer.kind == actual_infer.kind {
+					TyKind::Infer(*actual_infer)
 				} else {
-					let report = errors::ty::infer_unification_mismatch(infer, *actual_infer);
+					let report = errors::ty::infer_kind_unification_mismatch(
+						infer.kind,
+						self.ty_var_expr_map[&infer.tvid],
+						actual_infer.kind,
+						self.ty_var_expr_map[&actual_infer.tvid],
+					);
 					self.tcx.scx.dcx().emit_build(report);
 					TyKind::Error
 				}
 			}
 			(_, ty) => {
-				let report = errors::ty::infer_ty_unification_mismatch(infer, ty);
+				let report = errors::ty::infer_ty_unification_mismatch(
+					infer.kind,
+					self.ty_var_expr_map[&infer.tvid],
+					ty,
+					todo!(),
+				);
 				self.tcx.scx.dcx().emit_build(report);
 				TyKind::Error
 			}
 		};
 
-		self.infer_map.insert(tag, unified.clone());
+		self.infer_map.insert(infer.tvid, unified.clone());
 
 		unified
 	}

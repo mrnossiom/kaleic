@@ -33,3 +33,5 @@
   - [Type Checking](./compiler/pipeline/type-checking.md)
 
   - [Code Generation](./compiler/pipeline/code-generation.md)
+
+- [Future](./compiler/future.md)

@@ -1,22 +1,22 @@
 //! # Kaleidoscope
 
-pub mod codegen;
 pub mod driver;
 pub mod errors;
-pub mod inference;
-pub mod lexer;
-pub mod lowerer;
-pub mod parser;
 pub mod pretty_print;
+
+pub mod ast;
+pub mod lexer;
+pub mod parser;
+
+pub mod hir;
+pub mod inference;
+pub mod lowerer;
+
 pub mod resolve;
 pub mod session;
 pub mod ty;
-pub mod typeck;
 
-// IRs
-pub mod ast;
-pub mod hir;
-
+pub mod codegen;
 // TODO: remove ffi module
 pub mod ffi;
 

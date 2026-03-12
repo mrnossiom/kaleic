@@ -1,27 +1,91 @@
-use std::{cell::RefCell, fmt, sync::atomic::AtomicU32};
+use std::{
+	cell::{Ref, RefCell},
+	fmt,
+};
 
 use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, Ident},
-	bug, errors,
-	hir::{self, ExprId, Function, ItemId},
-	inference::{InferTag, Inferer},
-	resolve::{self, NameEnvironment},
+	bug,
+	hir::{self, ExprId, ItemId},
+	inference::{self, TypeVarId},
+	resolve::NameEnvironment,
 	session::{SessionCtx, Span},
 };
+
+#[derive(Default, Debug)]
+pub struct Put<T> {
+	inner: RefCell<Option<T>>,
+}
+
+impl<T> Put<T> {
+	#[track_caller]
+	pub fn put(&self, value: T) {
+		let mut inner = self.inner.borrow_mut();
+		let before = inner.replace(value);
+
+		if let Some(before) = before {
+			panic!("you can only put a value once inside a `Put<T>`")
+		}
+	}
+
+	#[track_caller]
+	pub fn borrow(&self) -> Ref<'_, T> {
+		Ref::map(self.inner.borrow(), |op| {
+			if let Some(op) = op.as_ref() {
+				op
+			} else {
+				panic!("`Put<T>` has not yet been computed")
+			}
+		})
+	}
+}
+
+#[derive(Debug)]
+pub struct PutMap<K, V> {
+	inner: RefCell<FxHashMap<K, V>>,
+}
+
+impl<K, V> Default for PutMap<K, V> {
+	fn default() -> Self {
+		Self {
+			inner: RefCell::default(),
+		}
+	}
+}
+
+impl<K: Eq + std::hash::Hash, V> PutMap<K, V> {
+	pub fn put_key(&self, key: K, value: V) {
+		let mut inner = self.inner.borrow_mut();
+		let before = inner.insert(key, value);
+
+		if let Some(before) = before {
+			panic!("you can only put a value once inside a `PutMap<T>` for some key")
+		}
+	}
+
+	pub fn borrow_key(&self, key: &K) -> Ref<'_, V> {
+		Ref::map(self.inner.borrow(), |op| {
+			if let Some(op) = op.get(key) {
+				op
+			} else {
+				panic!("`PutMap<T>` for this key has not yet been computed")
+			}
+		})
+	}
+}
 
 #[derive(Debug)]
 pub struct TyCtx<'scx> {
 	pub scx: &'scx SessionCtx,
 
-	// TODO: this is going to disappear
-	pub(crate) infer_tag_count: AtomicU32,
+	pub arena: (),
 
-	// TODO: get rid of refcells
-	pub name_env: RefCell<NameEnvironment>,
-	pub ty_env: RefCell<FxHashMap<ItemId, TyKind>>,
-	pub typeck_results: RefCell<FxHashMap<ExprId, TyKind>>,
+	pub name_env: Put<NameEnvironment>,
+	pub type_env: Put<FxHashMap<ItemId, TyKind>>,
+	// per function
+	pub typeck_results: PutMap<ItemId, FxHashMap<ExprId, TyKind>>,
 }
 
 impl<'scx> TyCtx<'scx> {
@@ -29,158 +93,51 @@ impl<'scx> TyCtx<'scx> {
 	pub fn new(scx: &'scx SessionCtx) -> Self {
 		Self {
 			scx,
-			infer_tag_count: AtomicU32::default(),
 
-			name_env: RefCell::default(),
-			ty_env: RefCell::default(),
-			typeck_results: RefCell::default(),
+			arena: (),
+
+			name_env: Put::default(),
+			type_env: Put::default(),
+			typeck_results: PutMap::default(),
 		}
 	}
 }
 
 /// Context actions
 impl TyCtx<'_> {
-	/// Goes through the HIR and maps all items
-	pub fn collect_items(&self, hir: &hir::Root) {
-		let mut cltr = resolve::Collector::new(self);
-		cltr.collect_root(hir);
-		self.name_env.replace(cltr.name_env);
-	}
-
 	/// Uses the collection step to map every item to a concrete type
 	pub(crate) fn compute_items_type(&self, hir: &hir::Root) {
-		let mut ty_computer = resolve::TypeComputer::new(self);
+		let mut ty_computer = TypeComputer::new(self);
 
 		let name_env = self.name_env.borrow();
 		ty_computer.compute_root(hir);
 
-		self.ty_env.replace(ty_computer.types);
+		self.type_env.put(ty_computer.types);
 	}
 
-	/// Computes inference for every function body and stores the result
+	/// Compute inference for every function body and stores the result
 	pub(crate) fn typeck(&self, hir: &hir::Root) {
-		// let mut ty_checker = typeck::TypeCheck::new(self);
-		// ty_checker.typeck(hir);
-		todo!();
-		// self.typeck_info.replace(Some(ty_checker.info));
+		inference::infer_root(self, hir);
 	}
 
-	/// TODO: remove old inference
-	pub(crate) fn typeck_old(&self, hir: &hir::Root) {
-		let mut expr_tys = FxHashMap::default();
-
-		for item in &hir.items {
-			self.typeck_item_old(item, &mut expr_tys);
-		}
-
-		*self.typeck_results.borrow_mut() = expr_tys;
-	}
-
-	fn typeck_item_old(&self, item: &hir::Item, expr_tys: &mut FxHashMap<ExprId, TyKind>) {
-		match &item.kind {
-			hir::ItemKind::Function(Function { name, decl, body }) => {
-				let Some(body) = body.as_ref() else { return };
-
-				let ty_env = self.ty_env.borrow();
-				let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
-					todo!()
-				};
-
-				let function_expr_tys = self.typeck_fn_old(*name, decl, body);
-				expr_tys.extend(function_expr_tys);
-			}
-			hir::ItemKind::Extern { items } => {
-				for item in items {
-					self.typeck_item_old(&item.clone().into(), expr_tys);
-				}
-			}
-			hir::ItemKind::Trait {
-				name,
-				generics,
-				members,
-			} => todo!(),
-			hir::ItemKind::TraitImpl {
-				type_,
-				trait_,
-				members,
-			} => todo!(),
-
-			hir::ItemKind::Struct(_) | hir::ItemKind::Enum(_) | hir::ItemKind::TypeAlias(_) => {
-				todo!()
-			}
-		}
-	}
-
-	#[must_use]
-	fn typeck_fn_old(
-		&self,
-		name: Ident,
-		decl: &FnDecl,
-		body: &hir::Block,
-	) -> FxHashMap<ExprId, TyKind> {
-		let ty_env = self.ty_env.borrow();
-		let name_env = self.name_env.borrow();
-
-		let mut inferer = Inferer::new(self, decl, body, &name_env, &ty_env);
-		inferer.infer_fn();
-
-		let mut expr_tys = FxHashMap::default();
-
-		for (node_id, ty_infer) in inferer.expr_type {
-			match ty_infer.as_no_infer() {
-				Ok(ty) => {
-					expr_tys.insert(node_id, ty);
-				}
-				Err((mut tag, infer)) => loop {
-					let Some(ty) = inferer.infer_map.get(&tag) else {
-						// set default types for expression that can be inferred via literals
-						match infer {
-							Infer::Integer => {
-								expr_tys
-									.insert(node_id, TyKind::Primitive(PrimitiveKind::SignedInt));
-							}
-							Infer::Float => {
-								expr_tys.insert(node_id, TyKind::Primitive(PrimitiveKind::Float));
-							}
-							Infer::Generic | Infer::Explicit => {
-								let span = todo!("get from expr_id");
-								let report = errors::ty::report_unconstrained(span);
-								self.scx.dcx().emit_build(report);
-							}
-						}
-						break;
-					};
-					match ty.clone().as_no_infer() {
-						Ok(ty) => {
-							expr_tys.insert(node_id, ty);
-							break;
-						}
-						Err((next_tag, _)) => tag = next_tag,
-					}
-				},
-			}
-		}
-
-		expr_tys
-	}
-
-	pub fn lower_ty(&self, ty: &ast::Ty) -> TyKind<Infer> {
+	pub fn lower_ty(&self, ty: &ast::Ty) -> TyKind {
 		match &ty.kind {
 			ast::TyKind::Path(path) => self.lower_path_ty(path),
 			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
 			ast::TyKind::Reference(ty) => todo!(),
 			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
-			ast::TyKind::ImplicitInfer => TyKind::Infer(self.next_infer_tag(), Infer::Generic),
 		}
 	}
 
-	pub fn lower_path_ty(&self, path: &ast::Path) -> TyKind<Infer> {
+	pub fn lower_path_ty(&self, path: &ast::Path) -> TyKind {
 		let path = path.simple();
 
 		let primitive = match self.scx.symbols.resolve(path.sym).as_str() {
-			"_" => Some(TyKind::Infer(self.next_infer_tag(), Infer::Explicit)),
+			// let report = errors::ty::function_cannot_infer_signature(decl.ret.span);
+			// self.tcx.scx.dcx().emit_build(report);
+			// TyKind::Error
+			"_" => todo!(),
 
-			"void" => Some(TyKind::Primitive(PrimitiveKind::Unit)),
 			"never" => Some(TyKind::Primitive(PrimitiveKind::Never)),
 
 			"bool" => Some(TyKind::Primitive(PrimitiveKind::Bool)),
@@ -199,7 +156,8 @@ impl TyCtx<'_> {
 			if let Some(item_id) = item_map.types.get(&path.sym) {
 				// TODO: we could access the real type directly if we sorted
 				// in some kind of topological order
-				TyKind::Ref(*item_id)
+				let node_id = todo!();
+				TyKind::Ref(node_id)
 			} else {
 				eprintln!("item {:?} doesn't exist", path.sym);
 				TyKind::Error
@@ -261,7 +219,7 @@ pub enum TyKind<InferKind = NoInfer> {
 	/// Refers to the type of another item
 	Ref(ItemId),
 
-	Infer(InferTag, InferKind),
+	Infer(InferKind),
 	Error,
 }
 
@@ -275,7 +233,7 @@ impl<T: fmt::Display> fmt::Display for TyKind<T> {
 			Self::Fn(_) => write!(f, "a function"),
 			Self::Struct(_struct) => write!(f, "a struct"),
 			Self::Enum(_enum) => write!(f, "an enum"),
-			Self::Infer(_, infer) => infer.fmt(f),
+			Self::Infer(infer) => infer.fmt(f),
 			// TODO
 			Self::Ref(_) => bug!("ref ty kind should be resolved before it's shown to end-user"),
 			// TODO
@@ -318,7 +276,13 @@ impl fmt::Display for PrimitiveKind {
 pub enum NoInfer {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Infer {
+pub struct Infer {
+	pub tvid: TypeVarId,
+	pub kind: InferKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InferKind {
 	Integer,
 	Float,
 
@@ -327,6 +291,12 @@ pub enum Infer {
 }
 
 impl fmt::Display for Infer {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		self.kind.fmt(f)
+	}
+}
+
+impl fmt::Display for InferKind {
 	// Should fit in the sentence "found {}"
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
@@ -354,7 +324,7 @@ impl TyKind<NoInfer> {
 }
 
 impl TyKind<Infer> {
-	pub fn as_no_infer(self) -> Result<TyKind<NoInfer>, (InferTag, Infer)> {
+	pub fn as_no_infer(self) -> Result<TyKind<NoInfer>, Infer> {
 		match self {
 			Self::Primitive(kind) => Ok(TyKind::Primitive(kind)),
 			Self::Pointer(kind) => Ok(TyKind::Pointer(Box::new(kind.as_no_infer()?))),
@@ -362,9 +332,138 @@ impl TyKind<Infer> {
 			// Self::Adt(()) => Ok(TyKind::Adt(())),
 			Self::Struct(struct_) => Ok(TyKind::Struct(struct_)),
 			Self::Enum(enum_) => Ok(TyKind::Enum(enum_)),
-			Self::Infer(tag, infer) => Err((tag, infer)),
+			Self::Infer(infer) => Err(infer),
 			Self::Ref(id) => Ok(TyKind::Ref(id)),
 			Self::Error => Ok(TyKind::Error),
+		}
+	}
+}
+
+pub struct TypeComputer<'tcx> {
+	tcx: &'tcx TyCtx<'tcx>,
+
+	pub(crate) types: FxHashMap<ItemId, TyKind>,
+	// trait item id -> implementors
+	pub(crate) trait_impls: FxHashMap<ItemId, Vec<()>>,
+}
+
+impl<'tcx> TypeComputer<'tcx> {
+	#[must_use]
+	pub fn new(tcx: &'tcx TyCtx) -> Self {
+		Self {
+			tcx,
+			types: FxHashMap::default(),
+			trait_impls: FxHashMap::default(),
+		}
+	}
+}
+
+impl TypeComputer<'_> {
+	pub fn compute_root(&mut self, root: &hir::Root) {
+		let hir::Root { items } = &root;
+		for item in items {
+			self.compute_item(item);
+		}
+	}
+
+	fn compute_item(&mut self, item: &hir::Item) {
+		let ty = match &item.kind {
+			hir::ItemKind::Struct(hir::Struct {
+				name,
+				generics,
+				fields,
+			}) => {
+				let struct_ = Struct {
+					generics: generics.clone(),
+					fields: fields
+						.iter()
+						.map(|field| self.lower_field_def(field))
+						.collect(),
+				};
+				TyKind::Struct(Box::new(struct_))
+			}
+			hir::ItemKind::Enum(hir::Enum {
+				name,
+				generics,
+				variants,
+			}) => {
+				let enum_ = Enum {
+					generics: generics.clone(),
+					variants: variants
+						.iter()
+						.map(|variant| self.lower_variant(variant))
+						.collect(),
+				};
+				TyKind::Enum(Box::new(enum_))
+			}
+
+			hir::ItemKind::Trait {
+				name,
+				generics,
+				members,
+			} => todo!(),
+
+			hir::ItemKind::TraitImpl { type_, .. } => {
+				// TODO
+				// self.environment.types.insert(type_.sym, v);
+				todo!()
+			}
+
+			hir::ItemKind::TypeAlias(hir::TypeAlias { name, alias }) => match &alias {
+				Some(ty) => self.tcx.lower_ty(ty),
+				None => todo!(
+					"error about how standalone empty type aliases are not allowed, only used in traits"
+				),
+			},
+
+			hir::ItemKind::Function(hir::Function { name, decl, body }) => {
+				TyKind::Fn(Box::new(self.lower_fn_decl(decl)))
+			}
+			hir::ItemKind::ForeignMod { items } => {
+				for item in items {
+					match &item.kind {
+						hir::ForeignItemKind::Function(hir::Function { name, decl, body }) => {
+							let ty = TyKind::Fn(Box::new(self.lower_fn_decl(decl)));
+							let old = self.types.insert(item.item_id(), ty);
+							debug_assert!(old.is_none());
+						}
+					}
+				}
+				return;
+			}
+		};
+		let old = self.types.insert(item.item_id(), ty);
+		debug_assert!(old.is_none());
+	}
+
+	// TODO: not pub
+	pub fn lower_fn_decl(&mut self, decl: &hir::FnDecl) -> FnDecl {
+		// TODO: diag no infer ty in functions
+		let inputs = decl
+			.params
+			.iter()
+			.map(|ast::Param { name, ty }| {
+				let ty = self.tcx.lower_ty(ty);
+				Param { name: *name, ty }
+			})
+			.collect();
+
+		let output = self.tcx.lower_ty(&decl.ret);
+
+		FnDecl { inputs, output }
+	}
+
+	fn lower_field_def(&self, hir::FieldDef { name, ty }: &hir::FieldDef) -> FieldDef {
+		FieldDef {
+			name: *name,
+			ty: self.tcx.lower_ty(ty),
+		}
+	}
+
+	fn lower_variant(&self, hir::EnumVariant { name, fields, span }: &hir::EnumVariant) -> Variant {
+		Variant {
+			name: *name,
+			span: *span,
 		}
 	}
 }

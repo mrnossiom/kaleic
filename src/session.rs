@@ -287,12 +287,13 @@ pub enum OutputKind {
 #[derive(Debug)]
 pub struct Options {
 	pub inputs: Vec<PathBuf>,
+	pub output: PathBuf,
 
-	pub jit: bool,
 	pub backend: Backend,
+	pub jit: bool,
+	pub opt: bool,
 	pub linker: Linker,
 
-	pub output: PathBuf,
 	pub debug_output: PathBuf,
 	pub print: HashSet<PrintKind>,
 }
@@ -302,6 +303,7 @@ impl Default for Options {
 		Self {
 			inputs: Vec::default(),
 			jit: true,
+			opt: false,
 			backend: Backend::default(),
 			linker: Linker::default(),
 

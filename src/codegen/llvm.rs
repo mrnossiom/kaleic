@@ -65,9 +65,14 @@ impl<'tcx> Generator<'tcx, '_> {
 impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 	pub fn new(tcx: &'tcx TyCtx, ctx: &'ctx Context) -> Self {
 		let module = ctx.create_module("repl");
-		let jit = module
-			.create_jit_execution_engine(OptimizationLevel::None)
-			.unwrap();
+
+		// TODO: mode to `new_jit` function
+		let opt_level = if tcx.scx.options.opt {
+			OptimizationLevel::Default
+		} else {
+			OptimizationLevel::None
+		};
+		let jit = module.create_jit_execution_engine(opt_level).unwrap();
 
 		let empty_ty = ctx.struct_type(&[], false).as_basic_type_enum();
 
@@ -99,7 +104,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_llvm_type(&self.tcx.ty_env.borrow()[&ref_]),
+			ty::TyKind::Ref(ref_) => self.to_llvm_type(&self.tcx.type_env.borrow()[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
@@ -109,16 +114,17 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 	fn define_func(
 		&self,
 		func_val: FunctionValue<'ctx>,
+		item_id: ItemId,
 		decl: &ty::FnDecl,
 		body: &hir::Block,
 	) -> Result<()> {
-		let ty_env = &self.tcx.ty_env.borrow();
-		let typeck_results = &self.tcx.typeck_results.borrow();
+		let type_env = &self.tcx.type_env.borrow();
+		let typeck_results = &self.tcx.typeck_results.borrow_key(&item_id);
 
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
 
-			ty_env,
+			type_env,
 			typeck_results,
 
 			ctx: self.ctx,
@@ -159,20 +165,21 @@ impl CodeGenBackend for Generator<'_, '_> {
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let ty_env = self.tcx.ty_env.borrow();
-					let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
+					let type_env = self.tcx.type_env.borrow();
+					let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap() else {
 						todo!()
 					};
 
 					let func_id = self.declare_func(name.sym, decl).unwrap();
 					function_ids.insert(item.id, func_id);
 				}
-				hir::ItemKind::Extern { items } => {
+				hir::ItemKind::ForeignMod { items } => {
 					for item in items {
 						match &item.kind {
-							hir::ExternItemKind::Function(Function { name, decl, body }) => {
-								let ty_env = self.tcx.ty_env.borrow();
-								let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
+							hir::ForeignItemKind::Function(Function { name, decl, body }) => {
+								let type_env = self.tcx.type_env.borrow();
+								let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap()
+								else {
 									todo!()
 								};
 
@@ -192,8 +199,8 @@ impl CodeGenBackend for Generator<'_, '_> {
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let ty_env = self.tcx.ty_env.borrow();
-					let TyKind::Fn(decl) = ty_env.get(&item.item_id()).unwrap() else {
+					let type_env = self.tcx.type_env.borrow();
+					let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap() else {
 						todo!()
 					};
 
@@ -203,14 +210,15 @@ impl CodeGenBackend for Generator<'_, '_> {
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, decl, body).unwrap();
+					self.define_func(*func_id, item.item_id(), decl, body)
+						.unwrap();
 				}
 
 				hir::ItemKind::TraitImpl { .. } => todo!(),
 
 				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
 
-				hir::ItemKind::Extern { .. }
+				hir::ItemKind::ForeignMod { .. }
 				| hir::ItemKind::TypeAlias(_)
 				| hir::ItemKind::Trait { .. } => {}
 			}
@@ -247,19 +255,23 @@ impl ObjectBackend for Generator<'_, '_> {
 				&target_triple,
 				"generic",
 				"",
-				OptimizationLevel::None,
+				if self.tcx.scx.options.opt {
+					OptimizationLevel::Default
+				} else {
+					OptimizationLevel::None
+				},
 				RelocMode::PIC,
 				CodeModel::Default,
 			)
 			.unwrap();
 
 		let passes: &[&str] = &[
-			"instcombine",
-			"reassociate",
-			"gvn",
-			"simplifycfg",
-			// "basic-aa",
 			"mem2reg",
+			// "reassociate",
+			// "instcombine",
+			// "gvn",
+			// "simplifycfg",
+			// "basic-aa",
 		];
 
 		self.module
@@ -313,7 +325,7 @@ impl<'ctx> Generator<'_, 'ctx> {
 struct FunctionGenerator<'scx, 'bld, 'ctx> {
 	scx: &'scx SessionCtx,
 
-	ty_env: &'scx FxHashMap<ItemId, ty::TyKind>,
+	type_env: &'scx FxHashMap<ItemId, ty::TyKind>,
 	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
 
 	ctx: &'ctx Context,
@@ -357,7 +369,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_llvm_type(&self.ty_env[&ref_]),
+			ty::TyKind::Ref(ref_) => self.to_llvm_type(&self.type_env[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
