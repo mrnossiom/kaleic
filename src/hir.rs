@@ -195,11 +195,6 @@ pub enum ExprKind {
 	// TODO: parse structs, enums, tuples (and records? anon struct)
 	Unit,
 
-	FnCall {
-		expr: Box<Expr>,
-		args: Spanned<Vec<Expr>>,
-	},
-
 	If {
 		cond: Box<Expr>,
 		conseq: Box<Block>,
@@ -210,11 +205,16 @@ pub enum ExprKind {
 		block: Box<Block>,
 	},
 
+	FnCall {
+		expr: Box<Expr>,
+		args: Spanned<Vec<Expr>>,
+	},
 	Method {
 		expr: Box<Expr>,
 		name: ast::Ident,
 		params: Vec<Expr>,
 	},
+
 	Field {
 		expr: Box<Expr>,
 		name: ast::Ident,
