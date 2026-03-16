@@ -7,8 +7,23 @@ use crate::{
 	session::{Span, Symbol},
 };
 
+/// `hir::NodeId` are derived from `ast::NodeId`s during lowering.
+///
+/// If there is a 1:1 translation,
+///  the new `hir::NodeId` takes the old inner number,
+///  else the lowerer mints a new number.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub u32);
+pub struct NodeId(u32);
+
+impl NodeId {
+	pub(crate) fn new(n: u32) -> Self {
+		Self(n)
+	}
+
+	pub(crate) unsafe fn to_item_id(self) -> ItemId {
+		ItemId(self)
+	}
+}
 
 impl fmt::Debug for NodeId {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

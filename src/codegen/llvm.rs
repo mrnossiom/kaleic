@@ -140,11 +140,12 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 
 		generator.codegen_body(decl, body)?;
 
-		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
-			let name = format!("{}.ll", func_val.get_name().to_string_lossy());
-			let mut artefact = self.tcx.scx.register_artefact(&name);
-			write!(artefact, "{}", func_val.print_to_string().to_string_lossy()).unwrap();
-		}
+		let name = format!("{}.ll", func_val.get_name().to_string_lossy());
+		self.tcx
+			.scx
+			.register_artefact(&PrintKind::BackendIr, &name, |artefact| {
+				write!(artefact, "{}", func_val.print_to_string().to_string_lossy()).unwrap();
+			});
 
 		if !func_val.verify(true) {
 			let name = func_val.get_name().to_string_lossy().into_owned();
@@ -229,17 +230,13 @@ impl CodeGenBackend for Generator<'_, '_> {
 impl JitBackend for Generator<'_, '_> {
 	fn finalize(&mut self) {}
 
-	fn call_main(&self) -> i32 {
+	fn call_main(&self) {
 		#[expect(unsafe_code)]
-		let ret = unsafe {
-			self.jit
-				.get_function::<unsafe extern "C" fn() -> i32>("main")
-		}
-		.unwrap();
+		let ret = unsafe { self.jit.get_function::<unsafe extern "C" fn()>("main") }.unwrap();
 
 		#[expect(unsafe_code)]
 		unsafe {
-			ret.call()
+			ret.call();
 		}
 	}
 }

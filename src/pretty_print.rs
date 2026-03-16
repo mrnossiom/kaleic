@@ -162,7 +162,10 @@ mod ast_pp {
 	impl PrettyPrint for ast::Root {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			let Self { attrs, items } = &self;
-			pp!(f, [attrs, '\n'], '\n', [items, '\n'])
+			if !attrs.is_empty() {
+				pp!(f, [attrs, '\n'], '\n')?;
+			}
+			pp!(f, [items, '\n'])
 		}
 	}
 
@@ -303,7 +306,11 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Expr {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { kind, span: _ } = &self;
+			let Self {
+				kind,
+				span: _,
+				id: _,
+			} = &self;
 			kind.pprint(f)
 		}
 	}
@@ -376,7 +383,12 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Path {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { segments, generics } = &self;
+			let Self {
+				segments,
+				generics,
+				span: _,
+				resolved: _,
+			} = &self;
 			pp!(f, [segments, "::"])?;
 			if !generics.is_empty() {
 				pp!(f, "<", [generics, ", "], ">")?;
@@ -387,14 +399,22 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Block {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { stmts, span: _ } = &self;
+			let Self {
+				stmts,
+				span: _,
+				id: _,
+			} = &self;
 			pp!(f, "{", { ['\n', stmts] }, '\n', "}")
 		}
 	}
 
 	impl PrettyPrint for ast::Stmt {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { kind, span: _ } = &self;
+			let Self {
+				kind,
+				span: _,
+				id: _,
+			} = &self;
 			kind.pprint(f)
 		}
 	}
@@ -468,16 +488,17 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Attr {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { path, meta, span } = self;
-
-			pp!(f, "#", (path))?;
-
+			let Self {
+				path,
+				meta,
+				span: _,
+			} = self;
 			match meta {
-				ast::AttrMeta::None => {}
-				ast::AttrMeta::Tuple(_) | ast::AttrMeta::Map(_) | ast::AttrMeta::List(_) => todo!(),
+				ast::AttrMeta::None => pp!(f, "#", (path)),
+				ast::AttrMeta::Tuple(exprs) => pp!(f, "#", (path), "(", [exprs, ", "], ")"),
+				ast::AttrMeta::Map(exprs) => pp!(f, "#", (path), "{", [exprs, ", "], "}"),
+				ast::AttrMeta::List(exprs) => pp!(f, "#", (path), "[", [exprs, ", "], "]"),
 			}
-
-			Ok(())
 		}
 	}
 }

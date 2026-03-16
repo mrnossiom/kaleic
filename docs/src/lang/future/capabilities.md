@@ -26,7 +26,7 @@ struct BasicArena { }
 fn std::env::var(s: AsRef<str>) String with Env {}
 fn std::env::var(s: AsRef<str>) String with Env {}
 
-fn main() uint \ {env} {
+fn main() () \ {env} {
   let arena = BasicArena.new();
   use arena as Arena;
 

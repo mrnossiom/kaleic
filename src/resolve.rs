@@ -1,11 +1,39 @@
-use std::collections::hash_map::Entry;
+use std::{collections::hash_map::Entry, fmt};
 
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast, errors,
-	session::{SessionCtx, Symbol},
+	ast::{self, Visitor},
+	errors, hir,
+	session::{DcxHandle, SessionCtx, Symbol},
 };
+
+pub(crate) fn resolve_root(scx: &SessionCtx, ast: &ast::Root) -> NameEnvironment {
+	let mut cltr = Collector::new(scx);
+	cltr.visit_root(ast);
+
+	cltr.name_env
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LocalDefId(pub u32);
+
+impl fmt::Debug for LocalDefId {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		// local def id -> did
+		// def id -> did{<module>}
+		write!(f, "did#{}", self.0)
+	}
+}
+
+#[derive(Debug)]
+pub enum LangItemKind {
+	AddTrait,
+	SubTrait,
+	MulTrait,
+	DivTrait,
+	// and much more :)
+}
 
 #[derive(Debug)]
 pub enum Namespace {
@@ -20,9 +48,10 @@ pub struct NameEnvironment {
 }
 
 #[derive(Debug)]
-pub struct Collector<'scx> {
+struct Collector<'scx> {
 	scx: &'scx SessionCtx,
 	pub(crate) name_env: NameEnvironment,
+	pub(crate) lang_items: FxHashMap<LangItemKind, LocalDefId>,
 }
 
 impl<'scx> Collector<'scx> {
@@ -31,6 +60,7 @@ impl<'scx> Collector<'scx> {
 		Self {
 			scx,
 			name_env: NameEnvironment::default(),
+			lang_items: FxHashMap::default(),
 		}
 	}
 }
@@ -88,5 +118,16 @@ impl ast::Visitor for Collector<'_> {
 				// implementations and method resolution will select the implementation
 			}
 		}
+	}
+}
+
+#[derive(Debug, Clone)]
+pub enum Resolved {
+	Local(hir::ExprId),
+}
+
+impl Resolved {
+	pub fn as_def(&self) -> Option<hir::ItemId> {
+		None
 	}
 }

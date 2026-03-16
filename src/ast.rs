@@ -2,17 +2,24 @@
 
 use std::fmt;
 
-use rustc_hash::FxHashMap;
-
-use crate::session::{Span, Symbol};
+use crate::{
+	resolve,
+	session::{Span, Symbol},
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(pub u32);
+pub struct NodeId(u32);
 
 impl fmt::Debug for NodeId {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		// ast node id -> aid
 		write!(f, "aid#{}", self.0)
+	}
+}
+
+impl NodeId {
+	pub(crate) fn new(n: u32) -> Self {
+		Self(n)
 	}
 }
 
@@ -24,8 +31,8 @@ pub struct Ident {
 
 impl Ident {
 	#[must_use]
-	pub const fn new(name: Symbol, span: Span) -> Self {
-		Self { sym: name, span }
+	pub const fn new(sym: Symbol, span: Span) -> Self {
+		Self { sym, span }
 	}
 }
 
@@ -76,7 +83,7 @@ pub enum AttrMeta {
 	/// `#path(foo, bar)`
 	Tuple(Vec<Expr>),
 	/// `#path{key=value, key2=value2}`
-	Map(FxHashMap<Ident, Expr>),
+	Map(Vec<Expr>),
 	/// `#path[blah1, blah2, blah3]`
 	List(Vec<Expr>),
 }
@@ -85,6 +92,7 @@ pub enum AttrMeta {
 pub struct Expr {
 	pub kind: ExprKind,
 	pub span: Span,
+	pub id: NodeId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +271,7 @@ pub enum ExprKind {
 pub struct Block {
 	pub stmts: Vec<Stmt>,
 	pub span: Span,
+	pub id: NodeId,
 }
 
 #[derive(Debug)]
@@ -303,14 +312,18 @@ pub enum TyKind {
 pub struct Path {
 	pub segments: Vec<Ident>,
 	pub generics: Vec<Ty>,
+	pub span: Span,
+	pub resolved: resolve::Resolved,
 }
 
 impl Path {
-	// TODO: remove, really resolve paths
+	// TODO: remove simple apis
 	pub fn new_simple(id: Ident) -> Self {
 		Self {
 			segments: vec![id],
 			generics: Vec::new(),
+			span: id.span,
+			resolved: todo!(),
 		}
 	}
 	pub fn simple(&self) -> Ident {
@@ -413,6 +426,7 @@ pub enum VariantKind {
 pub struct Stmt {
 	pub kind: StmtKind,
 	pub span: Span,
+	pub id: NodeId,
 }
 
 #[derive(Debug)]

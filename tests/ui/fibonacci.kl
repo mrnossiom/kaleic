@@ -1,4 +1,4 @@
-fn main() uint {
+fn main() {
 	let n = 0;
 
 	while n != 5 {
@@ -9,8 +9,6 @@ fn main() uint {
 		
 		n = n + 1;
 	};
-
-	0
 }
 
 fn num_to_ascii(n: uint) uint /*Option<Number>*/ {

@@ -14,12 +14,15 @@ use std::{
 };
 
 use ariadne::{Config, IndexType, ReportKind};
+use cranelift::codegen::FxHashMap;
 use parking_lot::RwLock;
 use string_interner::{StringInterner, Symbol as _, backend::StringBackend, symbol::SymbolU32};
 
 use crate::{
-	bug,
+	ast, bug,
 	codegen::{Backend, Linker},
+	hir,
+	ty::Put,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -173,26 +176,55 @@ impl SymbolInterner {
 #[derive(Debug)]
 pub struct SessionCtx {
 	pub options: Options,
-	diag_cx: DiagnosticCtx,
-
 	pub symbols: SymbolInterner,
 	pub source_map: Rc<RwLock<SourceMap>>,
+
+	dcx: DiagnosticCtx,
+
+	pub aid_hid_map: Put<FxHashMap<ast::NodeId, hir::NodeId>>,
+	pub hid_aid_map: Put<FxHashMap<hir::NodeId, ast::NodeId>>,
 }
 
 impl SessionCtx {
 	pub fn new() -> Self {
 		let source_map = Rc::new(RwLock::new(SourceMap::default()));
-		let diag_cx = DiagnosticCtx::new(source_map.clone());
+		let dcx = DiagnosticCtx::new(source_map.clone());
 		Self {
 			options: Options::default(),
-			diag_cx,
 			symbols: SymbolInterner::default(),
 			source_map,
+
+			dcx,
+
+			aid_hid_map: Put::default(),
+			hid_aid_map: Put::default(),
 		}
 	}
+}
 
-	pub const fn dcx(&self) -> &DiagnosticCtx {
-		&self.diag_cx
+pub trait ScxHandle {
+	fn scx(&self) -> &SessionCtx;
+}
+
+impl ScxHandle for SessionCtx {
+	fn scx(&self) -> &SessionCtx {
+		self
+	}
+}
+
+pub trait DcxHandle {
+	fn dcx(&self) -> &DiagnosticCtx;
+}
+
+impl DcxHandle for DiagnosticCtx {
+	fn dcx(&self) -> &DiagnosticCtx {
+		self
+	}
+}
+
+impl<T: ScxHandle> DcxHandle for T {
+	fn dcx(&self) -> &DiagnosticCtx {
+		&self.scx().dcx
 	}
 }
 
@@ -205,9 +237,16 @@ impl fmt::Write for ArtefactWriter {
 }
 
 impl SessionCtx {
-	pub(crate) fn register_artefact(&self, name: &str) -> ArtefactWriter {
-		let file = fs::File::create(self.options.debug_output.join(name)).unwrap();
-		ArtefactWriter(file)
+	pub(crate) fn register_artefact(
+		&self,
+		kind: &PrintKind,
+		name: &str,
+		f: impl FnOnce(&mut ArtefactWriter),
+	) {
+		if self.options.print.contains(kind) {
+			let file = fs::File::create(self.options.debug_output.join(name)).unwrap();
+			f(&mut ArtefactWriter(file));
+		}
 	}
 }
 

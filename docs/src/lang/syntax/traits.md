@@ -23,6 +23,8 @@ struct MyType;
 
 impl Foo for MyType {
   // notice how there is no type in impl block
+  //
+  // concern: against code locality
   fn bar() {
     // chosen by a fair roll of dice
     4

@@ -11,12 +11,20 @@ use crate::{
 	hir::{self, ExprId, ItemId},
 	inference::{self, TypeVarId},
 	resolve::NameEnvironment,
-	session::{SessionCtx, Span},
+	session::{ScxHandle, SessionCtx, Span},
 };
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Put<T> {
 	inner: RefCell<Option<T>>,
+}
+
+impl<T> Default for Put<T> {
+	fn default() -> Self {
+		Self {
+			inner: RefCell::default(),
+		}
+	}
 }
 
 impl<T> Put<T> {
@@ -83,9 +91,27 @@ pub struct TyCtx<'scx> {
 	pub arena: (),
 
 	pub name_env: Put<NameEnvironment>,
+
+	pub main_fn_id: Put<ItemId>,
 	pub type_env: Put<FxHashMap<ItemId, TyKind>>,
 	// per function
 	pub typeck_results: PutMap<ItemId, FxHashMap<ExprId, TyKind>>,
+}
+
+pub trait TcxHandle {
+	fn tcx(&self) -> &TyCtx<'_>;
+}
+
+impl TcxHandle for TyCtx<'_> {
+	fn tcx(&self) -> &Self {
+		self
+	}
+}
+
+impl<T: TcxHandle> ScxHandle for T {
+	fn scx(&self) -> &SessionCtx {
+		self.tcx().scx
+	}
 }
 
 impl<'scx> TyCtx<'scx> {
@@ -97,6 +123,7 @@ impl<'scx> TyCtx<'scx> {
 			arena: (),
 
 			name_env: Put::default(),
+			main_fn_id: Put::default(),
 			type_env: Put::default(),
 			typeck_results: PutMap::default(),
 		}
@@ -134,7 +161,7 @@ impl TyCtx<'_> {
 
 		let primitive = match self.scx.symbols.resolve(path.sym).as_str() {
 			// let report = errors::ty::function_cannot_infer_signature(decl.ret.span);
-			// self.tcx.scx.dcx().emit_build(report);
+			// self.tcx.dcx().emit_build(report);
 			// TyKind::Error
 			"_" => todo!(),
 

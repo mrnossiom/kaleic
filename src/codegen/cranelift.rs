@@ -12,7 +12,7 @@ use crate::{
 	bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, ExprId, Function, ItemId, Struct},
-	session::{PrintKind, SessionCtx, Symbol},
+	session::{PrintKind, ScxHandle, SessionCtx, Symbol},
 	ty::{self, TyCtx, TyKind},
 };
 
@@ -25,14 +25,14 @@ pub enum MaybeValue {
 	Never,
 }
 
-pub struct Generator<'tcx, M: Module> {
+pub struct Generator<'tcx, M> {
 	tcx: &'tcx TyCtx<'tcx>,
 
 	module: M,
 	isa: Arc<dyn TargetIsa + 'static>,
 	builder_context: FunctionBuilderContext,
 
-	functions: FxHashMap<Symbol, FuncId>,
+	functions: FxHashMap<ItemId, FuncId>,
 }
 
 impl<'tcx, M: Module> Generator<'tcx, M> {
@@ -129,10 +129,11 @@ impl<M: Module> Generator<'_, M> {
 	pub fn declare_func(
 		&mut self,
 		name: Symbol,
+		item_id: ItemId,
 		decl: &ty::FnDecl,
 		linkage: Linkage,
 	) -> Result<FuncId> {
-		if self.functions.contains_key(&name) {
+		if self.functions.contains_key(&item_id) {
 			return Err("already defined");
 		}
 
@@ -144,7 +145,7 @@ impl<M: Module> Generator<'_, M> {
 			.declare_function(&func_name, linkage, &signature)
 			.unwrap();
 
-		self.functions.insert(name, func_id);
+		self.functions.insert(item_id, func_id);
 		Ok(func_id)
 	}
 
@@ -188,18 +189,19 @@ impl<M: Module> Generator<'_, M> {
 			.optimize(self.module.isa(), &mut ControlPlane::default())
 			.unwrap();
 
-		if self.tcx.scx.options.print.contains(&PrintKind::BackendIr) {
-			let name = format!(
-				"{:#?}.clif",
-				self.functions
-					.iter()
-					.find(|(k, v)| **v == func_id)
-					.unwrap()
-					.0
-			);
-			let mut artefact = self.tcx.scx.register_artefact(&name);
-			write!(artefact, "{}", context.func.display()).unwrap();
-		}
+		let name = format!(
+			"{:#?}.clif",
+			self.functions
+				.iter()
+				.find(|(k, v)| **v == func_id)
+				.unwrap()
+				.0
+		);
+		self.tcx
+			.scx()
+			.register_artefact(&PrintKind::BackendIr, &name, |artefact| {
+				write!(artefact, "{}", context.func.display()).unwrap();
+			});
 
 		self.module.define_function(func_id, &mut context).unwrap();
 
@@ -223,7 +225,9 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 
 					// TODO: react to abi attribute
 					// TODO: change to hidden by default
-					let func_id = self.declare_func(name.sym, decl, Linkage::Hidden).unwrap();
+					let func_id = self
+						.declare_func(name.sym, item.item_id(), decl, Linkage::Hidden)
+						.unwrap();
 					function_ids.insert(item.id, func_id);
 				}
 				hir::ItemKind::ForeignMod { items } => {
@@ -236,8 +240,9 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 									todo!()
 								};
 
-								let _func_id =
-									self.declare_func(name.sym, decl, Linkage::Import).unwrap();
+								let _func_id = self
+									.declare_func(name.sym, item.item_id(), decl, Linkage::Import)
+									.unwrap();
 							}
 						}
 					}
@@ -285,17 +290,17 @@ impl JitBackend for Generator<'_, JITModule> {
 		self.module.finalize_definitions().unwrap();
 	}
 
-	fn call_main(&self) -> i32 {
-		let main = self.tcx.scx.symbols.intern("main");
-		let main_id = self.functions.get(&main).unwrap();
+	fn call_main(&self) {
+		let main_fn_id = self.tcx.main_fn_id.borrow();
+		let main_id = self.functions.get(&main_fn_id).unwrap();
 		let func = self.module.get_finalized_function(*main_id);
 
-		// TODO: this is unsafe as some functions ask for arguments, and lot a more reasons
+		// TODO: this is unsafe for so much reasons, but we assume that our codegen is perfect :)
 		// TODO: actually enforce main signature
 		// SAFETY: main signature is enforced
-		let main = unsafe { std::mem::transmute::<*const u8, fn() -> i32>(func) };
+		let main = unsafe { std::mem::transmute::<*const u8, fn()>(func) };
 
-		main()
+		main();
 	}
 }
 
@@ -314,7 +319,7 @@ pub struct FunctionGenerator<'scx, 'bld> {
 	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
 
 	builder: FunctionBuilder<'bld>,
-	functions: &'bld FxHashMap<Symbol, FuncId>,
+	functions: &'bld FxHashMap<ItemId, FuncId>,
 	module: &'bld mut dyn Module,
 	isa: Arc<dyn TargetIsa + 'static>,
 
@@ -476,19 +481,6 @@ impl FunctionGenerator<'_, '_> {
 				MaybeValue::Value(self.codegen_bin_op(*op, left, right)?)
 			}
 			hir::ExprKind::FnCall { expr, args } => {
-				// TODO: allow indirect calls
-				let hir::ExprKind::Access { path } = &expr.kind else {
-					todo!("not a fn")
-				};
-				let path = path.segments[0];
-				let Some(func_id) = self.functions.get(&path.sym) else {
-					return Err("invalid fn call");
-				};
-
-				let local_func = self
-					.module
-					.declare_func_in_func(*func_id, self.builder.func);
-
 				let mut argsz = Vec::new();
 				for arg in &args.bit {
 					match self.codegen_expr(arg)? {
@@ -497,7 +489,26 @@ impl FunctionGenerator<'_, '_> {
 					}
 				}
 
-				let call = self.builder.ins().call(local_func, &argsz);
+				let call = if let hir::ExprKind::Access { path } = &expr.kind {
+					let item_id = path.resolved.as_def().unwrap();
+					let Some(func_id) = self.functions.get(&item_id) else {
+						panic!("did not define function yet")
+					};
+
+					let local_func = self
+						.module
+						.declare_func_in_func(*func_id, self.builder.func);
+
+					self.builder.ins().call(local_func, &argsz)
+				} else {
+					let callee = match self.codegen_expr(expr)? {
+						MaybeValue::Value(callee) => callee,
+						value @ (MaybeValue::Zst | MaybeValue::Never) => return Ok(value),
+					};
+					let sig = todo!();
+
+					self.builder.ins().call_indirect(sig, callee, &argsz)
+				};
 
 				let inst_results = self.builder.inst_results(call);
 				match inst_results.len() {

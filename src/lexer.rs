@@ -43,6 +43,8 @@ impl Token {
 			(Colon, Colon) => ColonColon,
 			(Pound, Pound) => PoundPound,
 
+			(BitwiseOr, Lt) => Forward,
+
 			(Ampersand, Ampersand) => todo!("for recovery, see `and` kw"),
 			(BitwiseOr, BitwiseOr) => todo!("for recovery, see `or` kw"),
 
@@ -132,6 +134,8 @@ pub enum TokenKind {
 	Apostrophe,
 	/// `##`
 	PoundPound,
+	/// `|>`
+	Forward,
 
 	/// Fallback token for unrecognized lexeme
 	Unknown,
@@ -190,6 +194,7 @@ impl fmt::Display for TokenKind {
 			Apostrophe => write!(f, "an apostrophe"),
 			Pound => write!(f, "a pound sign"),
 			PoundPound => write!(f, "a double pound sign"),
+			Forward => write!(f, "a forward operator"),
 
 			Unknown => write!(f, "an unknown token"),
 			Eof => write!(f, "the end of the file"),

@@ -5,7 +5,7 @@ use crate::{
 	errors,
 	hir::{self, ExprId, ExprKind, Function, ItemId},
 	resolve::NameEnvironment,
-	session::{Span, Symbol},
+	session::{DcxHandle, Span, Symbol},
 	ty::{self, Infer, InferKind, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
@@ -147,7 +147,7 @@ fn typeck_fn(
 						InferKind::Generic | InferKind::Explicit => {
 							let span = todo!("get from expr_id");
 							let report = errors::ty::report_unconstrained(span);
-							tcx.scx.dcx().emit_build(report);
+							tcx.dcx().emit_build(report);
 						}
 					}
 					break;
@@ -177,12 +177,14 @@ impl Inferer<'_> {
 			// search in the locals defined, respecting shadowing
 			ty.clone()
 		} else if let Some(id) = self.name_env.values.get(&var.sym) {
+			let hir_id = self.tcx.scx.aid_hid_map.borrow()[id];
+			// TODO: replace with new resolution
+			let item_id = unsafe { hir_id.to_item_id() };
 			// search values in the whole project
-			let hir_id = todo!("resolve {id:?} for value {var:?}");
-			self.type_env.get(hir_id).unwrap().clone().as_infer()
+			self.type_env.get(&item_id).unwrap().clone().as_infer()
 		} else {
 			let report = errors::ty::variable_not_in_scope(var.span);
-			self.tcx.scx.dcx().emit_build(report);
+			self.tcx.dcx().emit_build(report);
 			TyKind::Error
 		}
 	}
@@ -301,7 +303,7 @@ impl Inferer<'_> {
 				let TyKind::Fn(func) = expr_ty else {
 					let report =
 						errors::ty::tried_to_call_non_function(expr.span, args.span, &expr_ty);
-					self.tcx.scx.dcx().emit_build(report);
+					self.tcx.dcx().emit_build(report);
 					return TyKind::Error;
 				};
 
@@ -311,7 +313,7 @@ impl Inferer<'_> {
 						func.inputs.len(),
 						args.bit.len(),
 					);
-					self.tcx.scx.dcx().emit_build(report);
+					self.tcx.dcx().emit_build(report);
 				}
 
 				for (Param { ty: expected, .. }, actual) in func.inputs.iter().zip(args.bit.iter())
@@ -428,7 +430,7 @@ impl Inferer<'_> {
 
 			(_, _) => {
 				let report = errors::ty::unification_mismatch(expected, actual);
-				self.tcx.scx.dcx().emit_build(report);
+				self.tcx.dcx().emit_build(report);
 				TyKind::Error
 			}
 		}
@@ -453,7 +455,7 @@ impl Inferer<'_> {
 						actual_infer.kind,
 						self.ty_var_expr_map[&actual_infer.tvid],
 					);
-					self.tcx.scx.dcx().emit_build(report);
+					self.tcx.dcx().emit_build(report);
 					TyKind::Error
 				}
 			}
@@ -464,7 +466,7 @@ impl Inferer<'_> {
 					ty,
 					todo!(),
 				);
-				self.tcx.scx.dcx().emit_build(report);
+				self.tcx.dcx().emit_build(report);
 				TyKind::Error
 			}
 		};

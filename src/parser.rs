@@ -4,7 +4,11 @@
 //!
 //! Entrypoint to parsing is [`parse_root`].
 
-use std::{fmt, mem, ops::ControlFlow};
+use std::{
+	fmt, mem,
+	ops::ControlFlow,
+	sync::atomic::{AtomicU32, Ordering},
+};
 
 use ariadne::{Label, Report, ReportKind};
 
@@ -15,13 +19,13 @@ use ariadne::{Label, Report, ReportKind};
 use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
-		Attr, AttrMeta, BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function, Generics,
-		Ident as Id, Item, ItemKind, NodeId, Param, Path, Root, ShortCircuitOp, Spanned, Stmt,
+		self, Attr, AttrMeta, BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function,
+		Generics, Ident as Id, Item, ItemKind, Param, Path, Root, ShortCircuitOp, Spanned, Stmt,
 		StmtKind, Ty, TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
 	},
 	errors,
 	lexer::{Keyword as Kw, Lexer, Token, TokenKind},
-	session::{Diagnostic, SessionCtx, SourceFile, Span},
+	session::{DcxHandle, Diagnostic, SessionCtx, SourceFile, Span},
 };
 
 pub fn parse_root(scx: &SessionCtx, source: &SourceFile) -> Root {
@@ -97,8 +101,6 @@ struct Parser<'scx> {
 
 	token: Token,
 	last_token: Token,
-
-	next_node_id: u32,
 }
 
 impl<'scx> Parser<'scx> {
@@ -116,8 +118,6 @@ impl<'scx> Parser<'scx> {
 
 			token: Token::DUMMY,
 			last_token: Token::DUMMY,
-
-			next_node_id: 0,
 		};
 
 		// init the first token
@@ -126,10 +126,11 @@ impl<'scx> Parser<'scx> {
 		parser
 	}
 
-	fn make_node_id(&mut self) -> crate::ast::NodeId {
-		let next_node_id = self.next_node_id;
-		self.next_node_id += 1;
-		NodeId(next_node_id)
+	// TODO: find more elegany way to expand multiple files
+	fn make_node_id(&self) -> ast::NodeId {
+		static NEXT_NODE_ID: AtomicU32 = AtomicU32::new(0);
+		let _ = self;
+		ast::NodeId::new(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed))
 	}
 }
 
@@ -281,6 +282,7 @@ impl Parser<'_> {
 			lhs = Expr {
 				kind: new_kind,
 				span: self.close_span(lo),
+				id: self.make_node_id(),
 			};
 		}
 		Ok(lhs)
@@ -362,6 +364,7 @@ impl Parser<'_> {
 		Ok(ControlFlow::Continue(Expr {
 			kind,
 			span: self.close_span(lo),
+			id: self.make_node_id(),
 		}))
 	}
 
@@ -409,6 +412,7 @@ impl Parser<'_> {
 		Ok(Expr {
 			kind,
 			span: self.close_span(lo),
+			id: self.make_node_id(),
 		})
 	}
 
@@ -610,7 +614,7 @@ impl Parse for TypeAlias {
 
 /// Items
 impl Parser<'_> {
-	/// Parse [`Extern`] block of items
+	/// Parse [`ItemKind::ForeignMod`] block of items
 	fn parse_item_unsafe_extern(&mut self) -> PResult<ItemKind> {
 		debug_assert_eq!(self.last_token.kind, Keyword(Kw::Unsafe));
 
@@ -775,6 +779,8 @@ impl Parser<'_> {
 	}
 
 	fn parse_path(&mut self) -> PResult<Path> {
+		let start = self.token.span;
+
 		let mut segments = Vec::new();
 		segments.push(self.expect_ident()?);
 		segments.extend(self.parse_while(ColonColon, Self::expect_ident)?);
@@ -785,7 +791,12 @@ impl Parser<'_> {
 			Vec::new()
 		};
 
-		Ok(Path { segments, generics })
+		Ok(Path {
+			segments,
+			generics,
+			span: self.close_span(start),
+			resolved: todo!(),
+		})
 	}
 
 	fn parse_generics_def(&mut self) -> PResult<Generics> {
@@ -924,6 +935,7 @@ impl Parser<'_> {
 		Ok(Stmt {
 			kind,
 			span: self.close_span(lo),
+			id: self.make_node_id(),
 		})
 	}
 
@@ -974,6 +986,7 @@ impl Parser<'_> {
 		Ok(Block {
 			stmts,
 			span: self.close_span(lo),
+			id: self.make_node_id(),
 		})
 	}
 
@@ -992,7 +1005,7 @@ impl Parser<'_> {
 			AttrMeta::Tuple(exprs)
 		} else if self.eat(OpenBrace) {
 			let exprs = self.parse_seq_rest(OpenBrace, CloseBrace, Comma, Parser::parse_expr)?;
-			AttrMeta::Map(todo!())
+			AttrMeta::Map(exprs)
 		} else if self.eat(OpenBracket) {
 			let exprs =
 				self.parse_seq_rest(OpenBracket, CloseBracket, Comma, Parser::parse_expr)?;

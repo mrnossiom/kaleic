@@ -1,4 +1,4 @@
-// #link{name = "c"}
+#link{name = "c"}
 unsafe extern {
 	fn putchar(c: uint);
 	// fn puts(c: *u8);

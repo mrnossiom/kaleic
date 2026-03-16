@@ -28,6 +28,8 @@
 
 - [Pipeline](./compiler/pipeline.md)
 
+  - [Glossary](./compiler/glossary.md)
+
   - [Parsing](./compiler/pipeline/parsing.md)
 
   - [Type Checking](./compiler/pipeline/type-checking.md)

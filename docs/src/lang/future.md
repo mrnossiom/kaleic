@@ -275,3 +275,44 @@ match InferKind.Infer {
 ```
 
 - [Rust RFC (Open): Path Inference - GitHub](https://github.com/rust-lang/rfcs/pull/3444)
+
+### Pipe operator/construct
+
+Motivation: avoid nesting calls or `let` repetition
+
+Question: how to tell where are going the arguments
+
+Related: See [Uniform function call syntax](ufcs-wiki)
+
+[ucfs-wiki]: https://en.wikipedia.org/wiki/Uniform_function_call_syntax
+
+```kalei
+let value =
+  compute_value(my_looooooooog_value_name)
+  |> transform_value1()
+  |> transform_value2()
+  |> transform_value3();
+
+// reuse closure syntax?
+let value =
+  compute_value(my_looooooooog_value_name)
+  |> transform_value1
+  |> |v| transform_value2(v)
+  |> |v| transform_value3(v, 2);
+
+// semantically equivalent to
+let value = transform_value3(transform_value2(transform_value1(compute_value(my_looooooooog_value_name))), 3);
+// which may format as
+let value = transform_value3(
+  transform_value2(transform_value1(compute_value(
+  	my_looooooooog_value_name,
+  ))),
+  3,
+);
+
+// or chaining the same name to avoid nesting and keeping clarity
+let value = compute_value(my_looooooooog_value_name);
+let value = transform_value1(value);
+let value = transform_value2(value);
+let value = transform_value3(value, 3);
+```
