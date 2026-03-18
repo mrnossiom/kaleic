@@ -18,32 +18,22 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	scx.dcx().check_sane_or_exit();
 
-	let name_env = resolve::collect_root(scx, &ast);
-	() = resolve::resolve_root(scx, &ast);
-
+	let collection_result = resolve::collect_root(scx, &ast);
 	scx.register_artefact(
 		&PrintKind::CollectedItems,
 		"name-environment.txt",
-		|artefact| {
-			writeln!(artefact, "> Type items:").unwrap();
-			for (name, item) in &name_env.types {
-				writeln!(artefact, "{name:#?}: {item:?}").unwrap();
-			}
-			writeln!(artefact, "> Value items:").unwrap();
-			for (name, item) in &name_env.values {
-				writeln!(artefact, "{name:#?}: {item:?}").unwrap();
-			}
-		},
+		|artefact| writeln!(artefact, "{:#?}", collection_result.name_env),
 	);
+	let resolution_result = resolve::resolve_root(scx, &ast, &collection_result.name_env);
 
 	// lowering to HIR
 	let hir = lowerer::lower_root(scx, &ast);
 
 	scx.register_artefact(&PrintKind::HigherIr, "hir.txt", |artefact| {
-		write!(artefact, "{hir:#?}").unwrap();
+		write!(artefact, "{hir:#?}")
 	});
 	scx.register_artefact(&PrintKind::HigherIrPretty, "hir-pretty.txt", |artefact| {
-		pretty_print(&hir, artefact).unwrap();
+		pretty_print(&hir, artefact)
 	});
 
 	scx.dcx().check_sane_or_exit();
@@ -58,16 +48,16 @@ pub fn pipeline(scx: &SessionCtx) {
 		"type-environment.txt",
 		|artefact| {
 			let env = tcx.type_env.borrow();
-			for (name, ty) in env.iter() {
-				writeln!(artefact, "{name:?}: {ty:?}").unwrap();
-			}
-			writeln!(artefact).unwrap();
+			writeln!(artefact, "{env:#?}")
 		},
 	);
 
 	tcx.typeck(&hir);
 
 	scx.dcx().check_sane_or_exit();
+
+	// TODO: document pass outputs markdown
+	// if scx.options.document { }
 
 	// codegen hir bodies
 	if scx.options.jit {
@@ -132,12 +122,12 @@ fn parse_files(scx: &SessionCtx) -> ast::Root {
 			scx.register_artefact(
 				&PrintKind::Ast,
 				&format!("ast.{}.txt", filename.file_stem().unwrap().display()),
-				|artefact| write!(artefact, "{ast:#?}").unwrap(),
+				|artefact| write!(artefact, "{ast:#?}"),
 			);
 			scx.register_artefact(
 				&PrintKind::AstPretty,
 				&format!("ast-pretty.{}.txt", filename.file_stem().unwrap().display()),
-				|artefact| pretty_print(&ast, artefact).unwrap(),
+				|artefact| pretty_print(&ast, artefact),
 			);
 
 			ast

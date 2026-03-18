@@ -8,9 +8,9 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast::{self, Ident},
 	bug,
-	hir::{self, ExprId, ItemId},
+	hir::{self, ExprId},
 	inference::{self, TypeVarId},
-	resolve::NameEnvironment,
+	resolve::{DefId, NameEnvironment},
 	session::{ScxHandle, SessionCtx, Span},
 	symbols::{kw, sym},
 };
@@ -93,10 +93,10 @@ pub struct TyCtx<'scx> {
 
 	pub name_env: Put<NameEnvironment>,
 
-	pub main_fn_id: Put<ItemId>,
-	pub type_env: Put<FxHashMap<ItemId, TyKind>>,
+	pub main_fn_id: Put<DefId>,
+	pub type_env: Put<FxHashMap<DefId, TyKind>>,
 	// per function
-	pub typeck_results: PutMap<ItemId, FxHashMap<ExprId, TyKind>>,
+	pub typeck_results: PutMap<DefId, FxHashMap<ExprId, TyKind>>,
 }
 
 pub trait TcxHandle {
@@ -152,7 +152,6 @@ impl TyCtx<'_> {
 		match &ty.kind {
 			ast::TyKind::Path(path) => self.lower_path_ty(path),
 			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
-			ast::TyKind::Reference(ty) => todo!(),
 			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
 		}
 	}
@@ -243,7 +242,7 @@ pub enum TyKind<InferKind = NoInfer> {
 
 	// TODO: remove
 	/// Refers to the type of another item
-	Ref(ItemId),
+	Ref(DefId),
 
 	Infer(InferKind),
 	Error,
@@ -368,9 +367,9 @@ impl TyKind<Infer> {
 pub struct TypeComputer<'tcx> {
 	tcx: &'tcx TyCtx<'tcx>,
 
-	pub(crate) types: FxHashMap<ItemId, TyKind>,
+	pub(crate) types: FxHashMap<DefId, TyKind>,
 	// trait item id -> implementors
-	pub(crate) trait_impls: FxHashMap<ItemId, Vec<()>>,
+	pub(crate) trait_impls: FxHashMap<DefId, Vec<()>>,
 }
 
 impl<'tcx> TypeComputer<'tcx> {
@@ -468,7 +467,7 @@ impl TypeComputer<'_> {
 		let inputs = decl
 			.params
 			.iter()
-			.map(|ast::Param { name, ty }| {
+			.map(|ast::Param { name, ty, id: _ }| {
 				let ty = self.tcx.lower_ty(ty);
 				Param { name: *name, ty }
 			})

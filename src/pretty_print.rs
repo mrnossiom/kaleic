@@ -265,11 +265,18 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Generics {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self(inner) = &self;
-			if !inner.is_empty() {
-				pp!(f, "<", [inner, ","], ">")?;
+			let Self { idents, span: _ } = &self;
+			if !idents.is_empty() {
+				pp!(f, "<", [idents, ", "], ">")?;
 			}
 			Ok(())
+		}
+	}
+
+	impl PrettyPrint for ast::Generic {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self { name, id: _ } = &self;
+			pp!(f, (name))
 		}
 	}
 
@@ -358,7 +365,7 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Param {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { name, ty } = &self;
+			let Self { name, ty, id: _ } = &self;
 			pp!(f, (name), ": ", (ty))
 		}
 	}
@@ -375,7 +382,7 @@ mod ast_pp {
 			match &self {
 				Self::Path(path) => path.pprint(f),
 				Self::Pointer(ty) => pp!(f, "*", (ty)),
-				Self::Reference(ty) => pp!(f, "&", (ty)),
+				// Self::Reference(ty) => pp!(f, "&", (ty)),
 				Self::Unit => write!(f, "()"),
 			}
 		}
@@ -399,9 +406,15 @@ mod ast_pp {
 				generics,
 				span: _,
 			} = &self;
-			pp!(f, (name))?;
-			if !generics.is_empty() {
-				pp!(f, "<", [generics, ", "], ">")?;
+			pp!(f, (name), (generics))
+		}
+	}
+
+	impl PrettyPrint for ast::GenericParams {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self { params, span: _ } = &self;
+			if !params.is_empty() {
+				pp!(f, "<", [params, ", "], ">")?;
 			}
 			Ok(())
 		}
@@ -543,6 +556,17 @@ mod hir_pp {
 				hir::AttrMeta::Map(exprs) => pp!(f, "#", (path), "{", [exprs, ", "], "}"),
 				hir::AttrMeta::List(exprs) => pp!(f, "#", (path), "[", [exprs, ", "], "]"),
 			}
+		}
+	}
+
+	impl PrettyPrint for hir::AttrPath {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				segments,
+				span: _,
+				resolved: _,
+			} = &self;
+			pp!(f, [segments, "::"])
 		}
 	}
 

@@ -20,8 +20,9 @@ use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
 		self, Attr, AttrMeta, BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function,
-		Generics, Ident as Id, Item, ItemKind, Param, Path, PathSegment, Root, ShortCircuitOp,
-		Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
+		GenericParams, Generics, Ident as Id, Item, ItemKind, Param, Path, PathSegment, Root,
+		ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, Variant,
+		VariantKind,
 	},
 	errors,
 	lexer::{Lexer, Token, TokenKind},
@@ -779,7 +780,11 @@ impl Parser<'_> {
 		let name = self.expect_ident()?;
 		self.expect(Colon)?;
 		let ty = self.parse_ty()?;
-		Ok(Param { name, ty })
+		Ok(Param {
+			name,
+			ty,
+			id: self.make_node_id(),
+		})
 	}
 
 	fn parse_path(&mut self) -> Result<Path> {
@@ -800,12 +805,7 @@ impl Parser<'_> {
 		let lo = self.token.span;
 
 		let name = self.expect_ident()?;
-
-		let generics = if self.check(Lt) {
-			self.parse_ty_generics()?
-		} else {
-			Vec::new()
-		};
+		let generics = self.parse_generic_params()?;
 
 		Ok(PathSegment {
 			name,
@@ -814,10 +814,30 @@ impl Parser<'_> {
 		})
 	}
 
+	fn parse_generic_params(&mut self) -> Result<GenericParams> {
+		let lo = self.token.span;
+
+		let params = if self.check(Lt) {
+			self.parse_ty_generics()?
+		} else {
+			Vec::new()
+		};
+
+		Ok(GenericParams {
+			params,
+			span: self.close_span(lo),
+		})
+	}
+
 	fn parse_generics_def(&mut self) -> Result<Generics> {
 		if !self.check(Lt) {
-			return Ok(Generics(vec![]));
+			return Ok(Generics {
+				idents: vec![],
+				span: Span::DUMMY,
+			});
 		}
+
+		let lo = self.token.span;
 
 		// TODO: this is a modified expansion of
 		// let (generics, span) = self.parse_seq(Angled, Comma, Self::expect_ident)?;
@@ -827,13 +847,20 @@ impl Parser<'_> {
 
 		self.expect(Lt)?;
 		while !self.eat(Gt) && !finished {
-			generics.push(self.expect_ident()?);
+			let name = self.expect_ident()?;
+			generics.push(ast::Generic {
+				name,
+				id: self.make_node_id(),
+			});
 
 			// no comma means no item left
 			finished = !self.eat(Comma);
 		}
 
-		Ok(Generics(generics))
+		Ok(Generics {
+			idents: generics,
+			span: self.close_span(lo),
+		})
 	}
 
 	/// Parse [`ExprKind::FnCall`]
@@ -862,8 +889,8 @@ impl Parser<'_> {
 			self.parse_ty_path()?
 		} else if self.eat(Star) {
 			self.parse_ty_pointer()?
-		} else if self.eat(Ampersand) {
-			self.parse_ty_reference()?
+		// } else if self.eat(Ampersand) {
+		// 	self.parse_ty_reference()?
 		} else {
 			let report = errors::parser::expected_construct_no_match("a type", self.token);
 			return Err(Diagnostic::new(report));
@@ -883,14 +910,14 @@ impl Parser<'_> {
 		Ok(TyKind::Path(path))
 	}
 
-	/// Parse [`TyKind::Reference`]
-	fn parse_ty_reference(&mut self) -> Result<TyKind> {
-		debug_assert_eq!(self.last_token.kind, Ampersand);
+	// Parse [`TyKind::Reference`]
+	// fn parse_ty_reference(&mut self) -> Result<TyKind> {
+	// 	debug_assert_eq!(self.last_token.kind, Ampersand);
 
-		let ty = Box::new(self.parse_ty()?);
+	// 	let ty = Box::new(self.parse_ty()?);
 
-		Ok(TyKind::Reference(ty))
-	}
+	// 	Ok(TyKind::Reference(ty))
+	// }
 
 	/// Parse [`TyKind::Pointer`]
 	fn parse_ty_pointer(&mut self) -> Result<TyKind> {
@@ -901,7 +928,7 @@ impl Parser<'_> {
 		Ok(TyKind::Pointer(ty))
 	}
 
-	/// Parse `"<" <ty> ">"`
+	/// Parse `"<" <ty>,* ">"`
 	fn parse_ty_generics(&mut self) -> Result<Vec<Ty>> {
 		let mut finished = false;
 

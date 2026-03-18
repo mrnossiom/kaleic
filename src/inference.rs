@@ -3,8 +3,8 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast::{self, UnaryOp},
 	errors,
-	hir::{self, ExprId, ExprKind, Function, ItemId},
-	resolve::NameEnvironment,
+	hir::{self, ExprId, ExprKind, Function},
+	resolve::{DefId, NameEnvironment},
 	session::{DcxHandle, Span},
 	symbols::Symbol,
 	ty::{self, Infer, InferKind, Param, PrimitiveKind, TyCtx, TyKind},
@@ -20,7 +20,7 @@ pub struct TypeVarId(u32);
 pub struct Inferer<'tcx> {
 	pub tcx: &'tcx TyCtx<'tcx>,
 	pub name_env: &'tcx NameEnvironment,
-	pub type_env: &'tcx FxHashMap<ItemId, TyKind>,
+	pub type_env: &'tcx FxHashMap<DefId, TyKind>,
 
 	pub decl: &'tcx ty::FnDecl,
 	pub body: &'tcx hir::Block,
@@ -44,7 +44,7 @@ impl<'tcx> Inferer<'tcx> {
 		decl: &'tcx ty::FnDecl,
 		body: &'tcx hir::Block,
 		name_env: &'tcx NameEnvironment,
-		type_env: &'tcx FxHashMap<ItemId, TyKind>,
+		type_env: &'tcx FxHashMap<DefId, TyKind>,
 	) -> Self {
 		Self {
 			tcx,

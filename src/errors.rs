@@ -43,6 +43,12 @@ pub mod lowerer {
 			.with_label(Label::new(item_span).with_message("found an item that was unexpected"))
 			.with_help("only type definitions and functions are allowed")
 	}
+
+	pub(crate) fn generic_in_attr_path(generics: Span) -> ariadne::ReportBuilder<Span, ReportKind> {
+		Report::build(ReportKind::Error, generics)
+			.with_message("attribute paths cannot contain generics".to_string())
+			.with_label(Label::new(generics).with_message("remove these generics"))
+	}
 }
 
 pub mod ty {
@@ -145,7 +151,7 @@ pub mod ty {
 	pub fn item_name_conflict(
 		original: Span,
 		conflicted: Span,
-		namespace: &Namespace,
+		namespace: Namespace,
 	) -> ReportBuilder {
 		Report::build(ReportKind::Error, original)
 			.with_message(format!(

@@ -11,7 +11,8 @@ use crate::{
 	ast::{self, BinaryOp},
 	bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
-	hir::{self, Enum, ExprId, Function, ItemId, Struct},
+	hir::{self, Enum, ExprId, Function, Struct},
+	resolve::DefId,
 	session::{PrintKind, ScxHandle, SessionCtx},
 	symbols::Symbol,
 	ty::{self, TyCtx, TyKind},
@@ -33,7 +34,7 @@ pub struct Generator<'tcx, M> {
 	isa: Arc<dyn TargetIsa + 'static>,
 	builder_context: FunctionBuilderContext,
 
-	functions: FxHashMap<ItemId, FuncId>,
+	functions: FxHashMap<DefId, FuncId>,
 }
 
 impl<'tcx, M: Module> Generator<'tcx, M> {
@@ -130,11 +131,11 @@ impl<M: Module> Generator<'_, M> {
 	pub fn declare_func(
 		&mut self,
 		name: Symbol,
-		item_id: ItemId,
+		def_id: DefId,
 		decl: &ty::FnDecl,
 		linkage: Linkage,
 	) -> Result<FuncId> {
-		if self.functions.contains_key(&item_id) {
+		if self.functions.contains_key(&def_id) {
 			return Err("already defined");
 		}
 
@@ -146,14 +147,14 @@ impl<M: Module> Generator<'_, M> {
 			.declare_function(&func_name, linkage, &signature)
 			.unwrap();
 
-		self.functions.insert(item_id, func_id);
+		self.functions.insert(def_id, func_id);
 		Ok(func_id)
 	}
 
 	fn define_func(
 		&mut self,
 		func_id: FuncId,
-		item_id: ItemId,
+		def_id: DefId,
 		decl: &ty::FnDecl,
 		body: &hir::Block,
 	) -> Result<()> {
@@ -165,7 +166,7 @@ impl<M: Module> Generator<'_, M> {
 		let builder = FunctionBuilder::new(&mut context.func, &mut self.builder_context);
 
 		let type_env = &self.tcx.type_env.borrow();
-		let typeck_results = &self.tcx.typeck_results.borrow_key(&item_id);
+		let typeck_results = &self.tcx.typeck_results.borrow_key(&def_id);
 
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
@@ -201,7 +202,7 @@ impl<M: Module> Generator<'_, M> {
 		self.tcx
 			.scx()
 			.register_artefact(&PrintKind::BackendIr, &name, |artefact| {
-				write!(artefact, "{}", context.func.display()).unwrap();
+				write!(artefact, "{}", context.func.display())
 			});
 
 		self.module.define_function(func_id, &mut context).unwrap();
@@ -227,7 +228,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					// TODO: react to abi attribute
 					// TODO: change to hidden by default
 					let func_id = self
-						.declare_func(name.sym, item.item_id(), decl, Linkage::Hidden)
+						.declare_func(name.sym, item.item_id(), &decl, Linkage::Hidden)
 						.unwrap();
 					function_ids.insert(item.id, func_id);
 				}
@@ -242,7 +243,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 								};
 
 								let _func_id = self
-									.declare_func(name.sym, item.item_id(), decl, Linkage::Import)
+									.declare_func(name.sym, item.item_id(), &decl, Linkage::Import)
 									.unwrap();
 							}
 						}
@@ -270,7 +271,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, item.item_id(), decl, body)
+					self.define_func(*func_id, item.item_id(), &decl, body)
 						.unwrap();
 				}
 
@@ -316,11 +317,11 @@ impl ObjectBackend for Generator<'_, ObjectModule> {
 pub struct FunctionGenerator<'scx, 'bld> {
 	scx: &'scx SessionCtx,
 
-	type_env: &'scx FxHashMap<ItemId, ty::TyKind>,
+	type_env: &'scx FxHashMap<DefId, ty::TyKind>,
 	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
 
 	builder: FunctionBuilder<'bld>,
-	functions: &'bld FxHashMap<ItemId, FuncId>,
+	functions: &'bld FxHashMap<DefId, FuncId>,
 	module: &'bld mut dyn Module,
 	isa: Arc<dyn TargetIsa + 'static>,
 

@@ -108,7 +108,6 @@ pub struct SessionCtx {
 	dcx: DiagnosticCtx,
 
 	pub aid_hid_map: Put<FxHashMap<ast::NodeId, hir::NodeId>>,
-	pub hid_aid_map: Put<FxHashMap<hir::NodeId, ast::NodeId>>,
 }
 
 impl SessionCtx {
@@ -123,7 +122,6 @@ impl SessionCtx {
 			dcx,
 
 			aid_hid_map: Put::default(),
-			hid_aid_map: Put::default(),
 		}
 	}
 }
@@ -167,11 +165,11 @@ impl SessionCtx {
 		&self,
 		kind: &PrintKind,
 		name: &str,
-		f: impl FnOnce(&mut ArtefactWriter),
+		f: impl FnOnce(&mut ArtefactWriter) -> fmt::Result,
 	) {
 		if self.options.print.contains(kind) {
 			let file = fs::File::create(self.options.debug_output.join(name)).unwrap();
-			f(&mut ArtefactWriter(file));
+			f(&mut ArtefactWriter(file)).unwrap();
 		}
 	}
 }

@@ -12,6 +12,26 @@
   > - Macros (Textual and Syntactic)
   > - Parametric Polymorphism (“Generics”)
 
+- [Parametricity, or Comptime is Bonkers](https://noelwelsh.com/posts/comptime-is-bonkers/)
+
+  Though I have not used Zig much,
+  I agree that their comptime are too much free form,
+  and although all abstractions are leaky, it makes it too easy to depend on some construction
+
+  Maybe never allow compiler intrinsic to output information without a trait (except `TypeId`).
+
+  ```
+  // has to be the identity because T has no observable properties
+  fn foo<T>(foo: T) T {}
+
+  // as opposed to
+  fn foo<T: Any>(foo: T) _ {}
+  fn foo<T: Shape>() _ {} // e.g. shows that it uses T for reflection
+  fn foo<T: Layout>() _ {}
+  ```
+
+- [facet - GitHub](https://github.com/facet-rs/facet)
+
 ## Samples
 
 How to balance between user power and good ergonomics.

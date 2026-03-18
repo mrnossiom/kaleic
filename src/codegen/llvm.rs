@@ -17,7 +17,8 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast, bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
-	hir::{self, Enum, ExprId, Function, ItemId, Struct},
+	hir::{self, Enum, ExprId, Function, Struct},
+	resolve::DefId,
 	session::{PrintKind, SessionCtx},
 	symbols::Symbol,
 	ty::{self, TyCtx, TyKind},
@@ -115,12 +116,12 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 	fn define_func(
 		&self,
 		func_val: FunctionValue<'ctx>,
-		item_id: ItemId,
+		def_id: DefId,
 		decl: &ty::FnDecl,
 		body: &hir::Block,
 	) -> Result<()> {
 		let type_env = &self.tcx.type_env.borrow();
-		let typeck_results = &self.tcx.typeck_results.borrow_key(&item_id);
+		let typeck_results = &self.tcx.typeck_results.borrow_key(&def_id);
 
 		let mut generator = FunctionGenerator {
 			scx: self.tcx.scx,
@@ -145,7 +146,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		self.tcx
 			.scx
 			.register_artefact(&PrintKind::BackendIr, &name, |artefact| {
-				write!(artefact, "{}", func_val.print_to_string().to_string_lossy()).unwrap();
+				write!(artefact, "{}", func_val.print_to_string().to_string_lossy())
 			});
 
 		if !func_val.verify(true) {
@@ -172,7 +173,7 @@ impl CodeGenBackend for Generator<'_, '_> {
 						todo!()
 					};
 
-					let func_id = self.declare_func(name.sym, decl).unwrap();
+					let func_id = self.declare_func(name.sym, &decl).unwrap();
 					function_ids.insert(item.id, func_id);
 				}
 				hir::ItemKind::ForeignMod { items } => {
@@ -185,7 +186,7 @@ impl CodeGenBackend for Generator<'_, '_> {
 									todo!()
 								};
 
-								let _func_id = self.declare_func(name.sym, decl).unwrap();
+								let _func_id = self.declare_func(name.sym, &decl).unwrap();
 							}
 						}
 					}
@@ -212,7 +213,7 @@ impl CodeGenBackend for Generator<'_, '_> {
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, item.item_id(), decl, body)
+					self.define_func(*func_id, item.item_id(), &decl, body)
 						.unwrap();
 				}
 
@@ -323,7 +324,7 @@ impl<'ctx> Generator<'_, 'ctx> {
 struct FunctionGenerator<'scx, 'bld, 'ctx> {
 	scx: &'scx SessionCtx,
 
-	type_env: &'scx FxHashMap<ItemId, ty::TyKind>,
+	type_env: &'scx FxHashMap<DefId, ty::TyKind>,
 	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
 
 	ctx: &'ctx Context,

@@ -14,7 +14,6 @@ pub fn lower_root(scx: &SessionCtx, source: &ast::Root) -> hir::Root {
 	let mut l = Lowerer::new(scx);
 	let hir = source.lower(&mut l);
 	scx.aid_hid_map.put(l.aid_hid_map);
-	scx.hid_aid_map.put(l.hid_aid_map);
 	hir
 }
 
@@ -33,7 +32,6 @@ pub struct Lowerer<'scx> {
 	scx: &'scx SessionCtx,
 
 	aid_hid_map: FxHashMap<ast::NodeId, hir::NodeId>,
-	hid_aid_map: FxHashMap<hir::NodeId, ast::NodeId>,
 }
 
 impl<'scx> Lowerer<'scx> {
@@ -41,7 +39,6 @@ impl<'scx> Lowerer<'scx> {
 		Self {
 			scx,
 			aid_hid_map: FxHashMap::default(),
-			hid_aid_map: FxHashMap::default(),
 		}
 	}
 
@@ -52,7 +49,6 @@ impl<'scx> Lowerer<'scx> {
 
 		if let Some(aid) = aid.into() {
 			self.aid_hid_map.insert(aid, hid);
-			self.hid_aid_map.insert(hid, aid);
 		}
 
 		hid
@@ -117,7 +113,7 @@ impl Lower for ast::Attr {
 			id,
 		} = &self;
 		Self::Out {
-			path: path.lower(l),
+			path: lower_attr_path(l, path),
 			meta: meta.lower(l),
 			span: *span,
 			id: l.make_node_id(*id),
@@ -639,6 +635,34 @@ fn lower_short_circuit(
 		cond: left.lower_box(l),
 		conseq,
 		altern: Some(altern),
+	}
+}
+
+fn lower_attr_path(
+	l: &mut Lowerer<'_>,
+	ast::Path { segments, span, id }: &ast::Path,
+) -> hir::AttrPath {
+	let segments = segments
+		.iter()
+		.map(
+			|ast::PathSegment {
+			     name,
+			     generics,
+			     span,
+			 }| {
+				if !generics.params.is_empty() {
+					let report = errors::lowerer::generic_in_attr_path(generics.span);
+					l.scx.dcx().emit_build(report);
+				}
+				*name
+			},
+		)
+		.collect();
+
+	hir::AttrPath {
+		segments,
+		span: *span,
+		resolved: todo!(),
 	}
 }
 

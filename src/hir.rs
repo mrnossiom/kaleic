@@ -21,10 +21,6 @@ impl NodeId {
 	pub(crate) fn new(n: u32) -> Self {
 		Self(n)
 	}
-
-	pub(crate) unsafe fn to_item_id(self) -> ItemId {
-		ItemId(self)
-	}
 }
 
 impl fmt::Debug for NodeId {
@@ -33,9 +29,6 @@ impl fmt::Debug for NodeId {
 		write!(f, "hid#{}", self.0)
 	}
 }
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ItemId(NodeId);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ExprId(NodeId);
@@ -48,7 +41,7 @@ pub struct Root {
 
 #[derive(Debug)]
 pub struct Attr {
-	pub path: Path,
+	pub path: AttrPath,
 	pub meta: AttrMeta,
 	pub span: Span,
 	pub id: NodeId,
@@ -67,12 +60,6 @@ pub struct Item<Kind = ItemKind> {
 	pub kind: Kind,
 	pub span: Span,
 	pub id: NodeId,
-}
-
-impl<T> Item<T> {
-	pub fn item_id(&self) -> ItemId {
-		ItemId(self.id)
-	}
 }
 
 #[derive(Debug, Clone)]
@@ -124,7 +111,14 @@ pub struct PathSegment {
 pub struct Path {
 	pub segments: Vec<PathSegment>,
 	pub span: Span,
-	pub resolved: resolve::Resolved,
+	pub resolved: resolve::Resolution,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttrPath {
+	pub segments: Vec<Ident>,
+	pub span: Span,
+	pub resolved: resolve::Resolution,
 }
 
 #[derive(Debug, Clone)]
