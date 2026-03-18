@@ -69,6 +69,7 @@ impl Token {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
 	Ident(Symbol),
+	Kw(Symbol),
 	LiteralStr(Symbol),
 	LiteralInt(Symbol),
 	LiteralFloat(Symbol),
@@ -147,8 +148,8 @@ impl fmt::Display for TokenKind {
 	/// Should fit in the sentence "found {}"
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Ident(ident) if ident.is_keyword() => write!(f, "a keyword"),
 			Ident(ident) => write!(f, "an identifier"),
+			Kw(ident) => write!(f, "a keyword"),
 			LiteralStr(_) => write!(f, "a string literal"),
 			LiteralInt(_) => write!(f, "a integer literal"),
 			LiteralFloat(_) => write!(f, "a float literal"),
@@ -282,7 +283,12 @@ impl Lexer<'_, '_> {
 				c if is_ident_start(c) => {
 					self.bump_while(is_ident_continue);
 					let str = self.str_from(start);
-					Ident(self.scx.symbols.intern(str))
+					let sym = self.scx.symbols.intern(str);
+					if sym.is_keyword() {
+						Kw(sym)
+					} else {
+						Ident(sym)
+					}
 				}
 
 				// Int or Float

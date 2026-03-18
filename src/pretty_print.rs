@@ -385,11 +385,21 @@ mod ast_pp {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			let Self {
 				segments,
-				generics,
 				span: _,
 				id: _,
 			} = &self;
-			pp!(f, [segments, "::"])?;
+			pp!(f, [segments, "::"])
+		}
+	}
+
+	impl PrettyPrint for ast::PathSegment {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				name,
+				generics,
+				span: _,
+			} = &self;
+			pp!(f, (name))?;
 			if !generics.is_empty() {
 				pp!(f, "<", [generics, ", "], ">")?;
 			}

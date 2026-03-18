@@ -18,7 +18,8 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	scx.dcx().check_sane_or_exit();
 
-	let name_env = resolve::resolve_root(scx, &ast);
+	let name_env = resolve::collect_root(scx, &ast);
+	() = resolve::resolve_root(scx, &ast);
 
 	scx.register_artefact(
 		&PrintKind::CollectedItems,

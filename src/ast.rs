@@ -88,6 +88,8 @@ pub enum AttrMeta {
 
 #[derive(Debug)]
 pub struct Expr {
+	// TODO
+	// pub attrs: Vec<Attr>,
 	pub kind: ExprKind,
 	pub span: Span,
 	pub id: NodeId,
@@ -308,25 +310,39 @@ pub enum TyKind {
 
 #[derive(Debug, Clone)]
 pub struct Path {
-	pub segments: Vec<Ident>,
-	pub generics: Vec<Ty>,
+	pub segments: Vec<PathSegment>,
 	pub span: Span,
 	pub id: NodeId,
 }
 
+#[derive(Debug, Clone)]
+pub struct PathSegment {
+	pub name: Ident,
+	pub generics: Vec<Ty>,
+	pub span: Span,
+}
+
 impl Path {
-	// TODO: remove simple apis
+	// TODO: remove simple api
 	pub fn simple(&self) -> Ident {
 		assert_eq!(self.segments.len(), 1);
-		assert_eq!(self.generics.len(), 0);
-		self.segments[0]
+		self.segments[0].name
+	}
+
+	pub(crate) fn is_match(&self, path: &[Symbol]) -> bool {
+		self.segments.len() == path.len()
+			&& self
+				.segments
+				.iter()
+				.zip(path)
+				.all(|(segment, sym)| segment.name.sym == *sym && segment.generics.is_empty())
 	}
 }
 
 #[derive(Debug)]
 pub struct Item {
-	pub kind: ItemKind,
 	pub attrs: Vec<Attr>,
+	pub kind: ItemKind,
 	pub span: Span,
 	pub id: NodeId,
 }

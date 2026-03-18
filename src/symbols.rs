@@ -85,6 +85,17 @@ define_symbols! {
 		str,
 		uint,
 
+		// lang items
+		AddTrait,
+		AddAssignTrait,
+		SubTrait,
+		SubAssignTrait,
+
+		bool_ty,
+		uint_ty,
+		sint_ty,
+		float_ty,
+
 		// attrs
 		lang_item,
 		link,
@@ -104,7 +115,7 @@ impl Symbol {
 	}
 
 	pub(crate) const fn get(self) -> u32 {
-		self.0.get().strict_add(1)
+		self.0.get().strict_sub(1)
 	}
 
 	pub(crate) const fn is_keyword(self) -> bool {

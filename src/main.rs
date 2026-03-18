@@ -104,7 +104,7 @@ fn main() {
 		options.inputs.extend([
 			"std/rt.kl".into(),
 			"std/libc.kl".into(),
-			// "std/arith.kl".into(),
+			"std/arith.kl".into(),
 		]);
 	}
 

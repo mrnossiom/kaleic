@@ -49,7 +49,10 @@ pub mod ty {
 	use ariadne::Color;
 
 	use super::*;
-	use crate::ty::{Infer, InferKind, TyKind};
+	use crate::{
+		resolve::Namespace,
+		ty::{Infer, InferKind, TyKind},
+	};
 
 	pub fn report_unconstrained(ty_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, ty_span)
@@ -142,11 +145,11 @@ pub mod ty {
 	pub fn item_name_conflict(
 		original: Span,
 		conflicted: Span,
-		item_classifier: &'static str,
+		namespace: &Namespace,
 	) -> ReportBuilder {
 		Report::build(ReportKind::Error, original)
 			.with_message(format!(
-				"distinct {item_classifier} items have a conflicting name"
+				"distinct {namespace} items have a conflicting name"
 			))
 			.with_label(Label::new(original).with_message("this is the first item encountered"))
 			.with_label(Label::new(conflicted).with_message("this item has the same name"))

@@ -1,27 +1,36 @@
-#internal::lang_item("Add")
+#lang_item("AddTrait")
 trait Add<T> {
 	type Output;
 	fn add(self: &Self, other: T) Self::Output;
 }
 
-#internal::lang_item("AddAssign")
+#lang_item("AddAssignTrait")
 trait AddAssign<T> {
 	fn add_assign(self: &/*mut*/ Self, other: T);
 }
 
-#internal::lang_item("Sub")
+#lang_item("SubTrait")
 trait Sub<T> {
 	type Output;
 	fn sub(self: &Self, other: T) Self::Output;
 }
 
-#internal::lang_item("SubAssign")
+#lang_item("SubAssignTrait")
 trait SubAssign<T> {
 	fn sub_assign(self: &/*mut*/ Self, other: T);
 }
 
-#internal::lang_item("uint")
+#lang_item("uint_ty")
 struct uint;
+
+#lang_item("sint_ty")
+struct sint;
+
+#lang_item("float_ty")
+struct float;
+
+#lang_item("bool_ty")
+struct bool;
 
 for uint impl Add<uint> {
 	type Output = uint;
