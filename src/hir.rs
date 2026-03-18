@@ -4,7 +4,9 @@ use std::fmt;
 
 use crate::{
 	ast::{self, Ident, Spanned},
-	session::{Span, Symbol},
+	resolve,
+	session::Span,
+	symbols::Symbol,
 };
 
 /// `hir::NodeId` are derived from `ast::NodeId`s during lowering.
@@ -40,8 +42,24 @@ pub struct ExprId(NodeId);
 
 #[derive(Debug)]
 pub struct Root {
-	// pub attrs: FxHashMap<AttrName, AttrKind>
+	pub attrs: Vec<Attr>,
 	pub items: Vec<Item>,
+}
+
+#[derive(Debug)]
+pub struct Attr {
+	pub path: Path,
+	pub meta: AttrMeta,
+	pub span: Span,
+	pub id: NodeId,
+}
+
+#[derive(Debug)]
+pub enum AttrMeta {
+	None,
+	Tuple(Vec<Expr>),
+	Map(Vec<Expr>),
+	List(Vec<Expr>),
 }
 
 #[derive(Debug, Clone)]
@@ -85,14 +103,28 @@ pub enum ItemKind {
 		members: Vec<Item<TraitItemKind>>,
 	},
 	TraitImpl {
-		type_: ast::Path,
-		trait_: ast::Path,
+		type_: Path,
+		trait_: Path,
 		members: Vec<Item<TraitItemKind>>,
 	},
 
 	ForeignMod {
 		items: Vec<Item<ForeignItemKind>>,
 	},
+}
+
+#[derive(Debug, Clone)]
+pub struct PathSegment {
+	pub name: Ident,
+	pub generics: Vec<ast::Generics>,
+	pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Path {
+	pub segments: Vec<PathSegment>,
+	pub span: Span,
+	pub resolved: resolve::Resolved,
 }
 
 #[derive(Debug, Clone)]
@@ -194,7 +226,7 @@ pub enum ExprKind {
 		sym: Symbol,
 	},
 	Access {
-		path: ast::Path,
+		path: Path,
 	},
 
 	Unary {

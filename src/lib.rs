@@ -3,6 +3,8 @@
 pub mod driver;
 pub mod errors;
 pub mod pretty_print;
+pub mod session;
+pub mod symbols;
 
 pub mod ast;
 pub mod lexer;
@@ -13,7 +15,6 @@ pub mod inference;
 pub mod lowerer;
 
 pub mod resolve;
-pub mod session;
 pub mod ty;
 
 pub mod codegen;

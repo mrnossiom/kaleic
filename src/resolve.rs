@@ -5,7 +5,8 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast::{self, Visitor},
 	errors, hir,
-	session::{DcxHandle, SessionCtx, Symbol},
+	session::{DcxHandle, SessionCtx},
+	symbols::Symbol,
 };
 
 pub(crate) fn resolve_root(scx: &SessionCtx, ast: &ast::Root) -> NameEnvironment {
@@ -71,7 +72,16 @@ impl ast::Visitor for Collector<'_> {
 		self.visit_items(items);
 	}
 
-	fn visit_attr(&mut self, ast::Attr { path, meta, span }: &ast::Attr) {}
+	fn visit_attr(
+		&mut self,
+		ast::Attr {
+			path,
+			meta,
+			span,
+			id,
+		}: &ast::Attr,
+	) {
+	}
 
 	fn visit_item(
 		&mut self,
@@ -123,11 +133,23 @@ impl ast::Visitor for Collector<'_> {
 
 #[derive(Debug, Clone)]
 pub enum Resolved {
+	// Def(resolve::DefId),
+	Def(hir::ItemId),
 	Local(hir::ExprId),
 }
 
 impl Resolved {
 	pub fn as_def(&self) -> Option<hir::ItemId> {
-		None
+		match self {
+			Self::Def(def) => Some(*def),
+			_ => None,
+		}
+	}
+
+	pub fn as_local(&self) -> Option<hir::ExprId> {
+		match self {
+			Self::Local(id) => Some(*id),
+			_ => None,
+		}
 	}
 }

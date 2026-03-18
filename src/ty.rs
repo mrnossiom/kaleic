@@ -12,6 +12,7 @@ use crate::{
 	inference::{self, TypeVarId},
 	resolve::NameEnvironment,
 	session::{ScxHandle, SessionCtx, Span},
+	symbols::{kw, sym},
 };
 
 #[derive(Debug)]
@@ -159,20 +160,18 @@ impl TyCtx<'_> {
 	pub fn lower_path_ty(&self, path: &ast::Path) -> TyKind {
 		let path = path.simple();
 
-		let primitive = match self.scx.symbols.resolve(path.sym).as_str() {
+		let primitive = match path.sym {
 			// let report = errors::ty::function_cannot_infer_signature(decl.ret.span);
 			// self.tcx.dcx().emit_build(report);
 			// TyKind::Error
-			"_" => todo!(),
+			kw::Underscore => todo!(),
 
-			"never" => Some(TyKind::Primitive(PrimitiveKind::Never)),
-
-			"bool" => Some(TyKind::Primitive(PrimitiveKind::Bool)),
-			"uint" => Some(TyKind::Primitive(PrimitiveKind::UnsignedInt)),
-			"sint" => Some(TyKind::Primitive(PrimitiveKind::SignedInt)),
-			"float" => Some(TyKind::Primitive(PrimitiveKind::Float)),
-
-			"str" => Some(TyKind::Primitive(PrimitiveKind::Str)),
+			sym::never => Some(TyKind::Primitive(PrimitiveKind::Never)),
+			sym::bool => Some(TyKind::Primitive(PrimitiveKind::Bool)),
+			sym::uint => Some(TyKind::Primitive(PrimitiveKind::UnsignedInt)),
+			sym::sint => Some(TyKind::Primitive(PrimitiveKind::SignedInt)),
+			sym::float => Some(TyKind::Primitive(PrimitiveKind::Float)),
+			sym::str => Some(TyKind::Primitive(PrimitiveKind::Str)),
 			_ => None,
 		};
 
@@ -387,7 +386,7 @@ impl<'tcx> TypeComputer<'tcx> {
 
 impl TypeComputer<'_> {
 	pub fn compute_root(&mut self, root: &hir::Root) {
-		let hir::Root { items } = &root;
+		let hir::Root { attrs: _, items } = &root;
 		for item in items {
 			self.compute_item(item);
 		}
@@ -488,6 +487,7 @@ impl TypeComputer<'_> {
 	}
 
 	fn lower_variant(&self, hir::EnumVariant { name, fields, span }: &hir::EnumVariant) -> Variant {
+		let _ = self;
 		Variant {
 			name: *name,
 			span: *span,

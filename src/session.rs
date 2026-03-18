@@ -16,12 +16,12 @@ use std::{
 use ariadne::{Config, IndexType, ReportKind};
 use cranelift::codegen::FxHashMap;
 use parking_lot::RwLock;
-use string_interner::{StringInterner, Symbol as _, backend::StringBackend, symbol::SymbolU32};
 
 use crate::{
 	ast, bug,
 	codegen::{Backend, Linker},
 	hir,
+	symbols::SymbolInterner,
 	ty::Put,
 };
 
@@ -96,80 +96,6 @@ impl Sub<BytePos> for Span {
 impl fmt::Debug for Span {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "sp#{}..{}", self.start.to_u32(), self.end.to_u32())
-	}
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Symbol(SymbolU32);
-
-impl fmt::Debug for Symbol {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		#[cfg(feature = "debug")]
-		let interned = INTERNER.with(|i| {
-			i.get().map_or(Ok(false), |i| {
-				i.read().resolve(self.0).map_or(Ok(false), |str| {
-					if f.alternate() {
-						write!(f, "{str}").map(|()| true)
-					} else {
-						write!(f, "`{str}`#{}", self.0.to_usize()).map(|()| true)
-					}
-				})
-			})
-		})?;
-		#[cfg(not(feature = "debug"))]
-		let interned = false;
-
-		if !interned {
-			write!(f, "sym#{:?}", self.0.to_usize())?;
-		}
-
-		Ok(())
-	}
-}
-
-#[cfg(feature = "debug")]
-thread_local! {
-	static INTERNER: std::sync::OnceLock<std::sync::Arc<RwLock<StringInterner<StringBackend>>>> = std::sync::OnceLock::default();
-}
-
-pub struct SymbolInterner {
-	#[cfg(feature = "debug")]
-	inner: std::sync::Arc<RwLock<StringInterner<StringBackend>>>,
-	#[cfg(not(feature = "debug"))]
-	inner: RwLock<StringInterner<StringBackend>>,
-}
-
-impl fmt::Debug for SymbolInterner {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		f.debug_struct("SymbolInterner").finish_non_exhaustive()
-	}
-}
-
-impl Default for SymbolInterner {
-	fn default() -> Self {
-		let inner = RwLock::default();
-		#[cfg(feature = "debug")]
-		let inner = {
-			let inner = std::sync::Arc::new(inner);
-			_ = INTERNER.with(|i| i.set(inner.clone()));
-			inner
-		};
-		Self { inner }
-	}
-}
-
-impl SymbolInterner {
-	#[must_use]
-	pub fn intern(&self, symbol: &str) -> Symbol {
-		Symbol(self.inner.write().get_or_intern(symbol))
-	}
-
-	#[must_use]
-	pub fn resolve(&self, symbol: Symbol) -> String {
-		match self.inner.read().resolve(symbol.0) {
-			Some(s) => s.to_owned(),
-			None => bug!("there is a single symbol interner, thus all symbol are valid"),
-		}
 	}
 }
 
@@ -281,9 +207,11 @@ impl DiagnosticCtx {
 			self.degraded.store(true, Ordering::Relaxed);
 		}
 
-		let cache = self.source_map.read();
-		if let Err(err) = diag.report.write(&*cache, io::stderr()) {
-			eprintln!("could not print diagnostic: {err:?}");
+		{
+			let cache = self.source_map.read();
+			if let Err(err) = diag.report.write(&*cache, io::stderr()) {
+				eprintln!("could not print diagnostic: {err:?}");
+			}
 		}
 
 		#[cfg(feature = "debug")]

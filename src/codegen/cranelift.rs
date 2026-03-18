@@ -12,7 +12,8 @@ use crate::{
 	bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, ExprId, Function, ItemId, Struct},
-	session::{PrintKind, ScxHandle, SessionCtx, Symbol},
+	session::{PrintKind, ScxHandle, SessionCtx},
+	symbols::Symbol,
 	ty::{self, TyCtx, TyKind},
 };
 
@@ -465,8 +466,8 @@ impl FunctionGenerator<'_, '_> {
 			}
 
 			hir::ExprKind::Access { path } => {
-				let path = path.segments[0];
-				match self.values.get(&path.sym) {
+				let path = path.resolved.as_local().unwrap();
+				match self.values.get(todo!()) {
 					Some(Some(var)) => MaybeValue::Value(self.builder.use_var(*var)),
 					Some(None) => MaybeValue::Zst,
 					None => return Err("var undefined"),
@@ -563,7 +564,10 @@ impl FunctionGenerator<'_, '_> {
 				let hir::ExprKind::Access { path } = &target.kind else {
 					todo!("invalid lvalue");
 				};
-				let Some(variable) = *self.values.get(&path.simple().sym).unwrap() else {
+
+				let local = path.resolved.as_local().unwrap();
+				let local = todo!();
+				let Some(variable) = *self.values.get(&local).unwrap() else {
 					// handle zst
 					return Ok(MaybeValue::Zst);
 				};

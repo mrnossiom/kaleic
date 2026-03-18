@@ -5,7 +5,8 @@ use crate::{
 	errors,
 	hir::{self, ExprId, ExprKind, Function, ItemId},
 	resolve::NameEnvironment,
-	session::{DcxHandle, Span, Symbol},
+	session::{DcxHandle, Span},
+	symbols::Symbol,
 	ty::{self, Infer, InferKind, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
@@ -74,7 +75,7 @@ impl<'tcx> Inferer<'tcx> {
 }
 
 pub fn infer_root(tcx: &TyCtx, root: &hir::Root) {
-	let hir::Root { items } = root;
+	let hir::Root { attrs: _, items } = root;
 	for item in items {
 		match &item.kind {
 			hir::ItemKind::Function(Function { name, decl, body }) => {
@@ -251,7 +252,7 @@ impl Inferer<'_> {
 
 	fn infer_expr(&mut self, expr @ hir::Expr { kind, span, id: _ }: &hir::Expr) -> TyKind<Infer> {
 		let ty = match kind {
-			hir::ExprKind::Access { path } => self.resolve_var_ty(path),
+			hir::ExprKind::Access { path } => self.resolve_var_ty(todo!()),
 			hir::ExprKind::LiteralStr { sym } => TyKind::Primitive(PrimitiveKind::Str),
 			hir::ExprKind::LiteralInt { sym } => TyKind::Infer(Infer {
 				tvid: self.make_ty_var_id(*span),
@@ -367,7 +368,7 @@ impl Inferer<'_> {
 					todo!("invalid lvalue")
 				};
 
-				let target_ty = self.resolve_var_ty(path);
+				let target_ty = self.resolve_var_ty(todo!());
 				let value_ty = self.infer_expr(value);
 				self.unify(&target_ty, &value_ty)
 			}

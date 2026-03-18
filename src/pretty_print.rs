@@ -7,7 +7,7 @@
 
 use std::fmt::{self, Write as _};
 
-use crate::{ast, session};
+use crate::{ast, symbols};
 
 pub struct PrettyFormatter<'fmt> {
 	inner: &'fmt mut dyn fmt::Write,
@@ -147,7 +147,7 @@ impl PrettyPrint for ast::Ident {
 	}
 }
 
-impl PrettyPrint for session::Symbol {
+impl PrettyPrint for symbols::Symbol {
 	fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 		// TODO
 		write!(f, "{self:#?}")
@@ -387,7 +387,7 @@ mod ast_pp {
 				segments,
 				generics,
 				span: _,
-				resolved: _,
+				id: _,
 			} = &self;
 			pp!(f, [segments, "::"])?;
 			if !generics.is_empty() {
@@ -492,6 +492,7 @@ mod ast_pp {
 				path,
 				meta,
 				span: _,
+				id: _,
 			} = self;
 			match meta {
 				ast::AttrMeta::None => pp!(f, "#", (path)),
@@ -510,8 +511,28 @@ mod hir_pp {
 
 	impl PrettyPrint for hir::Root {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { items } = &self;
+			let Self { attrs, items } = &self;
+			if !attrs.is_empty() {
+				pp!(f, [attrs, '\n'], '\n')?;
+			}
 			pp!(f, [items, '\n'])
+		}
+	}
+
+	impl PrettyPrint for hir::Attr {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				path,
+				meta,
+				span: _,
+				id: _,
+			} = self;
+			match meta {
+				hir::AttrMeta::None => pp!(f, "#", (path)),
+				hir::AttrMeta::Tuple(exprs) => pp!(f, "#", (path), "(", [exprs, ", "], ")"),
+				hir::AttrMeta::Map(exprs) => pp!(f, "#", (path), "{", [exprs, ", "], "}"),
+				hir::AttrMeta::List(exprs) => pp!(f, "#", (path), "[", [exprs, ", "], "]"),
+			}
 		}
 	}
 
@@ -657,6 +678,32 @@ mod hir_pp {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			let Self { name, ty } = &self;
 			pp!(f, (name), ": ", (ty))
+		}
+	}
+
+	impl PrettyPrint for hir::Path {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				segments,
+				span: _,
+				resolved: _,
+			} = self;
+			pp!(f, [segments, ", "])
+		}
+	}
+
+	impl PrettyPrint for hir::PathSegment {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				name,
+				generics,
+				span: _,
+			} = self;
+			pp!(f, (name))?;
+			if !generics.is_empty() {
+				pp!(f, "<", [generics, ", "], ">")?;
+			}
+			Ok(())
 		}
 	}
 

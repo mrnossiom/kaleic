@@ -18,7 +18,8 @@ use crate::{
 	ast, bug,
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, ExprId, Function, ItemId, Struct},
-	session::{PrintKind, SessionCtx, Symbol},
+	session::{PrintKind, SessionCtx},
+	symbols::Symbol,
 	ty::{self, TyCtx, TyKind},
 };
 
@@ -483,14 +484,14 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				MaybeValue::Value(value)
 			}
 			hir::ExprKind::Access { path } => {
-				let place = *self.variables.get(&path.simple().sym).unwrap();
+				let place = *self.variables.get(todo!()).unwrap();
 
 				let ty = &self.typeck_results[&expr.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 
 				let value = self
 					.builder
-					.build_load(ty, place, &self.scx.symbols.resolve(path.simple().sym))
+					.build_load(ty, place, &self.scx.symbols.resolve(todo!()))
 					.unwrap()
 					.as_basic_value_enum();
 
@@ -501,7 +502,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 					todo!("invalid lvalue");
 				};
 
-				let place = *self.variables.get(&path.simple().sym).unwrap();
+				let place = *self.variables.get(todo!()).unwrap();
 				let expr_value = self.codegen_expr(value)?;
 				match expr_value {
 					MaybeValue::Value(value) => {
@@ -520,15 +521,6 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 			hir::ExprKind::Deref { expr } => todo!(),
 
 			hir::ExprKind::FnCall { expr, args } => {
-				let hir::ExprKind::Access { path } = &expr.kind else {
-					todo!("not a fn")
-				};
-				let fn_name = self.scx.symbols.resolve(path.simple().sym);
-				let func = self.module.get_function(&fn_name).unwrap();
-				if args.bit.len() != func.count_params() as usize {
-					return Err("fn call args count mismatch");
-				}
-
 				let mut argsz = Vec::new();
 				for arg in &args.bit {
 					// TODO
@@ -538,10 +530,30 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 					}
 				}
 
-				let call = self.builder.build_call(func, &argsz, "").unwrap();
-				let value = call.try_as_basic_value().basic();
+				let call = if let hir::ExprKind::Access { path } = &expr.kind {
+					// direct call
+					let local = path.resolved.as_def().unwrap();
+					let func = self.module.get_function(todo!()).unwrap();
 
-				match value {
+					if args.bit.len() != func.count_params() as usize {
+						return Err("fn call args count mismatch");
+					}
+
+					self.builder.build_call(func, &argsz, "").unwrap()
+				} else {
+					// indirect call
+					let addr = match self.codegen_expr(expr)? {
+						MaybeValue::Value(val) => val.into_pointer_value(),
+						MaybeValue::Never => return Ok(MaybeValue::Never),
+					};
+
+					let fn_type = todo!();
+					self.builder
+						.build_indirect_call(fn_type, addr, &argsz, "")
+						.unwrap()
+				};
+
+				match call.try_as_basic_value().basic() {
 					Some(val) => MaybeValue::Value(val),
 					None => {
 						if matches!(expr_ty, TyKind::Primitive(ty::PrimitiveKind::Never)) {

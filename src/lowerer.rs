@@ -100,8 +100,39 @@ impl Lower for ast::Root {
 	type Out = hir::Root;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { attrs, items } = &self;
-		let items = items.iter().lower_iter(l).collect();
-		Self::Out { items }
+		Self::Out {
+			attrs: attrs.iter().lower_iter(l).collect(),
+			items: items.iter().lower_iter(l).collect(),
+		}
+	}
+}
+
+impl Lower for ast::Attr {
+	type Out = hir::Attr;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self {
+			path,
+			meta,
+			span,
+			id,
+		} = &self;
+		Self::Out {
+			path: path.lower(l),
+			meta: meta.lower(l),
+			span: *span,
+			id: l.make_node_id(*id),
+		}
+	}
+}
+impl Lower for ast::AttrMeta {
+	type Out = hir::AttrMeta;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		match self {
+			Self::None => hir::AttrMeta::None,
+			Self::Tuple(exprs) => hir::AttrMeta::Tuple(exprs.iter().lower_iter(l).collect()),
+			Self::Map(exprs) => hir::AttrMeta::Map(exprs.iter().lower_iter(l).collect()),
+			Self::List(exprs) => hir::AttrMeta::List(exprs.iter().lower_iter(l).collect()),
+		}
 	}
 }
 
@@ -178,8 +209,8 @@ impl Lower for ast::ItemKind {
 			} => {
 				let scx = l.scx;
 				hir::ItemKind::TraitImpl {
-					type_: type_.clone(),
-					trait_: trait_.clone(),
+					type_: type_.lower(l),
+					trait_: trait_.lower(l),
 					members: members
 						.iter()
 						.lower_iter(l)
@@ -404,7 +435,9 @@ impl Lower for ast::Expr {
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { kind, span, id } = &self;
 		let kind = match kind {
-			ast::ExprKind::Access { path } => hir::ExprKind::Access { path: path.clone() },
+			ast::ExprKind::Access { path } => hir::ExprKind::Access {
+				path: path.lower(l),
+			},
 			ast::ExprKind::LiteralStr { sym } => hir::ExprKind::LiteralStr { sym: *sym },
 			ast::ExprKind::LiteralInt { sym } => hir::ExprKind::LiteralInt { sym: *sym },
 			ast::ExprKind::LiteralFloat { sym } => hir::ExprKind::LiteralFloat { sym: *sym },
@@ -512,6 +545,13 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 
 	hir::ExprKind::Loop {
 		block: Box::new(loop_blk),
+	}
+}
+
+impl Lower for ast::Path {
+	type Out = hir::Path;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		todo!()
 	}
 }
 

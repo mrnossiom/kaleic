@@ -4,10 +4,11 @@ use core::fmt;
 use std::str::Chars;
 
 use crate::ast::Ident;
-use crate::session::{BytePos, SessionCtx, Span, Symbol};
+use crate::session::{BytePos, SessionCtx, Span};
 
 #[allow(clippy::enum_glob_use)]
-use crate::lexer::{Keyword::*, TokenKind::*};
+use crate::lexer::TokenKind::*;
+use crate::symbols::Symbol;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Spacing {
@@ -68,7 +69,6 @@ impl Token {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenKind {
 	Ident(Symbol),
-	Keyword(Keyword),
 	LiteralStr(Symbol),
 	LiteralInt(Symbol),
 	LiteralFloat(Symbol),
@@ -147,8 +147,8 @@ impl fmt::Display for TokenKind {
 	/// Should fit in the sentence "found {}"
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Ident(_) => write!(f, "an identifier"),
-			Keyword(_) => write!(f, "a keyword"),
+			Ident(ident) if ident.is_keyword() => write!(f, "a keyword"),
+			Ident(ident) => write!(f, "an identifier"),
 			LiteralStr(_) => write!(f, "a string literal"),
 			LiteralInt(_) => write!(f, "a integer literal"),
 			LiteralFloat(_) => write!(f, "a float literal"),
@@ -200,42 +200,6 @@ impl fmt::Display for TokenKind {
 			Eof => write!(f, "the end of the file"),
 		}
 	}
-}
-
-// TODO: should keywords be a verb? def (function), let (variables), ??? (type)
-// or should we keep names like fn, trait, var
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Keyword {
-	Fn,
-	// Decl,
-	//
-	Unsafe,
-	Extern,
-	Type,
-	Struct,
-	Enum,
-
-	Impl,
-	Trait,
-	For,
-	Loop,
-	While,
-	If,
-	Else,
-	Is,
-	Match,
-
-	Let,
-	Mut,
-
-	And,
-	Or,
-	Not,
-
-	Return,
-	Break,
-	Continue,
 }
 
 const EOF_CHAR: char = '\0';
@@ -317,39 +281,8 @@ impl Lexer<'_, '_> {
 			let kind = match self.bump()? {
 				c if is_ident_start(c) => {
 					self.bump_while(is_ident_continue);
-					// TODO: make kw an symbol wrapper with preinterned value
-					match self.str_from(start) {
-						"fn" => Keyword(Fn),
-						// "decl" => Keyword(Decl),
-						"unsafe" => Keyword(Unsafe),
-						"extern" => Keyword(Extern),
-						"type" => Keyword(Type),
-						"struct" => Keyword(Struct),
-						"enum" => Keyword(Enum),
-
-						"impl" => Keyword(Impl),
-						"trait" => Keyword(Trait),
-						"for" => Keyword(For),
-						"loop" => Keyword(Loop),
-						"while" => Keyword(While),
-						"if" => Keyword(If),
-						"else" => Keyword(Else),
-						"is" => Keyword(Is),
-						"match" => Keyword(Match),
-
-						"let" => Keyword(Let),
-						"mut" => Keyword(Mut),
-
-						"and" => Keyword(And),
-						"or" => Keyword(Or),
-						"not" => Keyword(Not),
-
-						"return" => Keyword(Return),
-						"break" => Keyword(Break),
-						"continue" => Keyword(Continue),
-
-						ident => Ident(self.scx.symbols.intern(ident)),
-					}
+					let str = self.str_from(start);
+					Ident(self.scx.symbols.intern(str))
 				}
 
 				// Int or Float

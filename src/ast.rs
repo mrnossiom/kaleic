@@ -2,10 +2,7 @@
 
 use std::fmt;
 
-use crate::{
-	resolve,
-	session::{Span, Symbol},
-};
+use crate::{session::Span, symbols::Symbol};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(u32);
@@ -75,6 +72,7 @@ pub struct Attr {
 	pub path: Path,
 	pub meta: AttrMeta,
 	pub span: Span,
+	pub id: NodeId,
 }
 
 #[derive(Debug)]
@@ -313,19 +311,11 @@ pub struct Path {
 	pub segments: Vec<Ident>,
 	pub generics: Vec<Ty>,
 	pub span: Span,
-	pub resolved: resolve::Resolved,
+	pub id: NodeId,
 }
 
 impl Path {
 	// TODO: remove simple apis
-	pub fn new_simple(id: Ident) -> Self {
-		Self {
-			segments: vec![id],
-			generics: Vec::new(),
-			span: id.span,
-			resolved: todo!(),
-		}
-	}
 	pub fn simple(&self) -> Ident {
 		assert_eq!(self.segments.len(), 1);
 		assert_eq!(self.generics.len(), 0);
