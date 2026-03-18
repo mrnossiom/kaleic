@@ -27,9 +27,9 @@ jobs:
       - uses: cachix/install-nix-action@v31
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-     
-      - run: nix build .#docs
-      
+
+      - run: nix build .#book
+
       - uses: actions/upload-pages-artifact@v4
         with:
           path: 'result'

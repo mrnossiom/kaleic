@@ -21,7 +21,7 @@
       tree-sitter-kalei,
     }:
     let
-      inherit (nixpkgs.lib) genAttrs;
+      inherit (nixpkgs.lib) genAttrs cleanSource;
 
       forAllSystems = genAttrs [
         "x86_64-linux"
@@ -60,24 +60,24 @@
           bundleMdBookTreeSitterGrammars =
             grammars:
             pkgs.stdenv.mkDerivation {
-            name = "mdbook-treesitter-grammars";
-            unpackPhase = "true";
-            installPhase = ''
-              mkdir $out
-            ''
-            + pkgs.lib.concatStringsSep "\n" (
-              pkgs.lib.mapAttrsToList (name: grammar: ''
-                mkdir $out/${name}
-                cp ${grammar}/parser $out/${name}.so
-                cp ${grammar}/queries/* $out/${name}/
-              '') grammars
-            );
-          };
+              name = "mdbook-treesitter-grammars";
+              unpackPhase = "true";
+              installPhase = ''
+                mkdir $out
+              ''
+              + pkgs.lib.concatStringsSep "\n" (
+                pkgs.lib.mapAttrsToList (name: grammar: ''
+                  mkdir $out/${name}
+                  cp ${grammar}/parser $out/${name}.so
+                  cp ${grammar}/queries/* $out/${name}/
+                '') grammars
+              );
+            };
         in
         {
-          docs = pkgs.stdenv.mkDerivation {
-            name = "kaleic-docs";
-            src = ./docs;
+          book = pkgs.stdenv.mkDerivation {
+            name = "kaleic-book";
+            src = cleanSource ./docs;
             nativeBuildInputs = [
               pkgs.mdbook
               lpkgs.mdbook-treesitter
@@ -85,11 +85,46 @@
             postPatch = ''
               ln -s ${lpkgs.mdbook-treesitter-grammars} treesitter
             '';
-            buildPhase = ''
-              mdbook build
-            '';
+            buildPhase = "mdbook build";
             installPhase = "cp -r book $out";
           };
+
+          rust-docs =
+            let
+              rust-toolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+              rustPlatform = pkgs.makeRustPlatform {
+                cargo = rust-toolchain;
+                rustc = rust-toolchain;
+              };
+            in
+            rustPlatform.buildRustPackage {
+              pname = "kaleic-rust-docs";
+              version = "0.0.0";
+              src = cleanSource ./.;
+
+              cargoLock = {
+                lockFile = ./Cargo.lock;
+                outputHashes = {
+                  "ariadne-0.6.0" = "sha256-G13rZlJB+qJ+wLvXICct/rlqfEyZw2kzY7I0aYd0czA=";
+                };
+              };
+
+              nativeBuildInputs = [
+                pkgs.pkg-config
+                pkgs.llvmPackages_21.llvm.dev
+              ];
+              buildInputs = [
+                pkgs.libffi
+                pkgs.libxml2
+              ];
+
+              LLVM_SYS_211_PREFIX = pkgs.llvmPackages_21.llvm.dev;
+
+              buildPhase = "cargo doc --all --no-deps --document-private-items";
+              installPhase = "cp -r target/doc $out";
+
+              doCheck = false;
+            };
 
           mdbook-treesitter-grammars = bundleMdBookTreeSitterGrammars {
             kalei = lpkgs.tree-sitter-kalei;
