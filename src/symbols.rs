@@ -8,28 +8,36 @@ use string_interner::{StringInterner, backend::StringBackend};
 use crate::bug;
 
 macro_rules! define_symbols {
-    (
-        keywords { $($kw_name:ident: $kw_str:expr),* , },
-        symbols { $($sym:ident),* , }
-    ) => {
+    {
+        keywords { $($kw_name:ident: $kw_str:literal),* , },
+        symbols { $($sym_name:ident $(: $sym_str:literal)?),* , }
+    } => {
+    	define_symbols!(@complete
+			keywords { $($kw_name: $kw_str),* },
+			symbols { $($sym_name: define_symbols!(@or_stringify $sym_name $($sym_str)?)),* }
+    	);
+    };
+    (@or_stringify $name:ident) => { stringify!($name) };
+    (@or_stringify $name:ident $str:literal) => { $str };
+    {
+    	@complete
+        keywords { $($kw_name:ident: $kw_str:expr),* },
+        symbols { $($sym_name:ident: $sym_str:expr),* }
+	} => {
         pub static SYMBOLS: &[&str] = &[
             $($kw_str),*,
-            $(stringify!($sym)),*
+            $($sym_str),*
         ];
 
         #[allow(non_upper_case_globals)]
         pub mod kw {
         	use super::{Id, Symbol};
-            $(
-                pub const $kw_name: Symbol = Symbol::new(Id::$kw_name as u32).unwrap();
-            )*
+            $(pub const $kw_name: Symbol = Symbol::new(Id::$kw_name as u32).unwrap();)*
         }
         #[allow(non_upper_case_globals)]
         pub mod sym {
         	use super::{Id, Symbol};
-            $(
-                pub const $sym: Symbol = Symbol::new(Id::$sym as u32).unwrap();
-            )*
+            $(pub const $sym_name: Symbol = Symbol::new(Id::$sym_name as u32).unwrap();)*
         }
 
         // this enum is used to assign unique identifiers
@@ -37,9 +45,9 @@ macro_rules! define_symbols {
         #[repr(u32)]
         enum Id {
             $($kw_name),*,
-            $($sym),*
+            $($sym_name),*
         }
-    };
+	};
 }
 
 define_symbols! {
@@ -76,6 +84,9 @@ define_symbols! {
 		argc,
 		argv,
 		main,
+
+		true_: "true",
+		false_: "false",
 
 		// types
 		bool,

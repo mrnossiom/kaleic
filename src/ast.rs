@@ -373,10 +373,11 @@ pub struct TypeAlias {
 	pub alias: Option<Box<Ty>>,
 }
 
-/// `fn <name> <decl> <body>|;`
+/// `fn <name> <generics> <decl> <body>|;`
 #[derive(Debug)]
 pub struct Function {
 	pub name: Ident,
+	pub generics: Generics,
 	pub decl: FnDecl,
 	pub body: Option<Box<Block>>,
 }
@@ -614,13 +615,19 @@ pub mod visit {
 	) {
 		v.visit_attrs(attrs);
 		match kind {
-			ItemKind::Function(Function { name, decl, body }) => {
+			ItemKind::Function(Function {
+				name,
+				generics,
+				decl,
+				body,
+			}) => {
 				let FnDecl {
 					params,
 					ret,
 					span: _,
 				} = decl;
 				v.visit_ident(name);
+				v.visit_generics(generics);
 				for param in params {
 					v.visit_param(param);
 				}
@@ -886,3 +893,5 @@ pub mod visit {
 
 	pub fn visit_ident<V: Visitor>(_v: &mut V, Ident { sym: _, span: _ }: &Ident) {}
 }
+
+pub use self::visit::Visitor;

@@ -1,19 +1,38 @@
 //! AST to HIR lowering logic
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+	fmt::Write,
+	sync::atomic::{AtomicU32, Ordering},
+};
 
-use cranelift::codegen::FxHashMap;
+use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, Spanned},
-	errors, hir,
-	session::{DcxHandle, Diagnostic, DiagnosticCtx, SessionCtx, Span},
+	errors,
+	hir::{self, Path, PathSegment},
+	pretty_print,
+	resolve::Resolution,
+	session::{DcxHandle, Diagnostic, DiagnosticCtx, PrintKind, SessionCtx, Span},
+	symbols::sym,
 };
 
-pub fn lower_root(scx: &SessionCtx, source: &ast::Root) -> hir::Root {
-	let mut l = Lowerer::new(scx);
+pub fn lower_root(
+	scx: &SessionCtx,
+	source: &ast::Root,
+	resolution_map: &FxHashMap<ast::NodeId, Resolution>,
+) -> hir::Root {
+	let mut l = Lowerer::new(scx, resolution_map);
 	let hir = source.lower(&mut l);
 	scx.aid_hid_map.put(l.aid_hid_map);
+
+	scx.register_artefact(&PrintKind::HigherIr, "hir.txt", |artefact| {
+		write!(artefact, "{hir:#?}")
+	});
+	scx.register_artefact(&PrintKind::HigherIrPretty, "hir-pretty.txt", |artefact| {
+		pretty_print::pretty_print(&hir, artefact)
+	});
+
 	hir
 }
 
@@ -32,13 +51,19 @@ pub struct Lowerer<'scx> {
 	scx: &'scx SessionCtx,
 
 	aid_hid_map: FxHashMap<ast::NodeId, hir::NodeId>,
+
+	resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
 }
 
 impl<'scx> Lowerer<'scx> {
-	pub fn new(scx: &'scx SessionCtx) -> Self {
+	pub fn new(
+		scx: &'scx SessionCtx,
+		resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
+	) -> Self {
 		Self {
 			scx,
 			aid_hid_map: FxHashMap::default(),
+			resolution_map,
 		}
 	}
 
@@ -96,7 +121,7 @@ impl Lower for ast::Root {
 	type Out = hir::Root;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { attrs, items } = &self;
-		Self::Out {
+		hir::Root {
 			attrs: attrs.iter().lower_iter(l).collect(),
 			items: items.iter().lower_iter(l).collect(),
 		}
@@ -112,7 +137,7 @@ impl Lower for ast::Attr {
 			span,
 			id,
 		} = &self;
-		Self::Out {
+		hir::Attr {
 			path: lower_attr_path(l, path),
 			meta: meta.lower(l),
 			span: *span,
@@ -141,8 +166,7 @@ impl Lower for ast::Item {
 			span,
 			id,
 		} = &self;
-
-		Self::Out {
+		hir::Item {
 			kind: kind.lower(l),
 			span: *span,
 			id: l.make_node_id(*id),
@@ -159,7 +183,7 @@ impl Lower for ast::ItemKind {
 			Self::TypeAlias(ast::TypeAlias { name, alias }) => {
 				hir::ItemKind::TypeAlias(hir::TypeAlias {
 					name: *name,
-					alias: alias.clone(),
+					alias: l.lower_opt_box(alias.as_deref()),
 				})
 			}
 			Self::Struct {
@@ -265,9 +289,13 @@ impl TryFrom<hir::Item> for hir::Item<hir::ForeignItemKind> {
 impl Lower for ast::Function {
 	type Out = hir::Function;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
-		let Self { name, decl, body } = &self;
-
-		Self::Out {
+		let Self {
+			name,
+			generics,
+			decl,
+			body,
+		} = &self;
+		hir::Function {
 			name: *name,
 			decl: decl.lower_box(l),
 			body: l.lower_opt_box(body.as_deref()),
@@ -312,7 +340,7 @@ impl Lower for ast::Block {
 			out_stmts.push(stmt);
 		}
 
-		Self::Out {
+		hir::Block {
 			stmts: out_stmts,
 			ret,
 			span: *span,
@@ -338,7 +366,7 @@ impl Lower for ast::Stmt {
 				mutable,
 			} => hir::StmtKind::Let {
 				name: *ident,
-				ty: ty.clone(),
+				ty: l.lower_opt_box(ty.as_deref()),
 				// TODO: handle variable with no init value
 				value: value.as_ref().unwrap().lower_box(l),
 				mutable: *mutable,
@@ -367,7 +395,7 @@ impl Lower for ast::TypeAlias {
 		let _ = l;
 		hir::TypeAlias {
 			name: *name,
-			alias: alias.clone(),
+			alias: l.lower_opt_box(alias.as_deref()),
 		}
 	}
 }
@@ -382,9 +410,21 @@ impl Lower for ast::FnDecl {
 			span: span.end(),
 		});
 		hir::FnDecl {
-			params: params.clone(),
-			ret: Box::new(output),
+			params: params.iter().lower_iter(l).collect(),
+			ret: output.lower_box(l),
 			span: *span,
+		}
+	}
+}
+
+impl Lower for ast::Param {
+	type Out = hir::Param;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { name, ty, id } = &self;
+		hir::Param {
+			name: *name,
+			ty: ty.lower(l),
+			id: l.make_node_id(*id),
 		}
 	}
 }
@@ -396,13 +436,13 @@ impl Lower for ast::FieldDef {
 		let _ = l;
 		hir::FieldDef {
 			name: *name,
-			ty: ty.clone(),
+			ty: ty.lower(l),
 		}
 	}
 }
 
 impl Lower for ast::Variant {
-	type Out = hir::EnumVariant;
+	type Out = hir::Variant;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { name, kind, span } = &self;
 		let fields = match &kind {
@@ -410,15 +450,18 @@ impl Lower for ast::Variant {
 			ast::VariantKind::Tuple(fields) => fields
 				.iter()
 				.enumerate()
-				.map(|(i, ty)| hir::FieldDef {
-					name: ast::Ident::new(l.scx.symbols.intern(&format!("{i}")), ty.span),
-					ty: ty.clone(),
+				.map(|(i, ty)| {
+					let field_name = l.scx.symbols.intern(&i.to_string());
+					hir::FieldDef {
+						name: ast::Ident::new(field_name, ty.span),
+						ty: ty.lower(l),
+					}
 				})
 				.collect(),
 			ast::VariantKind::Struct(fields) => fields.iter().lower_iter(l).collect(),
 		};
 
-		hir::EnumVariant {
+		hir::Variant {
 			name: *name,
 			fields,
 			span: *span,
@@ -547,7 +590,62 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 impl Lower for ast::Path {
 	type Out = hir::Path;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
-		todo!()
+		let Self { segments, span, id } = &self;
+		let res = l.resolution_map[&id];
+		hir::Path {
+			segments: segments.iter().lower_iter(l).collect(),
+			span: *span,
+			resolved: res,
+		}
+	}
+}
+
+impl Lower for ast::PathSegment {
+	type Out = hir::PathSegment;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self {
+			name,
+			generics,
+			span,
+		} = &self;
+		hir::PathSegment {
+			name: *name,
+			generics: generics.lower(l),
+			span: *span,
+		}
+	}
+}
+
+impl Lower for ast::GenericParams {
+	type Out = hir::GenericParams;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { params, span } = &self;
+		hir::GenericParams {
+			params: params.iter().lower_iter(l).collect(),
+			span: *span,
+		}
+	}
+}
+
+impl Lower for ast::Ty {
+	type Out = hir::Ty;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { kind, span } = &self;
+		hir::Ty {
+			kind: kind.lower(l),
+			span: *span,
+		}
+	}
+}
+
+impl Lower for ast::TyKind {
+	type Out = hir::TyKind;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		match self {
+			Self::Path(path) => hir::TyKind::Path(path.lower(l)),
+			Self::Pointer(ty) => hir::TyKind::Pointer(ty.lower_box(l)),
+			Self::Unit => hir::TyKind::Unit,
+		}
 	}
 }
 
@@ -576,6 +674,7 @@ fn lower_binary(
 	}
 }
 
+// TODO: very verbose for no reason
 fn lower_short_circuit(
 	l: &mut Lowerer,
 	op: Spanned<ast::ShortCircuitOp>,
@@ -586,7 +685,31 @@ fn lower_short_circuit(
 		// foo() and bar()
 		// → if foo() { bar() } else { false }
 		ast::ShortCircuitOp::And => {
-			let kind = hir::ExprKind::Access { path: todo!() };
+			let left_block = hir::Block {
+				stmts: Vec::new(),
+				ret: Some(right.lower_box(l)),
+				span: left.span,
+				id: l.make_node_id(None),
+			};
+
+			let name = ast::Ident {
+				sym: sym::false_,
+				span: Span::DUMMY,
+			};
+			let path_segment = PathSegment {
+				name,
+				generics: hir::GenericParams {
+					params: vec![],
+					span: Span::DUMMY,
+				},
+				span: Span::DUMMY,
+			};
+			let path = Path {
+				segments: vec![path_segment],
+				span: Span::DUMMY,
+				resolved: Resolution::Def(todo!()),
+			};
+			let kind = hir::ExprKind::Access { path };
 			let expr = hir::Expr {
 				kind,
 				span: right.span,
@@ -596,12 +719,6 @@ fn lower_short_circuit(
 				stmts: Vec::new(),
 				ret: Some(Box::new(expr)),
 				span: right.span,
-				id: l.make_node_id(None),
-			};
-			let left_block = hir::Block {
-				stmts: Vec::new(),
-				ret: Some(right.lower_box(l)),
-				span: left.span,
 				id: l.make_node_id(None),
 			};
 			(Box::new(left_block), Box::new(right_block))
@@ -609,25 +726,44 @@ fn lower_short_circuit(
 		// foo() or bar()
 		// → if foo() { true } else { bar() }
 		ast::ShortCircuitOp::Or => {
-			let kind = hir::ExprKind::Access { path: todo!() };
+			let name = ast::Ident {
+				sym: sym::true_,
+				span: Span::DUMMY,
+			};
+			let path_segment = PathSegment {
+				name,
+				generics: hir::GenericParams {
+					params: vec![],
+					span: Span::DUMMY,
+				},
+				span: Span::DUMMY,
+			};
+			let path = Path {
+				segments: vec![path_segment],
+				span: Span::DUMMY,
+				resolved: Resolution::Def(todo!()),
+			};
+
+			let kind = hir::ExprKind::Access { path };
 			let expr = hir::Expr {
 				kind,
 				span: right.span,
 				id: l.make_node_id(None),
 			};
-			let right_block = hir::Block {
-				stmts: Vec::new(),
-				ret: Some(Box::new(expr)),
-				span: right.span,
-				id: l.make_node_id(None),
-			};
 			let left_block = hir::Block {
 				stmts: Vec::new(),
-				ret: Some(right.lower_box(l)),
+				ret: Some(Box::new(expr)),
 				span: left.span,
 				id: l.make_node_id(None),
 			};
-			(Box::new(right_block), Box::new(left_block))
+
+			let right_block = hir::Block {
+				stmts: Vec::new(),
+				ret: Some(right.lower_box(l)),
+				span: right.span,
+				id: l.make_node_id(None),
+			};
+			(Box::new(left_block), Box::new(right_block))
 		}
 	};
 
@@ -662,7 +798,7 @@ fn lower_attr_path(
 	hir::AttrPath {
 		segments,
 		span: *span,
-		resolved: todo!(),
+		resolved: todo!("add resolution kind for attributes"),
 	}
 }
 

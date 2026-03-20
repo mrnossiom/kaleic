@@ -78,6 +78,12 @@ pub mod ty {
 			.with_label(Label::new(path_span).with_message("type is not in scope"))
 	}
 
+	pub fn type_alias_empty(item_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, item_span)
+			.with_message("type alias have to be defined outside trait definitions")
+			.with_label(Label::new(item_span).with_message("define this type alias"))
+	}
+
 	pub fn variable_not_in_scope(ident_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, ident_span)
 			.with_message("variable is not in scope")

@@ -14,8 +14,8 @@ use std::{
 };
 
 use ariadne::{Config, IndexType, ReportKind};
-use cranelift::codegen::FxHashMap;
 use parking_lot::RwLock;
+use rustc_hash::FxHashMap;
 
 use crate::{
 	ast, bug,

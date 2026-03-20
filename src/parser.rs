@@ -580,7 +580,10 @@ impl Parse for Function {
 	fn parse(p: &mut Parser) -> Result<Self> {
 		debug_assert_eq!(p.last_token.kind, Kw(kw::Fn));
 
-		let (name, decl) = p.parse_fn_decl()?;
+		let name = p.expect_ident()?;
+		let generics = p.parse_generics()?;
+		let decl = p.parse_fn_decl()?;
+
 		let body = if p.check(OpenBrace) {
 			Some(Box::new(p.parse_block()?))
 		} else if p.eat(Semi) {
@@ -593,7 +596,12 @@ impl Parse for Function {
 			return Err(Diagnostic::new(report));
 		};
 
-		Ok(Self { name, decl, body })
+		Ok(Self {
+			name,
+			generics,
+			decl,
+			body,
+		})
 	}
 }
 
@@ -636,7 +644,7 @@ impl Parser<'_> {
 		debug_assert_eq!(self.last_token.kind, Kw(kw::Struct));
 
 		let name = self.expect_ident()?;
-		let generics = self.parse_generics_def()?;
+		let generics = self.parse_generics()?;
 		let fields = if self.eat(OpenBrace) {
 			self.parse_seq_rest(OpenBrace, CloseBrace, Comma, Self::parse_field_def)?
 		} else if self.eat(OpenParen) {
@@ -671,7 +679,7 @@ impl Parser<'_> {
 		debug_assert_eq!(self.last_token.kind, Kw(kw::Enum));
 
 		let name = self.expect_ident()?;
-		let generics = self.parse_generics_def()?;
+		let generics = self.parse_generics()?;
 		self.expect(OpenBrace)?;
 		let variants =
 			self.parse_seq_rest(OpenBrace, CloseBrace, Comma, Self::parse_variant_def)?;
@@ -688,7 +696,7 @@ impl Parser<'_> {
 		debug_assert_eq!(self.last_token.kind, Kw(kw::Trait));
 
 		let name = self.expect_ident()?;
-		let generics = self.parse_generics_def()?;
+		let generics = self.parse_generics()?;
 
 		self.expect(OpenBrace)?;
 		let members = self.parse_until_func(CloseBrace, Item::parse)?;
@@ -756,10 +764,9 @@ impl Parser<'_> {
 		})
 	}
 
-	fn parse_fn_decl(&mut self) -> Result<(Id, FnDecl)> {
-		let name = self.expect_ident()?;
-		let args_lo = self.token.span;
-		let generics = self.parse_generics_def()?;
+	fn parse_fn_decl(&mut self) -> Result<FnDecl> {
+		let lo = self.token.span;
+		let generics = self.parse_generics()?;
 		self.expect(OpenParen)?;
 		let params = self.parse_seq_rest(OpenParen, CloseParen, Comma, Parser::parse_param)?;
 		let ret = if !self.check(OpenBrace) && !self.check(Semi) {
@@ -768,12 +775,11 @@ impl Parser<'_> {
 			None
 		};
 
-		let fn_decl = FnDecl {
+		Ok(FnDecl {
 			params,
 			ret,
-			span: self.close_span(args_lo),
-		};
-		Ok((name, fn_decl))
+			span: self.close_span(lo),
+		})
 	}
 
 	fn parse_param(&mut self) -> Result<Param> {
@@ -817,10 +823,18 @@ impl Parser<'_> {
 	fn parse_generic_params(&mut self) -> Result<GenericParams> {
 		let lo = self.token.span;
 
-		let params = if self.check(Lt) {
-			self.parse_ty_generics()?
-		} else {
-			Vec::new()
+		let mut params = Vec::new();
+
+		if self.check(Lt) {
+			let mut finished = false;
+
+			self.expect(Lt)?;
+			while !self.eat(Gt) && !finished {
+				params.push(self.parse_ty()?);
+
+				// no comma means no item left
+				finished = !self.eat(Comma);
+			}
 		};
 
 		Ok(GenericParams {
@@ -829,7 +843,7 @@ impl Parser<'_> {
 		})
 	}
 
-	fn parse_generics_def(&mut self) -> Result<Generics> {
+	fn parse_generics(&mut self) -> Result<Generics> {
 		if !self.check(Lt) {
 			return Ok(Generics {
 				idents: vec![],
@@ -926,22 +940,6 @@ impl Parser<'_> {
 		let ty = Box::new(self.parse_ty()?);
 
 		Ok(TyKind::Pointer(ty))
-	}
-
-	/// Parse `"<" <ty>,* ">"`
-	fn parse_ty_generics(&mut self) -> Result<Vec<Ty>> {
-		let mut finished = false;
-
-		let mut seq = Vec::new();
-
-		self.expect(Lt)?;
-		while !self.eat(Gt) && !finished {
-			seq.push(self.parse_ty()?);
-
-			// no comma means no item left
-			finished = !self.eat(Comma);
-		}
-		Ok(seq)
 	}
 }
 

@@ -1,11 +1,11 @@
-use std::{collections::hash_map::Entry, fmt};
+use std::{collections::hash_map::Entry, fmt, fmt::Write};
 
 use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, AttrMeta, ExprKind, NodeId, visit},
 	errors, hir,
-	session::{DcxHandle, Diagnostic, SessionCtx},
+	session::{DcxHandle, Diagnostic, PrintKind, SessionCtx},
 	symbols::{Symbol, sym},
 };
 
@@ -18,6 +18,13 @@ pub(crate) fn collect_root(scx: &SessionCtx, ast: &ast::Root) -> CollectionResul
 		lang_items,
 		..
 	} = collector;
+
+	scx.register_artefact(
+		&PrintKind::CollectedItems,
+		"name-environment.txt",
+		|artefact| writeln!(artefact, "{:#?}", name_env),
+	);
+
 	CollectionResult {
 		name_env,
 		lang_items,
@@ -216,7 +223,7 @@ impl visit::Visitor for Collector<'_> {
 				self.register_def(Namespace::Value, def_id, name);
 			}
 			ast::ItemKind::ForeignMod { .. } => {
-				ast::visit::visit_item(self, item);
+				visit::visit_item(self, item);
 			}
 
 			ast::ItemKind::TraitImpl { .. } => {
@@ -227,7 +234,7 @@ impl visit::Visitor for Collector<'_> {
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Resolution {
 	Def(DefId),
 	Local(ast::NodeId),
@@ -348,22 +355,31 @@ impl Resolver<'_> {
 }
 
 impl visit::Visitor for Resolver<'_> {
-	fn visit_item(&mut self, item: &ast::Item) {
-		match &item.kind {
-			ast::ItemKind::Function(ast::Function { decl, body, .. }) => {
-				self.with_value_bindings(
-					ValueLayerKind::Param,
-					decl.params.iter().map(|p| (p.name.sym, p.id)).collect(),
+	fn visit_item(
+		&mut self,
+		item @ ast::Item {
+			attrs,
+			kind,
+			span,
+			id,
+		}: &ast::Item,
+	) {
+		match kind {
+			ast::ItemKind::Function(ast::Function {
+				decl,
+				generics,
+				body,
+				..
+			}) => {
+				self.with_type_bindings(
+					TypeLayerKind::Generics,
+					generics.idents.iter().map(|g| (g.name.sym, g.id)).collect(),
 					|this| {
-						for param in &decl.params {
-							this.visit_param(param);
-						}
-						if let Some(ret) = &decl.ret {
-							this.visit_ty(ret);
-						}
-						if let Some(body) = body {
-							this.visit_block(body);
-						}
+						this.with_value_bindings(
+							ValueLayerKind::Param,
+							decl.params.iter().map(|p| (p.name.sym, p.id)).collect(),
+							|this| visit::visit_item(this, item),
+						)
 					},
 				);
 			}
@@ -372,31 +388,31 @@ impl visit::Visitor for Resolver<'_> {
 			| ast::ItemKind::Trait { generics, .. } => self.with_type_bindings(
 				TypeLayerKind::Generics,
 				generics.idents.iter().map(|g| (g.name.sym, g.id)).collect(),
-				|this| ast::visit::visit_item(this, item),
+				|this| visit::visit_item(this, item),
 			),
-			_ => ast::visit::visit_item(self, item),
+			_ => visit::visit_item(self, item),
 		}
 	}
 
-	fn visit_ty(&mut self, ty: &ast::Ty) {
-		if let ast::TyKind::Path(path) = &ty.kind {
+	fn visit_ty(&mut self, ty @ ast::Ty { kind, span }: &ast::Ty) {
+		if let ast::TyKind::Path(path) = kind {
 			self.resolve_path(&Namespace::Type, path);
 		}
-		ast::visit::visit_ty(self, ty);
+		visit::visit_ty(self, ty);
 	}
 
-	fn visit_stmt(&mut self, stmt: &ast::Stmt) {
-		if let ast::StmtKind::Let { name, .. } = &stmt.kind {
+	fn visit_stmt(&mut self, stmt @ ast::Stmt { kind, span, id }: &ast::Stmt) {
+		if let ast::StmtKind::Let { name, .. } = kind {
 			let (_layer_kind, bindings) = self.value_layers.last_mut().unwrap();
-			bindings.insert(name.sym, stmt.id);
+			bindings.insert(name.sym, *id);
 		}
-		ast::visit::visit_stmt(self, stmt);
+		visit::visit_stmt(self, stmt);
 	}
 
-	fn visit_expr(&mut self, expr: &ast::Expr) {
-		if let ast::ExprKind::Access { path } = &expr.kind {
+	fn visit_expr(&mut self, expr @ ast::Expr { kind, span, id }: &ast::Expr) {
+		if let ast::ExprKind::Access { path } = kind {
 			self.resolve_path(&Namespace::Value, path);
 		}
-		ast::visit::visit_expr(self, expr);
+		visit::visit_expr(self, expr);
 	}
 }

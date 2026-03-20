@@ -289,9 +289,14 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Function {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { name, decl, body } = &self;
+			let Self {
+				name,
+				generics,
+				decl,
+				body,
+			} = &self;
 
-			pp!(f, "fn ", (name), "(", [decl.params, ","], ")", (? " " decl.ret))?;
+			pp!(f, "fn ", (name), (generics), "(", [decl.params, ","], ")", (? " " decl.ret))?;
 
 			if let Some(body) = &body {
 				write!(f, " ")?;
@@ -692,6 +697,13 @@ mod hir_pp {
 		}
 	}
 
+	impl PrettyPrint for hir::Param {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self { name, ty, id: _ } = &self;
+			pp!(f, (name), ": ", (ty))
+		}
+	}
+
 	impl PrettyPrint for hir::Abi {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			match self {
@@ -705,6 +717,22 @@ mod hir_pp {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			let Self { name, alias } = &self;
 			pp!(f, "type ", (name), (? " = " alias), ";")
+		}
+	}
+
+	impl PrettyPrint for hir::Ty {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			self.kind.pprint(f)
+		}
+	}
+
+	impl PrettyPrint for hir::TyKind {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match &self {
+				Self::Path(path) => path.pprint(f),
+				Self::Pointer(ty) => pp!(f, "*", (ty)),
+				Self::Unit => write!(f, "()"),
+			}
 		}
 	}
 
@@ -733,9 +761,15 @@ mod hir_pp {
 				generics,
 				span: _,
 			} = self;
-			pp!(f, (name))?;
-			if !generics.is_empty() {
-				pp!(f, "<", [generics, ", "], ">")?;
+			pp!(f, (name), (generics))
+		}
+	}
+
+	impl PrettyPrint for hir::GenericParams {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self { params, span } = &self;
+			if !params.is_empty() {
+				pp!(f, "<", [params, ", "], ">")?;
 			}
 			Ok(())
 		}

@@ -19,38 +19,18 @@ pub fn pipeline(scx: &SessionCtx) {
 	scx.dcx().check_sane_or_exit();
 
 	let collection_result = resolve::collect_root(scx, &ast);
-	scx.register_artefact(
-		&PrintKind::CollectedItems,
-		"name-environment.txt",
-		|artefact| writeln!(artefact, "{:#?}", collection_result.name_env),
-	);
 	let resolution_result = resolve::resolve_root(scx, &ast, &collection_result.name_env);
 
 	// lowering to HIR
-	let hir = lowerer::lower_root(scx, &ast);
-
-	scx.register_artefact(&PrintKind::HigherIr, "hir.txt", |artefact| {
-		write!(artefact, "{hir:#?}")
-	});
-	scx.register_artefact(&PrintKind::HigherIrPretty, "hir-pretty.txt", |artefact| {
-		pretty_print(&hir, artefact)
-	});
+	let hir = lowerer::lower_root(scx, &ast, &resolution_result.resolution_map);
 
 	scx.dcx().check_sane_or_exit();
 
 	// type collection, inference and analysis
 	let tcx = ty::TyCtx::new(scx);
-	tcx.name_env.put(name_env);
+	tcx.name_env.put(collection_result.name_env);
 
 	tcx.compute_items_type(&hir);
-	scx.register_artefact(
-		&PrintKind::TypeEnvironment,
-		"type-environment.txt",
-		|artefact| {
-			let env = tcx.type_env.borrow();
-			writeln!(artefact, "{env:#?}")
-		},
-	);
 
 	tcx.typeck(&hir);
 

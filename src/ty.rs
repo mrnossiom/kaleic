@@ -1,17 +1,18 @@
 use std::{
 	cell::{Ref, RefCell},
 	fmt,
+	fmt::Write,
 };
 
 use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, Ident},
-	bug,
-	hir::{self, ExprId},
+	bug, errors,
+	hir::{self, ExprId, Visitor, visit},
 	inference::{self, TypeVarId},
-	resolve::{DefId, NameEnvironment},
-	session::{ScxHandle, SessionCtx, Span},
+	resolve::{DefId, NameEnvironment, Resolution},
+	session::{DcxHandle, PrintKind, ScxHandle, SessionCtx, Span},
 	symbols::{kw, sym},
 };
 
@@ -135,10 +136,18 @@ impl<'scx> TyCtx<'scx> {
 impl TyCtx<'_> {
 	/// Uses the collection step to map every item to a concrete type
 	pub(crate) fn compute_items_type(&self, hir: &hir::Root) {
-		let mut ty_computer = TypeComputer::new(self);
-
 		let name_env = self.name_env.borrow();
-		ty_computer.compute_root(hir);
+		let mut ty_computer = TypeComputer::new(self);
+		ty_computer.visit_root(hir);
+
+		self.scx.register_artefact(
+			&PrintKind::TypeEnvironment,
+			"type-environment.txt",
+			|artefact| {
+				let env = self.type_env.borrow();
+				writeln!(artefact, "{env:#?}")
+			},
+		);
 
 		self.type_env.put(ty_computer.types);
 	}
@@ -148,16 +157,21 @@ impl TyCtx<'_> {
 		inference::infer_root(self, hir);
 	}
 
-	pub fn lower_ty(&self, ty: &ast::Ty) -> TyKind {
+	pub fn lower_ty(&self, ty: &hir::Ty) -> TyKind {
 		match &ty.kind {
-			ast::TyKind::Path(path) => self.lower_path_ty(path),
-			ast::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
-			ast::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
+			hir::TyKind::Path(path) => self.lower_path_ty(path),
+			hir::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
+			hir::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
 		}
 	}
 
-	pub fn lower_path_ty(&self, path: &ast::Path) -> TyKind {
-		let path = path.simple();
+	pub fn lower_path_ty(&self, path: &hir::Path) -> TyKind {
+		let res = match path.resolved {
+			Resolution::Def(def_id) => {}
+			Resolution::Local(id) => todo!("no generics rn"),
+		};
+
+		// let path = path.simple();
 
 		let primitive = match path.sym {
 			// let report = errors::ty::function_cannot_infer_signature(decl.ret.span);
@@ -193,7 +207,7 @@ impl TyCtx<'_> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Param {
-	pub name: ast::Ident,
+	pub name: Ident,
 	pub ty: TyKind,
 }
 
@@ -211,7 +225,7 @@ pub struct Struct {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldDef {
-	pub name: ast::Ident,
+	pub name: Ident,
 	pub ty: TyKind,
 }
 
@@ -368,8 +382,8 @@ pub struct TypeComputer<'tcx> {
 	tcx: &'tcx TyCtx<'tcx>,
 
 	pub(crate) types: FxHashMap<DefId, TyKind>,
-	// trait item id -> implementors
-	pub(crate) trait_impls: FxHashMap<DefId, Vec<()>>,
+	// type def id -> traits def ids
+	pub(crate) trait_impls: FxHashMap<DefId, Vec<DefId>>,
 }
 
 impl<'tcx> TypeComputer<'tcx> {
@@ -383,113 +397,70 @@ impl<'tcx> TypeComputer<'tcx> {
 	}
 }
 
-impl TypeComputer<'_> {
-	pub fn compute_root(&mut self, root: &hir::Root) {
-		let hir::Root { attrs: _, items } = &root;
-		for item in items {
-			self.compute_item(item);
-		}
-	}
+impl visit::Visitor for TypeComputer<'_> {
+	fn visit_item(&mut self, item @ hir::Item { kind, span, id }: &hir::Item) {
+		match kind {
+			hir::ItemKind::Function(hir::Function { name, decl, body }) => todo!(),
 
-	fn compute_item(&mut self, item: &hir::Item) {
-		let ty = match &item.kind {
 			hir::ItemKind::Struct(hir::Struct {
 				name,
 				generics,
 				fields,
 			}) => {
+				let field_ids = Vec::new();
+
 				let struct_ = Struct {
 					generics: generics.clone(),
 					fields: fields
 						.iter()
-						.map(|field| self.lower_field_def(field))
+						.map(|field| self.tcx.lower_ty(&field.ty))
 						.collect(),
 				};
-				TyKind::Struct(Box::new(struct_))
 			}
 			hir::ItemKind::Enum(hir::Enum {
 				name,
 				generics,
 				variants,
-			}) => {
-				let enum_ = Enum {
-					generics: generics.clone(),
-					variants: variants
-						.iter()
-						.map(|variant| self.lower_variant(variant))
-						.collect(),
-				};
-				TyKind::Enum(Box::new(enum_))
-			}
+			}) => todo!(),
 
 			hir::ItemKind::Trait {
 				name,
 				generics,
 				members,
 			} => todo!(),
+			hir::ItemKind::TraitImpl {
+				type_,
+				trait_,
+				members,
+			} => {
+				// register trait impl for the mentioned type
+				let type_def_id = type_.resolved.as_def().unwrap();
+				let trait_def_id = trait_.resolved.as_def().unwrap();
+				self.trait_impls
+					.entry(type_def_id)
+					.or_default()
+					.push(trait_def_id);
 
-			hir::ItemKind::TraitImpl { type_, .. } => {
-				// TODO
-				// self.environment.types.insert(type_.sym, v);
-				todo!()
+				for member in members {
+					visit::visit_trait_item(self, member);
+				}
 			}
 
-			hir::ItemKind::TypeAlias(hir::TypeAlias { name, alias }) => match &alias {
-				Some(ty) => self.tcx.lower_ty(ty),
-				None => todo!(
-					"error about how standalone empty type aliases are not allowed, only used in traits"
-				),
-			},
+			hir::ItemKind::TypeAlias(hir::TypeAlias { name, alias }) => {
+				let Some(alias) = alias else {
+					let report = errors::ty::type_alias_empty(*span);
+					self.tcx.dcx().emit_build(report);
+					return;
+				};
 
-			hir::ItemKind::Function(hir::Function { name, decl, body }) => {
-				TyKind::Fn(Box::new(self.lower_fn_decl(decl)))
+				let ty = self.tcx.lower_ty(alias);
 			}
+
 			hir::ItemKind::ForeignMod { items } => {
 				for item in items {
-					match &item.kind {
-						hir::ForeignItemKind::Function(hir::Function { name, decl, body }) => {
-							let ty = TyKind::Fn(Box::new(self.lower_fn_decl(decl)));
-							let old = self.types.insert(item.item_id(), ty);
-							debug_assert!(old.is_none());
-						}
-					}
+					visit::visit_foreign_item(self, item)
 				}
-				return;
 			}
 		};
-		let old = self.types.insert(item.item_id(), ty);
-		debug_assert!(old.is_none());
-	}
-
-	// TODO: not pub
-	pub fn lower_fn_decl(&mut self, decl: &hir::FnDecl) -> FnDecl {
-		// TODO: diag no infer ty in functions
-		let inputs = decl
-			.params
-			.iter()
-			.map(|ast::Param { name, ty, id: _ }| {
-				let ty = self.tcx.lower_ty(ty);
-				Param { name: *name, ty }
-			})
-			.collect();
-
-		let output = self.tcx.lower_ty(&decl.ret);
-
-		FnDecl { inputs, output }
-	}
-
-	fn lower_field_def(&self, hir::FieldDef { name, ty }: &hir::FieldDef) -> FieldDef {
-		FieldDef {
-			name: *name,
-			ty: self.tcx.lower_ty(ty),
-		}
-	}
-
-	fn lower_variant(&self, hir::EnumVariant { name, fields, span }: &hir::EnumVariant) -> Variant {
-		let _ = self;
-		Variant {
-			name: *name,
-			span: *span,
-		}
 	}
 }

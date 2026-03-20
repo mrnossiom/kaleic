@@ -33,7 +33,7 @@ ariadne = { git = "https://github.com/mrnossiom/ariadne", branch = "expose-repor
 
 [features]
 # default = ["backend-cranelift"]
-default = ["backend-llvm", "backend-cranelift"]
+# default = ["backend-llvm", "backend-cranelift"]
 
 debug = []
 
