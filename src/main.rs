@@ -17,7 +17,7 @@ mod options {
 
 	impl From<&Backend> for codegen::Backend {
 		fn from(val: &Backend) -> Self {
-			match val {
+			match *val {
 				#[cfg(feature = "backend-cranelift")]
 				Backend::Cranelift => Self::Cranelift,
 				#[cfg(feature = "backend-llvm")]
@@ -72,25 +72,25 @@ mod options {
 // this has no default option, default options are in the options struct
 #[derive(clap::Parser)]
 struct Args {
-	pub inputs: Vec<PathBuf>,
+	pub(crate) inputs: Vec<PathBuf>,
 	#[clap(long)]
-	pub no_std: bool,
+	pub(crate) no_std: bool,
 
 	#[clap(long)]
-	pub jit: bool,
+	pub(crate) jit: bool,
 	/// Whether to optimize the code
 	#[clap(long)]
-	pub opt: bool,
+	pub(crate) opt: bool,
 
 	#[clap(long)]
-	pub backend: Option<options::Backend>,
+	pub(crate) backend: Option<options::Backend>,
 	#[clap(long)]
-	pub linker: Option<options::Linker>,
+	pub(crate) linker: Option<options::Linker>,
 
 	#[clap(long)]
-	pub output: Option<PathBuf>,
+	pub(crate) output: Option<PathBuf>,
 	#[clap(long)]
-	pub print: Vec<options::PrintKind>,
+	pub(crate) print: Vec<options::PrintKind>,
 }
 
 fn main() {

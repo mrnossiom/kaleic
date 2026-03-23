@@ -2,7 +2,7 @@ use ariadne::{Label, ReportKind};
 
 use crate::session::{Report, ReportBuilder, Span};
 
-pub mod parser {
+pub(crate) mod parser {
 	use crate::lexer::{Token, TokenKind};
 
 	use super::*;
@@ -27,7 +27,29 @@ pub mod parser {
 	}
 }
 
-pub mod lowerer {
+pub(crate) mod resolve {
+	use super::*;
+
+	pub fn type_not_in_scope(path_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, path_span)
+			.with_message("type is invalid")
+			.with_label(Label::new(path_span).with_message("type is not in scope"))
+	}
+
+	pub fn value_not_in_scope(path_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, path_span)
+			.with_message("value is invalid")
+			.with_label(Label::new(path_span).with_message("value is not in scope"))
+	}
+
+	pub fn invalid_lang_item(lang_item_span: Span) -> ariadne::ReportBuilder<Span, ReportKind> {
+		Report::build(ReportKind::Error, lang_item_span)
+			.with_message("language item does not exist")
+			.with_label(Label::new(lang_item_span).with_message("here"))
+	}
+}
+
+pub(crate) mod lowerer {
 	use super::*;
 
 	pub fn no_semicolon_mid_block(expr_span: Span) -> ReportBuilder {
@@ -37,27 +59,27 @@ pub mod lowerer {
 			.with_message("you may need to add a semicolon at the end of the expression")
 	}
 
-	pub(crate) fn incorrect_item_in_trait(item_span: Span) -> ReportBuilder {
+	pub fn incorrect_item_in_trait(item_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, item_span)
 			.with_message("invalid item in trait definition".to_string())
 			.with_label(Label::new(item_span).with_message("found an item that was unexpected"))
 			.with_help("only type definitions and functions are allowed")
 	}
 
-	pub(crate) fn generic_in_attr_path(generics: Span) -> ariadne::ReportBuilder<Span, ReportKind> {
+	pub fn generic_in_attr_path(generics: Span) -> ariadne::ReportBuilder<Span, ReportKind> {
 		Report::build(ReportKind::Error, generics)
 			.with_message("attribute paths cannot contain generics".to_string())
 			.with_label(Label::new(generics).with_message("remove these generics"))
 	}
 }
 
-pub mod ty {
+pub(crate) mod ty {
 	use ariadne::Color;
 
 	use super::*;
 	use crate::{
 		resolve::Namespace,
-		ty::{Infer, InferKind, TyKind},
+		ty::{InferExprTy, InferKind},
 	};
 
 	pub fn report_unconstrained(ty_span: Span) -> ReportBuilder {
@@ -70,12 +92,6 @@ pub mod ty {
 		Report::build(ReportKind::Error, io_span)
 			.with_message("function cannot infer its signature")
 			.with_label(Label::new(io_span).with_message("specify a concrete type"))
-	}
-
-	pub fn type_unknown(path_span: Span) -> ReportBuilder {
-		Report::build(ReportKind::Error, path_span)
-			.with_message("type is invalid")
-			.with_label(Label::new(path_span).with_message("type is not in scope"))
 	}
 
 	pub fn type_alias_empty(item_span: Span) -> ReportBuilder {
@@ -108,7 +124,7 @@ pub mod ty {
 	pub fn tried_to_call_non_function(
 		expr_span: Span,
 		call_span: Span,
-		actual_ty: &TyKind<Infer>,
+		actual_ty: &InferExprTy,
 	) -> ReportBuilder {
 		Report::build(ReportKind::Error, expr_span)
 			.with_message("tried to call an expression that is not a function")
@@ -118,8 +134,8 @@ pub mod ty {
 			.with_label(Label::new(call_span).with_message("this is the call"))
 	}
 
-	pub fn unification_mismatch(expected: &TyKind<Infer>, actual: &TyKind<Infer>) -> ReportBuilder {
-		todo!("ty mismatch `{expected:?}` vs. `{actual:?}`");
+	pub fn unification_mismatch(expected: &InferExprTy, actual: &InferExprTy) -> ReportBuilder {
+		todo!("ty mismatch `{expected}` vs. `{actual}`");
 	}
 
 	pub fn infer_kind_unification_mismatch(
@@ -145,7 +161,7 @@ pub mod ty {
 	pub fn infer_ty_unification_mismatch(
 		infer: InferKind,
 		infer_span: Span,
-		ty: &TyKind<Infer>,
+		ty: &InferExprTy,
 		ty_span: Span,
 	) -> ReportBuilder {
 		Report::build(ReportKind::Error, infer_span)

@@ -12,19 +12,20 @@ use crate::{
 	errors,
 	hir::{self, Path, PathSegment},
 	pretty_print,
-	resolve::Resolution,
+	resolve::{DefId, Resolution},
 	session::{DcxHandle, Diagnostic, DiagnosticCtx, PrintKind, SessionCtx, Span},
 	symbols::sym,
 };
 
-pub fn lower_root(
+pub(crate) fn lower_root(
 	scx: &SessionCtx,
 	source: &ast::Root,
 	resolution_map: &FxHashMap<ast::NodeId, Resolution>,
+	node_id_to_def_id: &FxHashMap<ast::NodeId, DefId>,
 ) -> hir::Root {
-	let mut l = Lowerer::new(scx, resolution_map);
+	let mut l = Lowerer::new(scx, resolution_map, node_id_to_def_id);
 	let hir = source.lower(&mut l);
-	scx.aid_hid_map.put(l.aid_hid_map);
+	scx.node_id_to_hir_id.put(l.node_id_to_hir_id);
 
 	scx.register_artefact(&PrintKind::HigherIr, "hir.txt", |artefact| {
 		write!(artefact, "{hir:#?}")
@@ -36,7 +37,7 @@ pub fn lower_root(
 	hir
 }
 
-pub trait Lower {
+pub(crate) trait Lower {
 	type Out;
 
 	fn lower(&self, l: &mut Lowerer) -> Self::Out;
@@ -47,23 +48,26 @@ pub trait Lower {
 }
 
 #[derive(Debug)]
-pub struct Lowerer<'scx> {
+pub(crate) struct Lowerer<'scx> {
 	scx: &'scx SessionCtx,
 
-	aid_hid_map: FxHashMap<ast::NodeId, hir::NodeId>,
-
 	resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
+	node_id_to_def_id: &'scx FxHashMap<ast::NodeId, DefId>,
+
+	node_id_to_hir_id: FxHashMap<ast::NodeId, hir::NodeId>,
 }
 
 impl<'scx> Lowerer<'scx> {
-	pub fn new(
+	pub(crate) fn new(
 		scx: &'scx SessionCtx,
 		resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
+		node_id_to_def_id: &'scx FxHashMap<ast::NodeId, DefId>,
 	) -> Self {
 		Self {
 			scx,
-			aid_hid_map: FxHashMap::default(),
 			resolution_map,
+			node_id_to_def_id,
+			node_id_to_hir_id: FxHashMap::default(),
 		}
 	}
 
@@ -73,7 +77,7 @@ impl<'scx> Lowerer<'scx> {
 		let hid = hir::NodeId::new(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed));
 
 		if let Some(aid) = aid.into() {
-			self.aid_hid_map.insert(aid, hid);
+			self.node_id_to_hir_id.insert(aid, hid);
 		}
 
 		hid
@@ -169,7 +173,7 @@ impl Lower for ast::Item {
 		hir::Item {
 			kind: kind.lower(l),
 			span: *span,
-			id: l.make_node_id(*id),
+			def_id: *l.node_id_to_def_id.get(id).unwrap(),
 		}
 	}
 }
@@ -258,7 +262,11 @@ impl Lower for ast::ItemKind {
 impl TryFrom<hir::Item> for hir::Item<hir::TraitItemKind> {
 	type Error = Diagnostic;
 	fn try_from(value: hir::Item) -> Result<Self, Self::Error> {
-		let hir::Item { kind, span, id } = value;
+		let hir::Item {
+			kind,
+			span,
+			def_id: id,
+		} = value;
 		let kind = match kind {
 			hir::ItemKind::Function(func) => hir::TraitItemKind::Function(func),
 			hir::ItemKind::TypeAlias(ty) => hir::TraitItemKind::TypeAlias(ty),
@@ -267,14 +275,22 @@ impl TryFrom<hir::Item> for hir::Item<hir::TraitItemKind> {
 				return Err(diag);
 			}
 		};
-		Ok(Self { kind, span, id })
+		Ok(Self {
+			kind,
+			span,
+			def_id: id,
+		})
 	}
 }
 
 impl TryFrom<hir::Item> for hir::Item<hir::ForeignItemKind> {
 	type Error = Diagnostic;
 	fn try_from(value: hir::Item) -> Result<Self, Self::Error> {
-		let hir::Item { kind, span, id } = value;
+		let hir::Item {
+			kind,
+			span,
+			def_id: id,
+		} = value;
 		let kind = if let hir::ItemKind::Function(func) = kind {
 			hir::ForeignItemKind::Function(func)
 		} else {
@@ -282,7 +298,11 @@ impl TryFrom<hir::Item> for hir::Item<hir::ForeignItemKind> {
 			let diag = Diagnostic::new(errors::lowerer::incorrect_item_in_trait(span));
 			return Err(diag);
 		};
-		Ok(Self { kind, span, id })
+		Ok(Self {
+			kind,
+			span,
+			def_id: id,
+		})
 	}
 }
 
@@ -349,7 +369,7 @@ impl Lower for ast::Block {
 	}
 }
 
-pub enum StmtOrRet {
+pub(crate) enum StmtOrRet {
 	Stmt(hir::Stmt),
 	Ret(hir::Expr),
 }
@@ -591,7 +611,7 @@ impl Lower for ast::Path {
 	type Out = hir::Path;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { segments, span, id } = &self;
-		let res = l.resolution_map[&id];
+		let res = l.resolution_map[id];
 		hir::Path {
 			segments: segments.iter().lower_iter(l).collect(),
 			span: *span,
@@ -774,10 +794,7 @@ fn lower_short_circuit(
 	}
 }
 
-fn lower_attr_path(
-	l: &mut Lowerer<'_>,
-	ast::Path { segments, span, id }: &ast::Path,
-) -> hir::AttrPath {
+fn lower_attr_path(l: &Lowerer<'_>, ast::Path { segments, span, id }: &ast::Path) -> hir::AttrPath {
 	let segments = segments
 		.iter()
 		.map(

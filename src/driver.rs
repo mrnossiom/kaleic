@@ -3,36 +3,40 @@ use std::{fmt::Write as _, fs, process::Command};
 use ariadne::ReportKind;
 
 use crate::{
-	ast, codegen, lowerer, parser,
+	ast, codegen, inference, lowerer, parser,
 	pretty_print::pretty_print,
-	resolve,
+	resolve::{self, CollectionResult, ResolutionResult},
 	session::{DcxHandle, Diagnostic, PrintKind, Report, SessionCtx, Span},
 	ty,
 };
 
 pub fn pipeline(scx: &SessionCtx) {
-	_ = fs::remove_dir_all(&scx.options.debug_output);
+	if fs::exists(&scx.options.debug_output).unwrap() {
+		fs::remove_dir_all(&scx.options.debug_output).unwrap();
+	}
 	fs::create_dir_all(&scx.options.debug_output).unwrap();
 
 	let ast = parse_files(scx);
 
 	scx.dcx().check_sane_or_exit();
 
-	let collection_result = resolve::collect_root(scx, &ast);
-	let resolution_result = resolve::resolve_root(scx, &ast, &collection_result.name_env);
+	let CollectionResult {
+		name_env,
+		lang_items,
+		node_id_to_def_id,
+	} = resolve::collect_root(scx, &ast);
 
-	// lowering to HIR
-	let hir = lowerer::lower_root(scx, &ast, &resolution_result.resolution_map);
+	let ResolutionResult { resolution_map } = resolve::resolve_root(scx, &ast, &name_env);
+
+	let hir = lowerer::lower_root(scx, &ast, &resolution_map, &node_id_to_def_id);
 
 	scx.dcx().check_sane_or_exit();
 
-	// type collection, inference and analysis
-	let tcx = ty::TyCtx::new(scx);
-	tcx.name_env.put(collection_result.name_env);
+	let tcx = ty::TyCtx::new(scx, &name_env, &lang_items);
 
-	tcx.compute_items_type(&hir);
+	ty::compute_items_type(&tcx, &hir);
 
-	tcx.typeck(&hir);
+	inference::infer_root(&tcx, &hir);
 
 	scx.dcx().check_sane_or_exit();
 

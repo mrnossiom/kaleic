@@ -20,14 +20,14 @@ use crate::{
 
 type Result<T> = std::result::Result<T, &'static str>;
 
-pub enum MaybeValue {
+pub(crate) enum MaybeValue {
 	Value(Value),
 	/// Zero-sized value
 	Zst,
 	Never,
 }
 
-pub struct Generator<'tcx, M> {
+pub(crate) struct Generator<'tcx, M> {
 	tcx: &'tcx TyCtx<'tcx>,
 
 	module: M,
@@ -38,7 +38,7 @@ pub struct Generator<'tcx, M> {
 }
 
 impl<'tcx, M: Module> Generator<'tcx, M> {
-	pub fn new(tcx: &'tcx TyCtx, isa: Arc<dyn TargetIsa + 'static>, module: M) -> Self {
+	pub(crate) fn new(tcx: &'tcx TyCtx, isa: Arc<dyn TargetIsa + 'static>, module: M) -> Self {
 		Self {
 			tcx,
 			module,
@@ -72,7 +72,7 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 }
 
 impl<'tcx> Generator<'tcx, JITModule> {
-	pub fn new_jit(tcx: &'tcx TyCtx) -> Self {
+	pub(crate) fn new_jit(tcx: &'tcx TyCtx) -> Self {
 		use ::cranelift::prelude::{Configurable, settings};
 		use cranelift_jit::{JITBuilder, JITModule};
 		use cranelift_module::default_libcall_names;
@@ -92,7 +92,7 @@ impl<'tcx> Generator<'tcx, JITModule> {
 }
 
 impl<'tcx> Generator<'tcx, ObjectModule> {
-	pub fn new_object(tcx: &'tcx TyCtx) -> Self {
+	pub(crate) fn new_object(tcx: &'tcx TyCtx) -> Self {
 		let mut flag_builder = settings::builder();
 		flag_builder.set("opt_level", "speed_and_size").unwrap();
 
@@ -112,7 +112,7 @@ impl<'tcx> Generator<'tcx, ObjectModule> {
 }
 
 impl<M: Module> Generator<'_, M> {
-	pub fn lower_signature(&mut self, decl: &ty::FnDecl) -> Signature {
+	pub(crate) fn lower_signature(&mut self, decl: &ty::FnDecl) -> Signature {
 		let mut signature = self.module.make_signature();
 
 		for ty::Param { name: _, ty } in &decl.inputs {
@@ -128,7 +128,7 @@ impl<M: Module> Generator<'_, M> {
 		signature
 	}
 
-	pub fn declare_func(
+	pub(crate) fn declare_func(
 		&mut self,
 		name: Symbol,
 		def_id: DefId,
@@ -314,7 +314,7 @@ impl ObjectBackend for Generator<'_, ObjectModule> {
 	}
 }
 
-pub struct FunctionGenerator<'scx, 'bld> {
+pub(crate) struct FunctionGenerator<'scx, 'bld> {
 	scx: &'scx SessionCtx,
 
 	type_env: &'scx FxHashMap<DefId, ty::TyKind>,

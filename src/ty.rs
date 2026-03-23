@@ -1,23 +1,22 @@
 use std::{
 	cell::{Ref, RefCell},
-	fmt,
-	fmt::Write,
+	fmt::{self, Write},
+	rc::Rc,
 };
 
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast::{self, Ident},
+	ast::Ident,
 	bug, errors,
 	hir::{self, ExprId, Visitor, visit},
-	inference::{self, TypeVarId},
-	resolve::{DefId, NameEnvironment, Resolution},
+	inference::TypeVarId,
+	resolve::{DefId, LangItem, NameEnvironment, Resolution, TypeLangItem},
 	session::{DcxHandle, PrintKind, ScxHandle, SessionCtx, Span},
-	symbols::{kw, sym},
 };
 
 #[derive(Debug)]
-pub struct Put<T> {
+pub(crate) struct Put<T> {
 	inner: RefCell<Option<T>>,
 }
 
@@ -31,7 +30,7 @@ impl<T> Default for Put<T> {
 
 impl<T> Put<T> {
 	#[track_caller]
-	pub fn put(&self, value: T) {
+	pub(crate) fn put(&self, value: T) {
 		let mut inner = self.inner.borrow_mut();
 		let before = inner.replace(value);
 
@@ -41,7 +40,7 @@ impl<T> Put<T> {
 	}
 
 	#[track_caller]
-	pub fn borrow(&self) -> Ref<'_, T> {
+	pub(crate) fn borrow(&self) -> Ref<'_, T> {
 		Ref::map(self.inner.borrow(), |op| {
 			if let Some(op) = op.as_ref() {
 				op
@@ -53,7 +52,7 @@ impl<T> Put<T> {
 }
 
 #[derive(Debug)]
-pub struct PutMap<K, V> {
+pub(crate) struct PutMap<K, V> {
 	inner: RefCell<FxHashMap<K, V>>,
 }
 
@@ -66,7 +65,7 @@ impl<K, V> Default for PutMap<K, V> {
 }
 
 impl<K: Eq + std::hash::Hash, V> PutMap<K, V> {
-	pub fn put_key(&self, key: K, value: V) {
+	pub(crate) fn put_key(&self, key: K, value: V) {
 		let mut inner = self.inner.borrow_mut();
 		let before = inner.insert(key, value);
 
@@ -75,7 +74,7 @@ impl<K: Eq + std::hash::Hash, V> PutMap<K, V> {
 		}
 	}
 
-	pub fn borrow_key(&self, key: &K) -> Ref<'_, V> {
+	pub(crate) fn borrow_key(&self, key: &K) -> Ref<'_, V> {
 		Ref::map(self.inner.borrow(), |op| {
 			if let Some(op) = op.get(key) {
 				op
@@ -87,20 +86,19 @@ impl<K: Eq + std::hash::Hash, V> PutMap<K, V> {
 }
 
 #[derive(Debug)]
-pub struct TyCtx<'scx> {
-	pub scx: &'scx SessionCtx,
+pub(crate) struct TyCtx<'scx> {
+	pub(crate) scx: &'scx SessionCtx,
 
-	pub arena: (),
+	pub(crate) name_env: &'scx NameEnvironment,
+	lang_items: &'scx FxHashMap<LangItem, DefId>,
 
-	pub name_env: Put<NameEnvironment>,
-
-	pub main_fn_id: Put<DefId>,
-	pub type_env: Put<FxHashMap<DefId, TyKind>>,
+	pub(crate) main_fn_id: Put<DefId>,
+	pub(crate) type_env: Put<FxHashMap<DefId, Rc<LateTy>>>,
 	// per function
-	pub typeck_results: PutMap<DefId, FxHashMap<ExprId, TyKind>>,
+	pub(crate) typeck_results: PutMap<DefId, FxHashMap<ExprId, LateTy>>,
 }
 
-pub trait TcxHandle {
+pub(crate) trait TcxHandle {
 	fn tcx(&self) -> &TyCtx<'_>;
 }
 
@@ -118,13 +116,17 @@ impl<T: TcxHandle> ScxHandle for T {
 
 impl<'scx> TyCtx<'scx> {
 	#[must_use]
-	pub fn new(scx: &'scx SessionCtx) -> Self {
+	pub(crate) fn new(
+		scx: &'scx SessionCtx,
+		name_env: &'scx NameEnvironment,
+		lang_items: &'scx FxHashMap<LangItem, DefId>,
+	) -> Self {
 		Self {
 			scx,
 
-			arena: (),
+			name_env,
+			lang_items,
 
-			name_env: Put::default(),
 			main_fn_id: Put::default(),
 			type_env: Put::default(),
 			typeck_results: PutMap::default(),
@@ -132,137 +134,77 @@ impl<'scx> TyCtx<'scx> {
 	}
 }
 
-/// Context actions
-impl TyCtx<'_> {
-	/// Uses the collection step to map every item to a concrete type
-	pub(crate) fn compute_items_type(&self, hir: &hir::Root) {
-		let name_env = self.name_env.borrow();
-		let mut ty_computer = TypeComputer::new(self);
-		ty_computer.visit_root(hir);
-
-		self.scx.register_artefact(
-			&PrintKind::TypeEnvironment,
-			"type-environment.txt",
-			|artefact| {
-				let env = self.type_env.borrow();
-				writeln!(artefact, "{env:#?}")
-			},
-		);
-
-		self.type_env.put(ty_computer.types);
-	}
-
-	/// Compute inference for every function body and stores the result
-	pub(crate) fn typeck(&self, hir: &hir::Root) {
-		inference::infer_root(self, hir);
-	}
-
-	pub fn lower_ty(&self, ty: &hir::Ty) -> TyKind {
-		match &ty.kind {
-			hir::TyKind::Path(path) => self.lower_path_ty(path),
-			hir::TyKind::Pointer(ty) => TyKind::Pointer(Box::new(self.lower_ty(ty))),
-			hir::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
-		}
-	}
-
-	pub fn lower_path_ty(&self, path: &hir::Path) -> TyKind {
-		let res = match path.resolved {
-			Resolution::Def(def_id) => {}
-			Resolution::Local(id) => todo!("no generics rn"),
-		};
-
-		// let path = path.simple();
-
-		let primitive = match path.sym {
-			// let report = errors::ty::function_cannot_infer_signature(decl.ret.span);
-			// self.tcx.dcx().emit_build(report);
-			// TyKind::Error
-			kw::Underscore => todo!(),
-
-			sym::never => Some(TyKind::Primitive(PrimitiveKind::Never)),
-			sym::bool => Some(TyKind::Primitive(PrimitiveKind::Bool)),
-			sym::uint => Some(TyKind::Primitive(PrimitiveKind::UnsignedInt)),
-			sym::sint => Some(TyKind::Primitive(PrimitiveKind::SignedInt)),
-			sym::float => Some(TyKind::Primitive(PrimitiveKind::Float)),
-			sym::str => Some(TyKind::Primitive(PrimitiveKind::Str)),
-			_ => None,
-		};
-
-		if let Some(primitive) = primitive {
-			primitive
-		} else {
-			let item_map = self.name_env.borrow();
-			if let Some(item_id) = item_map.types.get(&path.sym) {
-				// TODO: we could access the real type directly if we sorted
-				// in some kind of topological order
-				let node_id = todo!();
-				TyKind::Ref(node_id)
-			} else {
-				eprintln!("item {:?} doesn't exist", path.sym);
-				TyKind::Error
-			}
-		}
-	}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Param<Ty> {
+	pub(crate) name: Ident,
+	pub(crate) ty: Rc<Ty>,
+	pub(crate) id: hir::NodeId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Param {
-	pub name: Ident,
-	pub ty: TyKind,
+pub(crate) struct FnDecl<Ty> {
+	pub(crate) inputs: Vec<Param<Ty>>,
+	pub(crate) output: Rc<Ty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FnDecl {
-	pub inputs: Vec<Param>,
-	pub output: TyKind,
+pub(crate) struct Struct<Ty> {
+	// pub(crate) generics: ast::Generics,
+	pub(crate) fields: Vec<FieldDef<Ty>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Struct {
-	pub generics: ast::Generics,
-	pub fields: Vec<FieldDef>,
+pub(crate) struct FieldDef<Ty> {
+	pub(crate) name: Ident,
+	pub(crate) ty: Rc<Ty>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FieldDef {
-	pub name: Ident,
-	pub ty: TyKind,
+pub(crate) struct Enum<Ty> {
+	// pub(crate) generics: ast::Generics,
+	pub(crate) variants: Vec<Variant<Ty>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Enum {
-	pub generics: ast::Generics,
-	pub variants: Vec<Variant>,
+pub(crate) struct Variant<Ty> {
+	pub(crate) name: Ident,
+	pub(crate) kind: VariantKind<Ty>,
+	pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Variant {
-	pub name: Ident,
-	// pub kind: VariantKind,
-	pub span: Span,
+pub(crate) enum VariantKind<Ty> {
+	Unit,
+	Struct(Struct<Ty>),
 }
 
 /// A concrete type
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TyKind<InferKind = NoInfer> {
+pub(crate) enum TyKind<InferKind, RefKind> {
 	// TODO: no primitive kind
 	Primitive(PrimitiveKind),
-	Pointer(Box<Self>),
+	Pointer(Rc<Self>),
 
-	Fn(Box<FnDecl>),
+	Fn(FnDecl<Self>),
 	// TODO: merge both in an adt construct?
-	Struct(Box<Struct>),
-	Enum(Box<Enum>),
+	Struct(Struct<Self>),
+	Enum(Enum<Self>),
 
-	// TODO: remove
+	// TODO: remove, rust uses query to do recursive type resolution
 	/// Refers to the type of another item
-	Ref(DefId),
-
+	Ref(RefKind),
 	Infer(InferKind),
 	Error,
 }
 
-impl<T: fmt::Display> fmt::Display for TyKind<T> {
+/// Used during item type collection, gets quickly resolved to [`LateTy`]
+pub(crate) type EarlyItemTy = TyKind<NoInfer, DefId>;
+/// Used during type inference, gets transformed to [`LateTy`] at the end of type inference (equiv. writeback phase)
+pub(crate) type InferExprTy = TyKind<Infer, NoRef>;
+/// Final pure *Type* format, it contains no type variable or unresolved reference
+pub(crate) type LateTy = TyKind<NoInfer, NoRef>;
+
+impl<T: fmt::Display, U: fmt::Display> fmt::Display for TyKind<T, U> {
 	// Should fit in the sentence "found {}"
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
@@ -276,13 +218,14 @@ impl<T: fmt::Display> fmt::Display for TyKind<T> {
 			// TODO
 			Self::Ref(_) => bug!("ref ty kind should be resolved before it's shown to end-user"),
 			// TODO
-			Self::Error => bug!("error ty kind should never be shown to end-user"),
+			// Self::Error => bug!("error ty kind should never be shown to end-user"),
+			Self::Error => write!(f, "{{error}}"),
 		}
 	}
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrimitiveKind {
+pub(crate) enum PrimitiveKind {
 	Unit,
 	Never,
 
@@ -312,16 +255,16 @@ impl fmt::Display for PrimitiveKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NoInfer {}
+pub(crate) enum NoInfer {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Infer {
-	pub tvid: TypeVarId,
-	pub kind: InferKind,
+pub(crate) struct Infer {
+	pub(crate) tvid: TypeVarId,
+	pub(crate) kind: InferKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InferKind {
+pub(crate) enum InferKind {
 	Integer,
 	Float,
 
@@ -332,6 +275,12 @@ pub enum InferKind {
 impl fmt::Display for Infer {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		self.kind.fmt(f)
+	}
+}
+
+impl fmt::Display for NoInfer {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match *self {}
 	}
 }
 
@@ -346,76 +295,283 @@ impl fmt::Display for InferKind {
 	}
 }
 
-impl TyKind<NoInfer> {
+impl<Ref: Clone> TyKind<NoInfer, Ref> {
 	#[must_use]
-	pub fn as_infer(self) -> TyKind<Infer> {
+	pub(crate) fn as_infer(&self) -> TyKind<Infer, Ref> {
 		match self {
-			Self::Primitive(kind) => TyKind::Primitive(kind),
-			Self::Pointer(ty) => TyKind::Pointer(Box::new(ty.as_infer())),
-			Self::Fn(fn_) => TyKind::Fn(fn_),
-			// Self::Adt(()) => TyKind::Adt(()),
-			Self::Struct(struct_) => TyKind::Struct(struct_),
-			Self::Enum(enum_) => TyKind::Enum(enum_),
-			Self::Ref(id) => TyKind::Ref(id),
+			Self::Primitive(kind) => TyKind::Primitive(kind.clone()),
+			Self::Pointer(ty) => TyKind::Pointer(Rc::new(ty.as_infer())),
+			Self::Fn(decl) => {
+				let FnDecl { inputs, output } = decl;
+				TyKind::Fn(FnDecl {
+					inputs: inputs
+						.iter()
+						.map(|Param { name, ty, id }| Param {
+							name: *name,
+							ty: Rc::new(ty.as_infer()),
+							id: *id,
+						})
+						.collect(),
+					output: Rc::new(output.as_infer()),
+				})
+			}
+			Self::Struct(struct_) => todo!(),
+			Self::Enum(enum_) => todo!(),
+			Self::Ref(id) => TyKind::Ref(id.clone()),
+			Self::Infer(_) => unreachable!(),
 			Self::Error => TyKind::Error,
 		}
 	}
 }
 
-impl TyKind<Infer> {
-	pub fn as_no_infer(self) -> Result<TyKind<NoInfer>, Infer> {
-		match self {
-			Self::Primitive(kind) => Ok(TyKind::Primitive(kind)),
-			Self::Pointer(kind) => Ok(TyKind::Pointer(Box::new(kind.as_no_infer()?))),
-			Self::Fn(fn_) => Ok(TyKind::Fn(fn_)),
-			// Self::Adt(()) => Ok(TyKind::Adt(())),
-			Self::Struct(struct_) => Ok(TyKind::Struct(struct_)),
-			Self::Enum(enum_) => Ok(TyKind::Enum(enum_)),
-			Self::Infer(infer) => Err(infer),
-			Self::Ref(id) => Ok(TyKind::Ref(id)),
-			Self::Error => Ok(TyKind::Error),
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoRef {}
+
+impl fmt::Display for NoRef {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match *self {}
+	}
+}
+
+/// Uses the collection step to map every item to a concrete type
+pub(crate) fn compute_items_type(tcx: &TyCtx<'_>, hir: &hir::Root) {
+	let lang_items = tcx
+		.lang_items
+		.iter()
+		.map(|(k, v)| (*v, k.clone()))
+		.collect();
+
+	let mut ty_computer = TypeCollector {
+		tcx,
+
+		lang_items,
+
+		early_item_types: FxHashMap::default(),
+		trait_impls: FxHashMap::default(),
+	};
+	ty_computer.visit_root(hir);
+
+	let type_env = compute_item_types(&ty_computer.early_item_types);
+
+	tcx.type_env.put(type_env);
+
+	tcx.scx().register_artefact(
+		&PrintKind::TypeEnvironment,
+		"type-environment.txt",
+		|artefact| {
+			let env = tcx.type_env.borrow();
+			writeln!(artefact, "{env:#?}")
+		},
+	);
+}
+
+fn compute_item_types(
+	early_ty_map: &FxHashMap<DefId, EarlyItemTy>,
+) -> FxHashMap<DefId, Rc<LateTy>> {
+	let mut late_ty_map = FxHashMap::default();
+
+	let def_ids = early_ty_map.keys().copied().collect::<Vec<_>>();
+
+	let mut ctx = visit_ty::Context {
+		cycle_detection: Vec::new(),
+		early_ty_map,
+		late_ty_map: &mut late_ty_map,
+	};
+
+	for def_id in def_ids {
+		if ctx.late_ty_map.contains_key(&def_id) {
+			// already resolved
+			continue;
+		}
+
+		// visit the type and return one with all references resolved
+		let late_ty = visit_ty::visit_ty(&mut ctx, &TyKind::Ref(def_id));
+
+		ctx.late_ty_map.insert(def_id, late_ty).unwrap();
+	}
+
+	late_ty_map
+}
+
+mod visit_ty {
+	use std::rc::Rc;
+
+	use rustc_hash::FxHashMap;
+
+	use crate::{
+		resolve::DefId,
+		ty::{EarlyItemTy, Enum, FieldDef, FnDecl, LateTy, Param, Struct, Variant, VariantKind},
+	};
+
+	pub struct Context<'a> {
+		pub(crate) cycle_detection: Vec<DefId>,
+
+		pub(crate) early_ty_map: &'a FxHashMap<DefId, EarlyItemTy>,
+		pub(crate) late_ty_map: &'a mut FxHashMap<DefId, Rc<LateTy>>,
+	}
+
+	pub fn visit_ty(ctx: &mut Context, early_ty: &EarlyItemTy) -> Rc<LateTy> {
+		let late_ty = match early_ty {
+			EarlyItemTy::Primitive(prim) => LateTy::Primitive(prim.clone()),
+			EarlyItemTy::Fn(func) => LateTy::Fn(visit_func(ctx, func)),
+			EarlyItemTy::Pointer(ty) => LateTy::Pointer(visit_ty(ctx, ty)),
+			EarlyItemTy::Struct(struct_) => LateTy::Struct(visit_struct(ctx, struct_)),
+			EarlyItemTy::Enum(enum_) => LateTy::Enum(visit_enum(ctx, enum_)),
+
+			EarlyItemTy::Ref(def_id) => {
+				if let Some(ty) = ctx.late_ty_map.get(def_id) {
+					return Rc::clone(ty);
+				}
+
+				if ctx.cycle_detection.iter().any(|id| id == def_id) {
+					todo!("type cycle detected, span on {def_id:?}")
+				}
+				ctx.cycle_detection.push(*def_id);
+
+				let sub_ty = ctx.early_ty_map.get(def_id).unwrap();
+				let new_ty = visit_ty(ctx, sub_ty);
+
+				ctx.late_ty_map.insert(*def_id, Rc::clone(&new_ty));
+
+				return new_ty;
+			}
+
+			EarlyItemTy::Infer(infer) => LateTy::Infer(*infer),
+			EarlyItemTy::Error => LateTy::Error,
+		};
+		Rc::new(late_ty)
+	}
+
+	fn visit_func(
+		ctx: &mut Context,
+		FnDecl { inputs, output }: &FnDecl<EarlyItemTy>,
+	) -> FnDecl<LateTy> {
+		FnDecl {
+			inputs: inputs
+				.iter()
+				.map(|Param { name, ty, id }| Param {
+					name: *name,
+					ty: visit_ty(ctx, ty),
+					id: *id,
+				})
+				.collect(),
+			output: visit_ty(ctx, output),
+		}
+	}
+
+	fn visit_struct(ctx: &mut Context, Struct { fields }: &Struct<EarlyItemTy>) -> Struct<LateTy> {
+		Struct {
+			fields: fields
+				.iter()
+				.map(|FieldDef { name, ty }| FieldDef {
+					name: *name,
+					ty: visit_ty(ctx, ty),
+				})
+				.collect(),
+		}
+	}
+
+	fn visit_enum(ctx: &mut Context, Enum { variants }: &Enum<EarlyItemTy>) -> Enum<LateTy> {
+		Enum {
+			variants: variants
+				.iter()
+				.map(|Variant { name, kind, span }| Variant {
+					name: *name,
+					kind: match kind {
+						VariantKind::Unit => VariantKind::Unit,
+						VariantKind::Struct(struct_) => {
+							VariantKind::Struct(visit_struct(ctx, struct_))
+						}
+					},
+					span: *span,
+				})
+				.collect(),
 		}
 	}
 }
 
-pub struct TypeComputer<'tcx> {
+pub(crate) struct TypeCollector<'tcx> {
 	tcx: &'tcx TyCtx<'tcx>,
 
-	pub(crate) types: FxHashMap<DefId, TyKind>,
+	lang_items: FxHashMap<DefId, LangItem>,
+
+	pub(crate) early_item_types: FxHashMap<DefId, EarlyItemTy>,
 	// type def id -> traits def ids
 	pub(crate) trait_impls: FxHashMap<DefId, Vec<DefId>>,
 }
 
-impl<'tcx> TypeComputer<'tcx> {
-	#[must_use]
-	pub fn new(tcx: &'tcx TyCtx) -> Self {
-		Self {
-			tcx,
-			types: FxHashMap::default(),
-			trait_impls: FxHashMap::default(),
+impl TypeCollector<'_> {
+	/// Lower ty at item level
+	pub(crate) fn lower_ty(&self, ty: &hir::Ty) -> EarlyItemTy {
+		match &ty.kind {
+			hir::TyKind::Path(path) => match path.resolved {
+				Resolution::Def(def_id) => TyKind::Ref(def_id),
+				Resolution::Local(id) => todo!("no generics rn"),
+				Resolution::Error => todo!(),
+			},
+			hir::TyKind::Pointer(ty) => TyKind::Pointer(Rc::new(self.lower_ty(ty))),
+			hir::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
 		}
+	}
+
+	fn register_ty(&mut self, def_id: DefId, kind: EarlyItemTy) {
+		self.early_item_types.insert(def_id, kind);
 	}
 }
 
-impl visit::Visitor for TypeComputer<'_> {
-	fn visit_item(&mut self, item @ hir::Item { kind, span, id }: &hir::Item) {
+impl visit::Visitor for TypeCollector<'_> {
+	fn visit_item(&mut self, item @ hir::Item { kind, span, def_id }: &hir::Item) {
+		// TODO: unify with other item kinds, like foreign and trait item
+		if let Some(lang_item) = self.lang_items.get(def_id)
+			&& let LangItem::Type(lang_item) = lang_item
+		{
+			let ty = match lang_item {
+				TypeLangItem::Never => TyKind::Primitive(PrimitiveKind::Never),
+				TypeLangItem::Bool => TyKind::Primitive(PrimitiveKind::Bool),
+				TypeLangItem::UInt => TyKind::Primitive(PrimitiveKind::UnsignedInt),
+				TypeLangItem::SInt => TyKind::Primitive(PrimitiveKind::SignedInt),
+				TypeLangItem::Float => TyKind::Primitive(PrimitiveKind::Float),
+			};
+
+			self.register_ty(*def_id, ty);
+
+			return;
+		}
+
 		match kind {
-			hir::ItemKind::Function(hir::Function { name, decl, body }) => todo!(),
+			hir::ItemKind::Function(hir::Function { name, decl, body }) => {
+				let fn_decl = FnDecl {
+					inputs: decl
+						.params
+						.iter()
+						.map(|hir::Param { name, ty, id }| Param {
+							name: *name,
+							ty: Rc::new(self.lower_ty(ty)),
+							id: *id,
+						})
+						.collect(),
+					output: Rc::new(self.lower_ty(&decl.ret)),
+				};
+
+				self.register_ty(*def_id, TyKind::Fn(fn_decl));
+			}
 
 			hir::ItemKind::Struct(hir::Struct {
 				name,
 				generics,
 				fields,
 			}) => {
-				let field_ids = Vec::new();
-
 				let struct_ = Struct {
-					generics: generics.clone(),
 					fields: fields
 						.iter()
-						.map(|field| self.tcx.lower_ty(&field.ty))
+						.map(|hir::FieldDef { name, ty }| FieldDef {
+							name: *name,
+							ty: Rc::new(self.lower_ty(ty)),
+						})
 						.collect(),
 				};
+
+				self.register_ty(*def_id, TyKind::Struct(struct_));
 			}
 			hir::ItemKind::Enum(hir::Enum {
 				name,
@@ -441,9 +597,7 @@ impl visit::Visitor for TypeComputer<'_> {
 					.or_default()
 					.push(trait_def_id);
 
-				for member in members {
-					visit::visit_trait_item(self, member);
-				}
+				self.visit_trait_items(members);
 			}
 
 			hir::ItemKind::TypeAlias(hir::TypeAlias { name, alias }) => {
@@ -453,14 +607,42 @@ impl visit::Visitor for TypeComputer<'_> {
 					return;
 				};
 
-				let ty = self.tcx.lower_ty(alias);
+				let ty = self.lower_ty(alias);
+				self.register_ty(*def_id, ty);
 			}
 
-			hir::ItemKind::ForeignMod { items } => {
-				for item in items {
-					visit::visit_foreign_item(self, item)
-				}
+			hir::ItemKind::ForeignMod { items } => self.visit_foreign_items(items),
+		}
+	}
+
+	fn visit_trait_item(
+		&mut self,
+		hir::Item { kind, span, def_id }: &hir::Item<hir::TraitItemKind>,
+	) {
+		todo!()
+	}
+
+	fn visit_foreign_item(
+		&mut self,
+		hir::Item { kind, span, def_id }: &hir::Item<hir::ForeignItemKind>,
+	) {
+		match kind {
+			hir::ForeignItemKind::Function(hir::Function { name, decl, body }) => {
+				let fn_decl = FnDecl {
+					inputs: decl
+						.params
+						.iter()
+						.map(|hir::Param { name, ty, id }| Param {
+							name: *name,
+							ty: Rc::new(self.lower_ty(ty)),
+							id: *id,
+						})
+						.collect(),
+					output: Rc::new(self.lower_ty(&decl.ret)),
+				};
+
+				self.register_ty(*def_id, TyKind::Fn(fn_decl));
 			}
-		};
+		}
 	}
 }

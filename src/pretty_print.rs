@@ -9,7 +9,7 @@ use std::fmt::{self, Write as _};
 
 use crate::{ast, symbols};
 
-pub struct PrettyFormatter<'fmt> {
+pub(crate) struct PrettyFormatter<'fmt> {
 	inner: &'fmt mut dyn fmt::Write,
 
 	indent: u32,
@@ -71,13 +71,13 @@ impl fmt::Write for PrettyFormatter<'_> {
 	}
 }
 
-pub fn pretty_print(node: &dyn PrettyPrint, mut output: &mut dyn fmt::Write) -> fmt::Result {
+pub(crate) fn pretty_print(node: &dyn PrettyPrint, mut output: &mut dyn fmt::Write) -> fmt::Result {
 	let mut f = PrettyFormatter::new(&mut output);
 	node.pprint(&mut f)?;
 	Ok(())
 }
 
-pub trait PrettyPrint {
+pub(crate) trait PrettyPrint {
 	fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result;
 }
 
@@ -178,7 +178,7 @@ mod ast_pp {
 				id: _,
 			} = &self;
 
-			pp!(f, [attrs, '\n'], (kind))
+			pp!(f, [attrs, '\n'], (kind), '\n')
 		}
 	}
 
@@ -577,7 +577,12 @@ mod hir_pp {
 
 	impl<T: PrettyPrint> PrettyPrint for hir::Item<T> {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			self.kind.pprint(f)
+			let Self {
+				kind,
+				span: _,
+				def_id: _,
+			} = self;
+			pp!(f, (kind), '\n')
 		}
 	}
 
@@ -614,21 +619,11 @@ mod hir_pp {
 					f.with_indent(|f| {
 						f.write_seq(
 							variants,
-							|f, variant| {
-								variant.name.sym.pprint(f)?;
-								write!(f, " {{")?;
-								f.write_seq_oneline(
-									&variant.fields,
-									|f, field| field.pprint(f),
-									",",
-								)?;
-								write!(f, "}}")?;
-								Ok(())
-							},
+							|f, variant| pp!(f, (name), "{", [variant.fields, ", "], "}"),
 							",",
 						)
 					})?;
-					pp!(f, '\n', "}}")
+					pp!(f, '\n', "}")
 				}
 
 				Self::Trait {
@@ -643,7 +638,7 @@ mod hir_pp {
 						}
 						Ok(())
 					})?;
-					pp!(f, '\n', "}}")
+					pp!(f, '\n', "}")
 				}
 				Self::TraitImpl {
 					type_,
@@ -795,7 +790,7 @@ mod hir_pp {
 				}
 				Ok(())
 			})?;
-			pp!(f, '\n', "}}")
+			pp!(f, '\n', "}")
 		}
 	}
 

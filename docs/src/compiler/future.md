@@ -23,3 +23,4 @@ By the way, it is easy to argue that machine code is "just" a lower level langua
 
 Among the implementations of Rust, one is *miri* (MIR Interpreter).
 
+This said, it would be nice to define an abstract machine for this language.

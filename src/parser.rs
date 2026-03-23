@@ -12,7 +12,7 @@ use std::{
 
 use ariadne::{Label, Report, ReportKind};
 
-#[expect(
+#[allow(
 	clippy::enum_glob_use,
 	reason = "single glob usage here, reduces code size"
 )]
@@ -30,7 +30,7 @@ use crate::{
 	symbols::{Symbol, kw},
 };
 
-pub fn parse_root(scx: &SessionCtx, source: &SourceFile) -> Root {
+pub(crate) fn parse_root(scx: &SessionCtx, source: &SourceFile) -> Root {
 	let mut p = Parser::new(scx, source);
 	match Root::parse(&mut p) {
 		Ok(ast) => ast,
@@ -835,7 +835,7 @@ impl Parser<'_> {
 				// no comma means no item left
 				finished = !self.eat(Comma);
 			}
-		};
+		}
 
 		Ok(GenericParams {
 			params,

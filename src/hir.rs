@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::{
 	ast::{self, Ident, Spanned},
-	resolve,
+	resolve::{self, DefId},
 	session::Span,
 	symbols::Symbol,
 };
@@ -15,7 +15,7 @@ use crate::{
 ///  the new `hir::NodeId` takes the old inner number,
 ///  else the lowerer mints a new number.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(u32);
+pub(crate) struct NodeId(u32);
 
 impl NodeId {
 	pub(crate) fn new(n: u32) -> Self {
@@ -31,24 +31,24 @@ impl fmt::Debug for NodeId {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct ExprId(NodeId);
+pub(crate) struct ExprId(NodeId);
 
 #[derive(Debug)]
-pub struct Root {
-	pub attrs: Vec<Attr>,
-	pub items: Vec<Item>,
+pub(crate) struct Root {
+	pub(crate) attrs: Vec<Attr>,
+	pub(crate) items: Vec<Item>,
 }
 
 #[derive(Debug)]
-pub struct Attr {
-	pub path: AttrPath,
-	pub meta: AttrMeta,
-	pub span: Span,
-	pub id: NodeId,
+pub(crate) struct Attr {
+	pub(crate) path: AttrPath,
+	pub(crate) meta: AttrMeta,
+	pub(crate) span: Span,
+	pub(crate) id: NodeId,
 }
 
 #[derive(Debug)]
-pub enum AttrMeta {
+pub(crate) enum AttrMeta {
 	None,
 	Tuple(Vec<Expr>),
 	Map(Vec<Expr>),
@@ -56,28 +56,28 @@ pub enum AttrMeta {
 }
 
 #[derive(Debug, Clone)]
-pub struct Item<Kind = ItemKind> {
-	pub kind: Kind,
-	pub span: Span,
-	pub id: NodeId,
+pub(crate) struct Item<Kind = ItemKind> {
+	pub(crate) kind: Kind,
+	pub(crate) span: Span,
+	pub(crate) def_id: DefId,
 }
 
 #[derive(Debug, Clone)]
-pub struct Struct {
-	pub name: Ident,
-	pub generics: ast::Generics,
-	pub fields: Vec<FieldDef>,
+pub(crate) struct Struct {
+	pub(crate) name: Ident,
+	pub(crate) generics: ast::Generics,
+	pub(crate) fields: Vec<FieldDef>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Enum {
-	pub name: Ident,
-	pub generics: ast::Generics,
-	pub variants: Vec<Variant>,
+pub(crate) struct Enum {
+	pub(crate) name: Ident,
+	pub(crate) generics: ast::Generics,
+	pub(crate) variants: Vec<Variant>,
 }
 
 #[derive(Debug, Clone)]
-pub enum ItemKind {
+pub(crate) enum ItemKind {
 	Function(Function),
 
 	Struct(Struct),
@@ -101,13 +101,13 @@ pub enum ItemKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Ty {
-	pub kind: TyKind,
-	pub span: Span,
+pub(crate) struct Ty {
+	pub(crate) kind: TyKind,
+	pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum TyKind {
+pub(crate) enum TyKind {
 	/// See [`Path`]
 	Path(Path),
 
@@ -119,101 +119,101 @@ pub enum TyKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct PathSegment {
-	pub name: Ident,
-	pub generics: GenericParams,
-	pub span: Span,
+pub(crate) struct PathSegment {
+	pub(crate) name: Ident,
+	pub(crate) generics: GenericParams,
+	pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Path {
-	pub segments: Vec<PathSegment>,
-	pub span: Span,
-	pub resolved: resolve::Resolution,
+pub(crate) struct Path {
+	pub(crate) segments: Vec<PathSegment>,
+	pub(crate) span: Span,
+	pub(crate) resolved: resolve::Resolution,
 }
 
 #[derive(Debug, Clone)]
-pub struct GenericParams {
-	pub params: Vec<Ty>,
-	pub span: Span,
+pub(crate) struct GenericParams {
+	pub(crate) params: Vec<Ty>,
+	pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct AttrPath {
-	pub segments: Vec<Ident>,
-	pub span: Span,
-	pub resolved: resolve::Resolution,
+pub(crate) struct AttrPath {
+	pub(crate) segments: Vec<Ident>,
+	pub(crate) span: Span,
+	pub(crate) resolved: resolve::Resolution,
 }
 
 #[derive(Debug, Clone)]
-pub struct TypeAlias {
-	pub name: ast::Ident,
-	pub alias: Option<Box<Ty>>,
+pub(crate) struct TypeAlias {
+	pub(crate) name: ast::Ident,
+	pub(crate) alias: Option<Box<Ty>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Function {
-	pub name: ast::Ident,
-	pub decl: Box<FnDecl>,
-	pub body: Option<Box<Block>>,
+pub(crate) struct Function {
+	pub(crate) name: ast::Ident,
+	pub(crate) decl: Box<FnDecl>,
+	pub(crate) body: Option<Box<Block>>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Variant {
-	pub name: ast::Ident,
-	pub fields: Vec<FieldDef>,
-	pub span: Span,
+pub(crate) struct Variant {
+	pub(crate) name: ast::Ident,
+	pub(crate) fields: Vec<FieldDef>,
+	pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub enum TraitItemKind {
+pub(crate) enum TraitItemKind {
 	TypeAlias(TypeAlias),
 	Function(Function),
 }
 
 #[derive(Debug, Clone)]
-pub enum ForeignItemKind {
+pub(crate) enum ForeignItemKind {
 	Function(Function),
 }
 
 #[derive(Debug, Clone)]
-pub struct FieldDef {
-	pub name: ast::Ident,
-	pub ty: Ty,
+pub(crate) struct FieldDef {
+	pub(crate) name: ast::Ident,
+	pub(crate) ty: Ty,
 }
 
 #[derive(Debug, Clone)]
-pub struct FnDecl {
-	pub params: Vec<Param>,
-	pub ret: Box<Ty>,
+pub(crate) struct FnDecl {
+	pub(crate) params: Vec<Param>,
+	pub(crate) ret: Box<Ty>,
 
-	pub span: Span,
+	pub(crate) span: Span,
 }
 
 #[derive(Debug, Clone)]
-pub struct Param {
-	pub name: Ident,
-	pub ty: Ty,
-	pub id: NodeId,
+pub(crate) struct Param {
+	pub(crate) name: Ident,
+	pub(crate) ty: Ty,
+	pub(crate) id: NodeId,
 }
 
 #[derive(Debug, Clone)]
-pub struct Block {
-	pub stmts: Vec<Stmt>,
-	pub ret: Option<Box<Expr>>,
-	pub span: Span,
-	pub id: NodeId,
+pub(crate) struct Block {
+	pub(crate) stmts: Vec<Stmt>,
+	pub(crate) ret: Option<Box<Expr>>,
+	pub(crate) span: Span,
+	pub(crate) id: NodeId,
 }
 
 #[derive(Debug, Clone)]
-pub struct Stmt {
-	pub kind: StmtKind,
-	pub span: Span,
-	pub id: NodeId,
+pub(crate) struct Stmt {
+	pub(crate) kind: StmtKind,
+	pub(crate) span: Span,
+	pub(crate) id: NodeId,
 }
 
 #[derive(Debug, Clone)]
-pub enum StmtKind {
+pub(crate) enum StmtKind {
 	Expr {
 		expr: Box<Expr>,
 	},
@@ -227,20 +227,20 @@ pub enum StmtKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct Expr {
-	pub kind: ExprKind,
-	pub span: Span,
-	pub id: NodeId,
+pub(crate) struct Expr {
+	pub(crate) kind: ExprKind,
+	pub(crate) span: Span,
+	pub(crate) id: NodeId,
 }
 
 impl Expr {
-	pub fn expr_id(&self) -> ExprId {
+	pub(crate) fn expr_id(&self) -> ExprId {
 		ExprId(self.id)
 	}
 }
 
 #[derive(Debug, Clone)]
-pub enum ExprKind {
+pub(crate) enum ExprKind {
 	LiteralInt {
 		sym: Symbol,
 	},
@@ -313,13 +313,13 @@ pub enum ExprKind {
 }
 
 #[derive(Debug, Clone, Default, Copy)]
-pub enum Abi {
+pub(crate) enum Abi {
 	#[default]
 	Kalei,
 	C,
 }
 
-pub mod visit {
+pub(crate) mod visit {
 	use super::*;
 
 	pub trait Visitor: Sized {
@@ -466,7 +466,7 @@ pub mod visit {
 		Item {
 			kind,
 			span: _,
-			id: _,
+			def_id: _,
 		}: &Item,
 	) {
 		match kind {
@@ -524,7 +524,7 @@ pub mod visit {
 		Item {
 			kind,
 			span: _,
-			id: _,
+			def_id: _,
 		}: &Item<TraitItemKind>,
 	) {
 		match kind {
@@ -543,7 +543,7 @@ pub mod visit {
 		Item {
 			kind,
 			span: _,
-			id: _,
+			def_id: _,
 		}: &Item<ForeignItemKind>,
 	) {
 		match kind {
@@ -579,8 +579,9 @@ pub mod visit {
 			ExprKind::Access { path } => v.visit_path(path),
 			ExprKind::LiteralStr { sym: _ }
 			| ExprKind::LiteralInt { sym: _ }
-			| ExprKind::LiteralFloat { sym: _ } => {}
-			ExprKind::Unary { op: _, expr } => v.visit_expr(expr),
+			| ExprKind::LiteralFloat { sym: _ }
+			| ExprKind::Unit => {}
+			ExprKind::Unary { op: _, expr } | ExprKind::Deref { expr } => v.visit_expr(expr),
 			ExprKind::Binary { op: _, left, right } => {
 				v.visit_expr(left);
 				v.visit_expr(right);
@@ -614,7 +615,6 @@ pub mod visit {
 				v.visit_expr(expr);
 				v.visit_ident(name);
 			}
-			ExprKind::Deref { expr } => v.visit_expr(expr),
 			ExprKind::Assign { target, value } => {
 				v.visit_expr(target);
 				v.visit_expr(value);
@@ -633,7 +633,6 @@ pub mod visit {
 					v.visit_ident(&label.bit);
 				}
 			}
-			ExprKind::Unit => {}
 		}
 	}
 
@@ -754,4 +753,4 @@ pub mod visit {
 	pub fn visit_ident<V: Visitor>(_v: &mut V, Ident { sym: _, span: _ }: &Ident) {}
 }
 
-pub use self::visit::Visitor;
+pub(crate) use self::visit::Visitor;

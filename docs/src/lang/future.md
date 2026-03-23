@@ -316,3 +316,51 @@ let value = transform_value1(value);
 let value = transform_value2(value);
 let value = transform_value3(value, 3);
 ```
+
+### Operators
+
+```
+@ pattern
+| pattern, bit-or
+& pattern, bit-and
+_ pattern
+~ pattern?, bit-not?
+
+# attributes
+
+% bitop
+* bitop
+= bitop
++ bitop
+- bitop
+/ bitop
+
+? unary try
+! unary not
+
+\ escape
+
+'' char, lifetime?
+"" string
+`` ?
+
+() delim value param
+[] delim index
+{} delim stmts, group
+<> delim type param
+, punct param
+: type
+; stmt end
+
+. field
+
+^ ???
+$ raw ident?
+
+struct Fields {
+	foo: uint,
+	$let: uint,
+}
+
+fields.$let
+```

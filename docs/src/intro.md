@@ -8,5 +8,5 @@ Right now, you may find many pages empty or not clearly organized.
 
 The most interesting pages are:
 
-- [Pipeline](./pipeline.md) to see what does the current compiler pipeline looks like
-- [Future](./future.md) to check out some syntax/language ideas I would like to try
+- *[Pipeline](./compiler/pipeline.md) (Compiler)* to see what does the current compiler pipeline looks like.
+- *[Future](./lang/future.md) (Language)* to check out some syntax/language ideas I would like to try.

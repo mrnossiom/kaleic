@@ -24,18 +24,18 @@ macro_rules! define_symbols {
         keywords { $($kw_name:ident: $kw_str:expr),* },
         symbols { $($sym_name:ident: $sym_str:expr),* }
 	} => {
-        pub static SYMBOLS: &[&str] = &[
+        pub(crate) static SYMBOLS: &[&str] = &[
             $($kw_str),*,
             $($sym_str),*
         ];
 
         #[allow(non_upper_case_globals)]
-        pub mod kw {
+        pub(crate) mod kw {
         	use super::{Id, Symbol};
             $(pub const $kw_name: Symbol = Symbol::new(Id::$kw_name as u32).unwrap();)*
         }
         #[allow(non_upper_case_globals)]
-        pub mod sym {
+        pub(crate) mod sym {
         	use super::{Id, Symbol};
             $(pub const $sym_name: Symbol = Symbol::new(Id::$sym_name as u32).unwrap();)*
         }
@@ -102,6 +102,7 @@ define_symbols! {
 		SubTrait,
 		SubAssignTrait,
 
+		never_ty,
 		bool_ty,
 		uint_ty,
 		sint_ty,
@@ -114,7 +115,7 @@ define_symbols! {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Symbol(NonZero<u32>);
+pub(crate) struct Symbol(NonZero<u32>);
 
 impl Symbol {
 	pub(crate) const fn new(index: u32) -> Option<Self> {
@@ -176,7 +177,7 @@ thread_local! {
 	static INTERNER: std::sync::OnceLock<std::sync::Arc<RwLock<StringInterner<StringBackend<Symbol>>>>> = std::sync::OnceLock::default();
 }
 
-pub struct SymbolInterner {
+pub(crate) struct SymbolInterner {
 	#[cfg(feature = "debug")]
 	inner: std::sync::Arc<RwLock<StringInterner<StringBackend<Symbol>>>>,
 	#[cfg(not(feature = "debug"))]
@@ -205,12 +206,12 @@ impl Default for SymbolInterner {
 
 impl SymbolInterner {
 	#[must_use]
-	pub fn intern(&self, symbol: &str) -> Symbol {
+	pub(crate) fn intern(&self, symbol: &str) -> Symbol {
 		self.inner.write().get_or_intern(symbol)
 	}
 
 	#[must_use]
-	pub fn resolve(&self, symbol: Symbol) -> String {
+	pub(crate) fn resolve(&self, symbol: Symbol) -> String {
 		match self.inner.read().resolve(symbol) {
 			Some(s) => s.to_owned(),
 			None => bug!("there is a single symbol interner, thus all symbol are valid"),

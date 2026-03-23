@@ -26,21 +26,21 @@ use crate::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Span {
-	pub start: BytePos,
-	pub end: BytePos,
+pub(crate) struct Span {
+	pub(crate) start: BytePos,
+	pub(crate) end: BytePos,
 }
 
 impl Span {
 	pub(crate) const DUMMY: Self = Self::new(BytePos(u32::MAX), BytePos(u32::MAX));
 
 	#[must_use]
-	pub const fn new(start: BytePos, end: BytePos) -> Self {
+	pub(crate) const fn new(start: BytePos, end: BytePos) -> Self {
 		Self { start, end }
 	}
 
 	#[must_use]
-	pub fn to(self, span: Self) -> Self {
+	pub(crate) fn to(self, span: Self) -> Self {
 		Self {
 			start: cmp::min(self.start, span.start),
 			end: cmp::max(self.end, span.end),
@@ -48,7 +48,7 @@ impl Span {
 	}
 
 	#[must_use]
-	pub const fn start(self) -> Self {
+	pub(crate) const fn start(self) -> Self {
 		Self {
 			start: self.start,
 			end: self.start,
@@ -56,7 +56,7 @@ impl Span {
 	}
 
 	#[must_use]
-	pub const fn end(self) -> Self {
+	pub(crate) const fn end(self) -> Self {
 		Self {
 			start: self.end,
 			end: self.end,
@@ -101,17 +101,17 @@ impl fmt::Debug for Span {
 
 #[derive(Debug)]
 pub struct SessionCtx {
-	pub options: Options,
-	pub symbols: SymbolInterner,
-	pub source_map: Rc<RwLock<SourceMap>>,
-
 	dcx: DiagnosticCtx,
 
-	pub aid_hid_map: Put<FxHashMap<ast::NodeId, hir::NodeId>>,
+	pub options: Options,
+	pub(crate) symbols: SymbolInterner,
+	pub(crate) source_map: Rc<RwLock<SourceMap>>,
+
+	pub(crate) node_id_to_hir_id: Put<FxHashMap<ast::NodeId, hir::NodeId>>,
 }
 
 impl SessionCtx {
-	pub fn new() -> Self {
+	pub(crate) fn new() -> Self {
 		let source_map = Rc::new(RwLock::new(SourceMap::default()));
 		let dcx = DiagnosticCtx::new(source_map.clone());
 		Self {
@@ -121,12 +121,12 @@ impl SessionCtx {
 
 			dcx,
 
-			aid_hid_map: Put::default(),
+			node_id_to_hir_id: Put::default(),
 		}
 	}
 }
 
-pub trait ScxHandle {
+pub(crate) trait ScxHandle {
 	fn scx(&self) -> &SessionCtx;
 }
 
@@ -136,7 +136,7 @@ impl ScxHandle for SessionCtx {
 	}
 }
 
-pub trait DcxHandle {
+pub(crate) trait DcxHandle {
 	fn dcx(&self) -> &DiagnosticCtx;
 }
 
@@ -152,7 +152,7 @@ impl<T: ScxHandle> DcxHandle for T {
 	}
 }
 
-pub struct ArtefactWriter(fs::File);
+pub(crate) struct ArtefactWriter(fs::File);
 
 impl fmt::Write for ArtefactWriter {
 	fn write_str(&mut self, s: &str) -> fmt::Result {
@@ -181,7 +181,7 @@ impl Default for SessionCtx {
 }
 
 #[derive(Debug)]
-pub struct DiagnosticCtx {
+pub(crate) struct DiagnosticCtx {
 	degraded: AtomicBool,
 
 	source_map: Rc<RwLock<SourceMap>>,
@@ -196,11 +196,11 @@ impl DiagnosticCtx {
 	}
 
 	#[track_caller]
-	pub fn emit_build(&self, report: ReportBuilder) {
+	pub(crate) fn emit_build(&self, report: ReportBuilder) {
 		self.emit(&Diagnostic::new(report));
 	}
 
-	pub fn emit(&self, diag: &Diagnostic) {
+	pub(crate) fn emit(&self, diag: &Diagnostic) {
 		if diag.report.kind == ReportKind::Error {
 			self.degraded.store(true, Ordering::Relaxed);
 		}
@@ -216,12 +216,12 @@ impl DiagnosticCtx {
 		eprintln!("error was emitted here: {}", diag.loc);
 	}
 
-	pub fn emit_fatal(&self, diagnostic: &Diagnostic) -> ! {
+	pub(crate) fn emit_fatal(&self, diagnostic: &Diagnostic) -> ! {
 		self.emit(diagnostic);
 		process::exit(1);
 	}
 
-	pub fn check_sane_or_exit(&self) {
+	pub(crate) fn check_sane_or_exit(&self) {
 		if self.degraded.load(Ordering::Relaxed) {
 			println!("Emitted at least one error!");
 			process::exit(1);
@@ -280,7 +280,7 @@ impl Default for Options {
 }
 
 #[derive(Debug)]
-pub struct Diagnostic {
+pub(crate) struct Diagnostic {
 	report: Box<Report>,
 	#[cfg(feature = "debug")]
 	loc: &'static std::panic::Location<'static>,
@@ -289,7 +289,7 @@ pub struct Diagnostic {
 impl Diagnostic {
 	#[must_use]
 	#[track_caller]
-	pub fn new(report: ReportBuilder) -> Self {
+	pub(crate) fn new(report: ReportBuilder) -> Self {
 		let config = Config::new().with_index_type(IndexType::Byte);
 		Self {
 			report: Box::new(report.with_config(config).finish()),
@@ -300,27 +300,27 @@ impl Diagnostic {
 }
 
 #[derive(Debug, Clone)]
-pub struct SourceFile {
-	pub name: String,
-	pub content: String,
-	pub offset: BytePos,
+pub(crate) struct SourceFile {
+	pub(crate) name: String,
+	pub(crate) content: String,
+	pub(crate) offset: BytePos,
 }
 
 #[derive(Debug, Default)]
-pub struct SourceMap {
+pub(crate) struct SourceMap {
 	sources: Vec<Rc<SourceFile>>,
 	diagnostic_sources: Vec<ariadne::Source>,
 	offset: BytePos,
 }
 
 impl SourceMap {
-	pub fn load_source_from_file(&mut self, path: &Path) -> io::Result<Rc<SourceFile>> {
+	pub(crate) fn load_source_from_file(&mut self, path: &Path) -> io::Result<Rc<SourceFile>> {
 		let src = std::fs::read_to_string(path)?;
 
 		Ok(self.load_source(&path.to_string_lossy(), src))
 	}
 
-	pub fn load_source(&mut self, name: &str, src: String) -> Rc<SourceFile> {
+	pub(crate) fn load_source(&mut self, name: &str, src: String) -> Rc<SourceFile> {
 		let src_len = BytePos::from_usize(src.len());
 
 		let src_file = Rc::new(SourceFile {
@@ -338,7 +338,7 @@ impl SourceMap {
 		src_file
 	}
 
-	pub fn lookup_source_file_idx(&self, pos: BytePos) -> FileIdx {
+	pub(crate) fn lookup_source_file_idx(&self, pos: BytePos) -> FileIdx {
 		let file_idx = self
 			.sources
 			.binary_search_by_key(&pos.to_u32(), |f| f.offset.to_u32())
@@ -351,7 +351,7 @@ impl SourceMap {
 	}
 
 	#[must_use]
-	pub fn fetch_span(&self, span: Span) -> &str {
+	pub(crate) fn fetch_span(&self, span: Span) -> &str {
 		let file_idx = self.lookup_source_file_idx(span.start);
 		let file = &self.sources[file_idx.to_usize()];
 
@@ -377,7 +377,7 @@ impl ariadne::Cache<BytePos> for &SourceMap {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FileIdx(usize);
+pub(crate) struct FileIdx(usize);
 
 impl FileIdx {
 	const fn new(idx: usize) -> Self {
@@ -390,25 +390,25 @@ impl FileIdx {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BytePos(u32);
+pub(crate) struct BytePos(u32);
 
 impl BytePos {
-	pub const fn from_u32(pos: u32) -> Self {
+	pub(crate) const fn from_u32(pos: u32) -> Self {
 		Self(pos)
 	}
 
-	pub fn from_usize(pos: usize) -> Self {
+	pub(crate) fn from_usize(pos: usize) -> Self {
 		match u32::try_from(pos) {
 			Ok(pos) => Self(pos),
 			Err(_) => bug!("tried to construct a `BytePos` out of valid values"),
 		}
 	}
 
-	pub const fn to_u32(self) -> u32 {
+	pub(crate) const fn to_u32(self) -> u32 {
 		self.0
 	}
 
-	pub const fn to_usize(self) -> usize {
+	pub(crate) const fn to_usize(self) -> usize {
 		self.0 as usize
 	}
 }
@@ -427,5 +427,5 @@ impl ops::Sub for BytePos {
 	}
 }
 
-pub type Report = ariadne::Report<Span, ReportKind>;
-pub type ReportBuilder = ariadne::ReportBuilder<Span, ReportKind>;
+pub(crate) type Report = ariadne::Report<Span, ReportKind>;
+pub(crate) type ReportBuilder = ariadne::ReportBuilder<Span, ReportKind>;

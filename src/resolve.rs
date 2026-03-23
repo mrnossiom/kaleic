@@ -3,37 +3,40 @@ use std::{collections::hash_map::Entry, fmt, fmt::Write};
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast::{self, AttrMeta, ExprKind, NodeId, visit},
-	errors, hir,
+	ast::{self, AttrMeta, ExprKind, NodeId, Visitor, visit},
+	errors,
 	session::{DcxHandle, Diagnostic, PrintKind, SessionCtx},
 	symbols::{Symbol, sym},
 };
 
 pub(crate) fn collect_root(scx: &SessionCtx, ast: &ast::Root) -> CollectionResult {
 	let mut collector = Collector::new(scx);
-	visit::Visitor::visit_root(&mut collector, ast);
+	collector.visit_root(ast);
 
 	let Collector {
 		name_env,
 		lang_items,
+		node_id_to_def_id,
 		..
 	} = collector;
 
 	scx.register_artefact(
 		&PrintKind::CollectedItems,
 		"name-environment.txt",
-		|artefact| writeln!(artefact, "{:#?}", name_env),
+		|artefact| writeln!(artefact, "{name_env:#?}"),
 	);
 
 	CollectionResult {
 		name_env,
 		lang_items,
+		node_id_to_def_id,
 	}
 }
 
-pub struct CollectionResult {
-	pub name_env: NameEnvironment,
-	pub lang_items: FxHashMap<LangItemKind, DefId>,
+pub(crate) struct CollectionResult {
+	pub(crate) name_env: NameEnvironment,
+	pub(crate) lang_items: FxHashMap<LangItem, DefId>,
+	pub(crate) node_id_to_def_id: FxHashMap<ast::NodeId, DefId>,
 }
 
 pub(crate) fn resolve_root(
@@ -42,18 +45,18 @@ pub(crate) fn resolve_root(
 	name_env: &NameEnvironment,
 ) -> ResolutionResult {
 	let mut resolver = Resolver::new(scx, name_env);
-	visit::Visitor::visit_root(&mut resolver, ast);
+	resolver.visit_root(ast);
 
 	let Resolver { resolution_map, .. } = resolver;
 	ResolutionResult { resolution_map }
 }
 
-pub struct ResolutionResult {
-	pub resolution_map: FxHashMap<ast::NodeId, Resolution>,
+pub(crate) struct ResolutionResult {
+	pub(crate) resolution_map: FxHashMap<ast::NodeId, Resolution>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DefId(u32);
+pub(crate) struct DefId(u32);
 
 impl fmt::Debug for DefId {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -64,40 +67,51 @@ impl fmt::Debug for DefId {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum LangItemKind {
-	AddTrait,
-	AddAssignTrait,
-	SubTrait,
-	SubAssignTrait,
-	//
-	// MulTrait,
-	// DivTrait,
-	//
-	BoolTy,
-	UIntTy,
-	SIntTy,
-	FloatTy,
-	// and much more :)
+pub(crate) enum LangItem {
+	Trait(TraitLangItem),
+	Type(TypeLangItem),
 }
 
-impl LangItemKind {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum TraitLangItem {
+	Add,
+	AddAssign,
+	Sub,
+	SubAssign,
+	// Mul,
+	// MulAssign,
+	// Div,
+	// DivAssign,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) enum TypeLangItem {
+	Never,
+	Bool,
+	UInt,
+	SInt,
+	Float,
+}
+
+impl LangItem {
 	fn parse(sym: Symbol) -> Option<Self> {
 		match sym {
-			sym::AddTrait => Some(Self::AddTrait),
-			sym::AddAssignTrait => Some(Self::AddAssignTrait),
-			sym::SubTrait => Some(Self::SubTrait),
-			sym::SubAssignTrait => Some(Self::SubAssignTrait),
-			sym::bool_ty => Some(Self::BoolTy),
-			sym::uint_ty => Some(Self::UIntTy),
-			sym::sint_ty => Some(Self::SIntTy),
-			sym::float_ty => Some(Self::FloatTy),
+			sym::AddTrait => Some(Self::Trait(TraitLangItem::Add)),
+			sym::AddAssignTrait => Some(Self::Trait(TraitLangItem::AddAssign)),
+			sym::SubTrait => Some(Self::Trait(TraitLangItem::Sub)),
+			sym::SubAssignTrait => Some(Self::Trait(TraitLangItem::SubAssign)),
+			sym::never_ty => Some(Self::Type(TypeLangItem::Never)),
+			sym::bool_ty => Some(Self::Type(TypeLangItem::Bool)),
+			sym::uint_ty => Some(Self::Type(TypeLangItem::UInt)),
+			sym::sint_ty => Some(Self::Type(TypeLangItem::SInt)),
+			sym::float_ty => Some(Self::Type(TypeLangItem::Float)),
 			_ => None,
 		}
 	}
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Namespace {
+pub(crate) enum Namespace {
 	Type,
 	Value,
 }
@@ -112,30 +126,31 @@ impl fmt::Display for Namespace {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct NameEnvironment {
-	pub types: FxHashMap<Symbol, DefId>,
-	pub values: FxHashMap<Symbol, DefId>,
+pub(crate) struct NameEnvironment {
+	pub(crate) types: FxHashMap<Symbol, DefId>,
+	pub(crate) values: FxHashMap<Symbol, DefId>,
 }
 
 #[derive(Debug)]
 struct Collector<'scx> {
 	scx: &'scx SessionCtx,
+
 	pub(crate) name_env: NameEnvironment,
-	pub(crate) lang_items: FxHashMap<LangItemKind, DefId>,
+	pub(crate) lang_items: FxHashMap<LangItem, DefId>,
+	pub(crate) node_id_to_def_id: FxHashMap<ast::NodeId, DefId>,
 
 	next_local_def_id: u32,
-	node_id_to_def_id: FxHashMap<ast::NodeId, DefId>,
 }
 
 impl<'scx> Collector<'scx> {
 	#[must_use]
-	pub fn new(scx: &'scx SessionCtx) -> Self {
+	pub(crate) fn new(scx: &'scx SessionCtx) -> Self {
 		Self {
 			scx,
 			name_env: NameEnvironment::default(),
 			lang_items: FxHashMap::default(),
 			next_local_def_id: 0,
-			node_id_to_def_id: Default::default(),
+			node_id_to_def_id: FxHashMap::default(),
 		}
 	}
 }
@@ -148,7 +163,7 @@ impl Collector<'_> {
 		def_id
 	}
 
-	fn register_lang_item(&mut self, kind: LangItemKind, def_id: DefId) {
+	fn register_lang_item(&mut self, kind: LangItem, def_id: DefId) {
 		let before = self.lang_items.insert(kind, def_id);
 		assert!(before.is_none());
 	}
@@ -162,31 +177,31 @@ impl Collector<'_> {
 		match map.entry(name.sym) {
 			Entry::Vacant(vacant) => _ = vacant.insert(def_id),
 			Entry::Occupied(occupied) => {
-				let (span1, span2) = todo!("get spans for {:?} and {:?}", occupied.get(), def_id);
+				let (span1, span2) = todo!(
+					"duplicate item, get spans for {:?} and {:?}",
+					occupied.get(),
+					def_id
+				);
 				let report = errors::ty::item_name_conflict(span1, span2, ns);
 				self.scx.dcx().emit_build(report);
 			}
 		}
 	}
 
-	fn parse_lang_item(
-		&mut self,
-		item: &ast::Item,
-		attr: &ast::Attr,
-	) -> Result<LangItemKind, Diagnostic> {
-		let AttrMeta::Tuple(exprs) = &attr.meta else {
+	fn parse_lang_item(&self, item: &ast::Item, attr: &ast::Attr) -> Result<LangItem, Diagnostic> {
+		if let AttrMeta::Tuple(exprs) = &attr.meta
+			&& let [expr] = exprs.as_slice()
+			&& let ExprKind::LiteralStr { sym } = expr.kind
+		{
+			let Some(kind) = LangItem::parse(sym) else {
+				let report = errors::resolve::invalid_lang_item(expr.span);
+				return Err(Diagnostic::new(report));
+			};
+
+			Ok(kind)
+		} else {
 			todo!("wrong syntax for `lang_item` attr");
-		};
-		let &[expr] = &exprs.as_slice() else {
-			todo!("wrong syntax")
-		};
-		let ExprKind::LiteralStr { sym } = expr.kind else {
-			todo!("wrong syntax")
-		};
-		let Some(kind) = LangItemKind::parse(sym) else {
-			todo!("this lang item doesn't exist")
-		};
-		Ok(kind)
+		}
 	}
 }
 
@@ -222,9 +237,7 @@ impl visit::Visitor for Collector<'_> {
 			ast::ItemKind::Function(ast::Function { name, .. }) => {
 				self.register_def(Namespace::Value, def_id, name);
 			}
-			ast::ItemKind::ForeignMod { .. } => {
-				visit::visit_item(self, item);
-			}
+			ast::ItemKind::ForeignMod { items } => self.visit_items(items),
 
 			ast::ItemKind::TraitImpl { .. } => {
 				// nothing to collect, type environment with collect trait
@@ -235,22 +248,16 @@ impl visit::Visitor for Collector<'_> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Resolution {
+pub(crate) enum Resolution {
 	Def(DefId),
 	Local(ast::NodeId),
+	Error,
 }
 
 impl Resolution {
-	pub fn as_def(&self) -> Option<DefId> {
+	pub(crate) fn as_def(self) -> Option<DefId> {
 		match self {
-			Self::Def(def) => todo!(),
-			_ => None,
-		}
-	}
-
-	pub fn as_local(&self) -> Option<hir::ExprId> {
-		match self {
-			Self::Local(id) => todo!(),
+			Self::Def(def_id) => Some(def_id),
 			_ => None,
 		}
 	}
@@ -269,7 +276,7 @@ struct Resolver<'scx> {
 
 impl<'scx> Resolver<'scx> {
 	#[must_use]
-	pub fn new(scx: &'scx SessionCtx, name_env: &'scx NameEnvironment) -> Self {
+	pub(crate) fn new(scx: &'scx SessionCtx, name_env: &'scx NameEnvironment) -> Self {
 		Self {
 			scx,
 			name_env,
@@ -305,18 +312,18 @@ impl Resolver<'_> {
 }
 
 #[derive(Debug, Clone)]
-pub enum ValueLayerKind {
+pub(crate) enum ValueLayerKind {
 	Param,
 	Local,
 }
 
 #[derive(Debug, Clone)]
-pub enum TypeLayerKind {
+pub(crate) enum TypeLayerKind {
 	Generics,
 }
 
 impl Resolver<'_> {
-	fn resolve_path(&mut self, ns: &Namespace, path: &ast::Path) {
+	fn resolve_path(&mut self, ns: Namespace, path: &ast::Path) {
 		let path_simple = path.simple();
 
 		let res = match ns {
@@ -328,24 +335,29 @@ impl Resolver<'_> {
 						};
 					}
 				}
-				let Some(node_id) = self.name_env.types.get(&path_simple.sym) else {
-					todo!("could not find type in scope: {path_simple:?}")
-				};
-				Resolution::Def(*node_id)
+				if let Some(node_id) = self.name_env.types.get(&path_simple.sym) {
+					Resolution::Def(*node_id)
+				} else {
+					let report = errors::resolve::type_not_in_scope(path.span);
+					self.scx.dcx().emit_build(report);
+					Resolution::Error
+				}
 			}
 			Namespace::Value => 'res: {
 				for (layer_kind, bindings) in self.value_layers.iter().rev() {
 					if let Some(id) = bindings.get(&path_simple.sym) {
 						break 'res match layer_kind {
-							ValueLayerKind::Param => Resolution::Local(*id),
-							ValueLayerKind::Local => Resolution::Local(*id),
+							ValueLayerKind::Param | ValueLayerKind::Local => Resolution::Local(*id),
 						};
 					}
 				}
-				let Some(node_id) = self.name_env.values.get(&path_simple.sym) else {
-					todo!("could not find value in scope: {path_simple:?}")
-				};
-				Resolution::Def(*node_id)
+				if let Some(node_id) = self.name_env.values.get(&path_simple.sym) {
+					Resolution::Def(*node_id)
+				} else {
+					let report = errors::resolve::value_not_in_scope(path.span);
+					self.scx.dcx().emit_build(report);
+					Resolution::Error
+				}
 			}
 		};
 
@@ -379,7 +391,7 @@ impl visit::Visitor for Resolver<'_> {
 							ValueLayerKind::Param,
 							decl.params.iter().map(|p| (p.name.sym, p.id)).collect(),
 							|this| visit::visit_item(this, item),
-						)
+						);
 					},
 				);
 			}
@@ -396,7 +408,7 @@ impl visit::Visitor for Resolver<'_> {
 
 	fn visit_ty(&mut self, ty @ ast::Ty { kind, span }: &ast::Ty) {
 		if let ast::TyKind::Path(path) = kind {
-			self.resolve_path(&Namespace::Type, path);
+			self.resolve_path(Namespace::Type, path);
 		}
 		visit::visit_ty(self, ty);
 	}
@@ -411,8 +423,10 @@ impl visit::Visitor for Resolver<'_> {
 
 	fn visit_expr(&mut self, expr @ ast::Expr { kind, span, id }: &ast::Expr) {
 		if let ast::ExprKind::Access { path } = kind {
-			self.resolve_path(&Namespace::Value, path);
+			self.resolve_path(Namespace::Value, path);
 		}
 		visit::visit_expr(self, expr);
 	}
+
+	fn visit_attr(&mut self, attr: &ast::Attr) {}
 }

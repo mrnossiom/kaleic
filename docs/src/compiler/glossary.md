@@ -32,7 +32,7 @@ Here is a non-exhaustive list of them and their use.
 
   Created during the parsing step.
 
-- `resolve::LocalDefId` and `resolve::DefId`
+- `resolve::DefId` <!-- and `resolve::GlobalDefId` (later) -->
 
   Created during the collection step.
 
@@ -40,9 +40,7 @@ Here is a non-exhaustive list of them and their use.
 
   Created during the lowering step.
 
-  - `hir::ItemId`: they wrap normal `NodeId` but ensure that they point to an item 
-
-  - `hir::ExprId`: *idem.* point to an expression
+  - `hir::ExprId`: they wrap normal `NodeId` but ensure that they point to an expression.
 
 ## `TyKind`s
 
@@ -50,10 +48,14 @@ Here is a non-exhaustive list of them and their use.
 
   Holds the item definition of a type.
 
-- `ty::TyKind`
+- `ty::TyKind<InferKind, RefKind>`
 
   Holds the concrete definition of a type.
   
-  - `ty::TyKind<Infer>`
+  - `ty::EarlyItemTy` (`ty::TyKind<NoInfer, DefId>`)
+
+  - `ty::InferTy` (`ty::TyKind<Infer, NoRef>`)
 
     same but keeps an extra field to store type variables in the inference step
+
+  - `ty::LateTy` (`ty::TyKind<NoInfer, NoRef>`)

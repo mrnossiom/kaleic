@@ -8,9 +8,9 @@ use std::path::Path;
 use crate::ty::TyCtx;
 
 #[cfg(feature = "backend-cranelift")]
-pub use self::cranelift::Generator as CraneliftBackend;
+pub(crate) use self::cranelift::Generator as CraneliftBackend;
 #[cfg(feature = "backend-llvm")]
-pub use self::llvm::Generator as LlvmBackend;
+pub(crate) use self::llvm::Generator as LlvmBackend;
 
 #[derive(Debug)]
 pub enum Backend {
@@ -37,7 +37,10 @@ impl Default for Backend {
 }
 
 impl Backend {
-	pub fn jit_backend<'tcx>(&self, tcx: &'tcx TyCtx<'tcx>) -> Option<Box<dyn JitBackend + 'tcx>> {
+	pub(crate) fn jit_backend<'tcx>(
+		&self,
+		tcx: &'tcx TyCtx<'tcx>,
+	) -> Option<Box<dyn JitBackend + 'tcx>> {
 		match self {
 			#[cfg(feature = "backend-cranelift")]
 			Self::Cranelift => Some(Box::new(CraneliftBackend::new_jit(tcx))),
@@ -47,7 +50,7 @@ impl Backend {
 		}
 	}
 
-	pub fn object_backend<'tcx>(
+	pub(crate) fn object_backend<'tcx>(
 		&self,
 		tcx: &'tcx TyCtx<'tcx>,
 	) -> Option<Box<dyn ObjectBackend + 'tcx>> {
@@ -69,21 +72,21 @@ pub enum Linker {
 	Wild,
 }
 
-pub trait CodeGenBackend {
+pub(crate) trait CodeGenBackend {
 	fn codegen_root(&mut self, hir: &crate::hir::Root);
 }
 
-pub trait JitBackend: CodeGenBackend {
+pub(crate) trait JitBackend: CodeGenBackend {
 	fn finalize(&mut self);
 
 	fn call_main(&self);
 }
 
-pub trait ObjectBackend: CodeGenBackend {
+pub(crate) trait ObjectBackend: CodeGenBackend {
 	fn write_object(self: Box<Self>, path: &Path);
 }
 
-pub enum BackendDispatch {
+pub(crate) enum BackendDispatch {
 	#[cfg(feature = "backend-cranelift")]
 	Cranelift,
 	#[cfg(feature = "backend-llvm")]

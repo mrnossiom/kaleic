@@ -11,22 +11,22 @@ use crate::lexer::TokenKind::*;
 use crate::symbols::Symbol;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Spacing {
+pub(crate) enum Spacing {
 	Alone,
 	Joint,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Token {
-	pub kind: TokenKind,
-	pub span: Span,
+pub(crate) struct Token {
+	pub(crate) kind: TokenKind,
+	pub(crate) span: Span,
 }
 
 impl Token {
-	pub const DUMMY: Self = Self::new(Eof, Span::DUMMY);
+	pub(crate) const DUMMY: Self = Self::new(Eof, Span::DUMMY);
 
 	#[must_use]
-	pub const fn new(kind: TokenKind, span: Span) -> Self {
+	pub(crate) const fn new(kind: TokenKind, span: Span) -> Self {
 		Self { kind, span }
 	}
 
@@ -58,7 +58,7 @@ impl Token {
 	}
 
 	#[must_use]
-	pub const fn as_ident(self) -> Option<Ident> {
+	pub(crate) const fn as_ident(self) -> Option<Ident> {
 		match self.kind {
 			Ident(sym) => Some(Ident::new(sym, self.span)),
 			_ => None,
@@ -67,7 +67,7 @@ impl Token {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenKind {
+pub(crate) enum TokenKind {
 	Ident(Symbol),
 	Kw(Symbol),
 	LiteralStr(Symbol),
@@ -206,7 +206,7 @@ impl fmt::Display for TokenKind {
 const EOF_CHAR: char = '\0';
 
 #[derive(Debug, Clone)]
-pub struct Lexer<'scx, 'src> {
+pub(crate) struct Lexer<'scx, 'src> {
 	scx: &'scx SessionCtx,
 
 	source: &'src str,
@@ -220,7 +220,7 @@ pub struct Lexer<'scx, 'src> {
 
 impl<'scx, 'src> Lexer<'scx, 'src> {
 	#[must_use]
-	pub fn new(scx: &'scx SessionCtx, source: &'src str, start_pos: BytePos) -> Self {
+	pub(crate) fn new(scx: &'scx SessionCtx, source: &'src str, start_pos: BytePos) -> Self {
 		let chars = source.chars();
 		Self {
 			scx,
@@ -273,7 +273,7 @@ impl<'scx, 'src> Lexer<'scx, 'src> {
 }
 
 impl Lexer<'_, '_> {
-	pub fn next_token(&mut self) -> Option<(Token, Spacing)> {
+	pub(crate) fn next_token(&mut self) -> Option<(Token, Spacing)> {
 		let mut spacing = Spacing::Joint;
 
 		loop {

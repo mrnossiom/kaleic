@@ -1,6 +1,6 @@
 # Summary
 
-- [Introduction](./lang/intro.md)
+- [Introduction](./intro.md)
 
 # Language
 
@@ -37,3 +37,7 @@
   - [Code Generation](./compiler/pipeline/code-generation.md)
 
 - [Future](./compiler/future.md)
+
+# Appendices
+
+- [Extra references](./references.md)

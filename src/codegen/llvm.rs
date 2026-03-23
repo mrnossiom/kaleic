@@ -39,7 +39,7 @@ impl MaybeValue<'_> {
 	}
 }
 
-pub struct Generator<'tcx, 'ctx> {
+pub(crate) struct Generator<'tcx, 'ctx> {
 	tcx: &'tcx TyCtx<'tcx>,
 
 	ctx: &'ctx Context,
@@ -51,7 +51,7 @@ pub struct Generator<'tcx, 'ctx> {
 }
 
 impl<'tcx> Generator<'tcx, '_> {
-	pub fn new_jit(tcx: &'tcx TyCtx<'_>) -> Self {
+	pub(crate) fn new_jit(tcx: &'tcx TyCtx<'_>) -> Self {
 		// TODO: do not leak
 		let context = Box::leak(Box::new(Context::create()));
 		Self::new(tcx, context)
@@ -65,7 +65,7 @@ impl<'tcx> Generator<'tcx, '_> {
 }
 
 impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
-	pub fn new(tcx: &'tcx TyCtx, ctx: &'ctx Context) -> Self {
+	pub(crate) fn new(tcx: &'tcx TyCtx, ctx: &'ctx Context) -> Self {
 		let module = ctx.create_module("repl");
 
 		// TODO: mode to `new_jit` function
@@ -288,7 +288,7 @@ impl ObjectBackend for Generator<'_, '_> {
 }
 
 impl<'ctx> Generator<'_, 'ctx> {
-	pub fn lower_signature(&self, decl: &ty::FnDecl) -> FunctionType<'ctx> {
+	pub(crate) fn lower_signature(&self, decl: &ty::FnDecl) -> FunctionType<'ctx> {
 		let mut args_ty = Vec::new();
 		for ty::Param { name: _, ty } in &decl.inputs {
 			let type_ = self.to_llvm_type(ty).unwrap();
@@ -302,7 +302,11 @@ impl<'ctx> Generator<'_, 'ctx> {
 		}
 	}
 
-	pub fn declare_func(&mut self, name: Symbol, decl: &ty::FnDecl) -> Result<FunctionValue<'ctx>> {
+	pub(crate) fn declare_func(
+		&mut self,
+		name: Symbol,
+		decl: &ty::FnDecl,
+	) -> Result<FunctionValue<'ctx>> {
 		let fn_ty = self.lower_signature(decl);
 
 		let name = self.tcx.scx.symbols.resolve(name);
