@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, path::Path, sync::Arc};
+use std::{fmt::Write as _, ops::Deref, path::Path, rc::Rc, sync::Arc};
 
 use cranelift::prelude::{isa::TargetIsa, *};
 use cranelift_control::ControlPlane;
@@ -15,19 +15,19 @@ use crate::{
 	resolve::DefId,
 	session::{PrintKind, ScxHandle, SessionCtx},
 	symbols::Symbol,
-	ty::{self, TyCtx, TyKind},
+	ty::{self, LateTy, TyCtx, TyKind},
 };
 
 type Result<T> = std::result::Result<T, &'static str>;
 
-pub(crate) enum MaybeValue {
+pub enum MaybeValue {
 	Value(Value),
 	/// Zero-sized value
 	Zst,
 	Never,
 }
 
-pub(crate) struct Generator<'tcx, M> {
+pub struct Generator<'tcx, M> {
 	tcx: &'tcx TyCtx<'tcx>,
 
 	module: M,
@@ -50,7 +50,7 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 
 	// Return `None` on non-concrete types (e.g. zst, never)
 	// TODO: remove duplicate on function generator
-	fn to_cl_type(&self, ty: &ty::TyKind) -> Option<Type> {
+	fn to_cl_type(&self, ty: &LateTy) -> Option<Type> {
 		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Unit | ty::PrimitiveKind::Never => None,
@@ -63,7 +63,6 @@ impl<'tcx, M: Module> Generator<'tcx, M> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.tcx.type_env.borrow()[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
@@ -112,10 +111,10 @@ impl<'tcx> Generator<'tcx, ObjectModule> {
 }
 
 impl<M: Module> Generator<'_, M> {
-	pub(crate) fn lower_signature(&mut self, decl: &ty::FnDecl) -> Signature {
+	pub(crate) fn lower_signature(&self, decl: &ty::FnDecl<LateTy>) -> Signature {
 		let mut signature = self.module.make_signature();
 
-		for ty::Param { name: _, ty } in &decl.inputs {
+		for ty::Param { name: _, ty, id } in &decl.inputs {
 			let Some(type_) = self.to_cl_type(ty) else {
 				continue;
 			};
@@ -132,7 +131,7 @@ impl<M: Module> Generator<'_, M> {
 		&mut self,
 		name: Symbol,
 		def_id: DefId,
-		decl: &ty::FnDecl,
+		decl: &ty::FnDecl<LateTy>,
 		linkage: Linkage,
 	) -> Result<FuncId> {
 		if self.functions.contains_key(&def_id) {
@@ -141,7 +140,7 @@ impl<M: Module> Generator<'_, M> {
 
 		let signature = self.lower_signature(decl);
 
-		let func_name = self.tcx.scx.symbols.resolve(name);
+		let func_name = self.tcx.scx().symbols.resolve(name);
 		let func_id = self
 			.module
 			.declare_function(&func_name, linkage, &signature)
@@ -155,7 +154,7 @@ impl<M: Module> Generator<'_, M> {
 		&mut self,
 		func_id: FuncId,
 		def_id: DefId,
-		decl: &ty::FnDecl,
+		decl: &ty::FnDecl<LateTy>,
 		body: &hir::Block,
 	) -> Result<()> {
 		let mut context = self.module.make_context();
@@ -165,13 +164,11 @@ impl<M: Module> Generator<'_, M> {
 
 		let builder = FunctionBuilder::new(&mut context.func, &mut self.builder_context);
 
-		let type_env = &self.tcx.type_env.borrow();
 		let typeck_results = &self.tcx.typeck_results.borrow_key(&def_id);
 
 		let mut generator = FunctionGenerator {
-			scx: self.tcx.scx,
+			scx: self.tcx.scx(),
 
-			type_env,
 			typeck_results,
 
 			builder,
@@ -221,29 +218,29 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let type_env = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap() else {
+					let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref() else {
 						todo!()
 					};
 
 					// TODO: react to abi attribute
 					// TODO: change to hidden by default
 					let func_id = self
-						.declare_func(name.sym, item.item_id(), &decl, Linkage::Hidden)
+						.declare_func(name.sym, item.def_id, decl, Linkage::Hidden)
 						.unwrap();
-					function_ids.insert(item.id, func_id);
+					function_ids.insert(item.def_id, func_id);
 				}
 				hir::ItemKind::ForeignMod { items } => {
 					for item in items {
 						match &item.kind {
 							hir::ForeignItemKind::Function(Function { name, decl, body }) => {
 								let type_env = self.tcx.type_env.borrow();
-								let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap()
+								let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref()
 								else {
 									todo!()
 								};
 
 								let _func_id = self
-									.declare_func(name.sym, item.item_id(), &decl, Linkage::Import)
+									.declare_func(name.sym, item.def_id, decl, Linkage::Import)
 									.unwrap();
 							}
 						}
@@ -251,36 +248,43 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 				}
 
 				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => {
-					todo!("codegen constructors here?")
+					// TODO
+					// todo!("codegen constructors here?")
 				}
-				hir::ItemKind::TypeAlias(_) | hir::ItemKind::Trait { .. } => {}
-				hir::ItemKind::TraitImpl { .. } => todo!("codegen methods"),
+				hir::ItemKind::TypeAlias(..) | hir::ItemKind::Trait { .. } => {}
+				hir::ItemKind::TraitImpl { .. } => {
+					// TODO
+					todo!("codegen methods")
+				}
 			}
 		}
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let borrow = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = borrow.get(&item.item_id()).unwrap() else {
+					let TyKind::Fn(decl) = borrow.get(&item.def_id).unwrap().deref() else {
 						todo!()
 					};
 
-					let Some(func_id) = function_ids.get(&item.id) else {
+					let Some(func_id) = function_ids.get(&item.def_id) else {
 						println!("assuming fn `{:#?}` is external", name.sym);
 						continue;
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, item.item_id(), &decl, body)
-						.unwrap();
+					self.define_func(*func_id, item.def_id, decl, body).unwrap();
 				}
 
-				hir::ItemKind::TraitImpl { .. } => todo!(),
+				hir::ItemKind::TraitImpl { .. } => {
+					// TODO
+				}
 
-				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
+				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => {
+					// TODO
+				}
 
 				hir::ItemKind::ForeignMod { .. }
-				| hir::ItemKind::TypeAlias(_)
+				| hir::ItemKind::TypeAlias(..)
 				| hir::ItemKind::Trait { .. } => {}
 			}
 		}
@@ -298,7 +302,6 @@ impl JitBackend for Generator<'_, JITModule> {
 		let func = self.module.get_finalized_function(*main_id);
 
 		// TODO: this is unsafe for so much reasons, but we assume that our codegen is perfect :)
-		// TODO: actually enforce main signature
 		// SAFETY: main signature is enforced
 		let main = unsafe { std::mem::transmute::<*const u8, fn()>(func) };
 
@@ -314,25 +317,24 @@ impl ObjectBackend for Generator<'_, ObjectModule> {
 	}
 }
 
-pub(crate) struct FunctionGenerator<'scx, 'bld> {
+pub struct FunctionGenerator<'scx, 'bld> {
 	scx: &'scx SessionCtx,
 
-	type_env: &'scx FxHashMap<DefId, ty::TyKind>,
-	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
+	typeck_results: &'scx FxHashMap<ExprId, Rc<LateTy>>,
 
 	builder: FunctionBuilder<'bld>,
 	functions: &'bld FxHashMap<DefId, FuncId>,
 	module: &'bld mut dyn Module,
 	isa: Arc<dyn TargetIsa + 'static>,
 
-	values: FxHashMap<Symbol, Option<Variable>>,
+	values: FxHashMap<hir::NodeId, Option<Variable>>,
 	loop_stack: Vec<(Block, Block)>,
 }
 
 /// Codegen hir functions
 impl FunctionGenerator<'_, '_> {
 	// TODO: remove duplicate
-	fn to_cl_type(&self, ty: &ty::TyKind) -> Option<Type> {
+	fn to_cl_type(&self, ty: &LateTy) -> Option<Type> {
 		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Unit | ty::PrimitiveKind::Never => None,
@@ -345,34 +347,34 @@ impl FunctionGenerator<'_, '_> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.isa.pointer_type()),
 			ty::TyKind::Struct(struct_) => todo!(),
 			ty::TyKind::Enum(enum_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_cl_type(&self.type_env[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
 		}
 	}
 
-	fn codegen_body(&mut self, decl: &ty::FnDecl, block: &hir::Block) -> Result<()> {
+	fn codegen_body(&mut self, decl: &ty::FnDecl<LateTy>, block: &hir::Block) -> Result<()> {
 		let entry_block = self.builder.create_block();
 		self.builder
 			.append_block_params_for_function_params(entry_block);
 		self.builder.switch_to_block(entry_block);
 		self.builder.seal_block(entry_block);
 
-		let params = decl
-			.inputs
-			.iter()
-			// skip zst
-			.filter_map(|param| self.to_cl_type(&param.ty).map(|ty| (param.name, ty)))
-			.collect::<Vec<_>>();
+		let mut block_param_idx = 0;
+		for ty::Param { name, ty, id } in &decl.inputs {
+			let Some(ty) = self.to_cl_type(ty) else {
+				// skip ZSTs
+				continue;
+			};
 
-		for (i, (ident, ty)) in params.into_iter().enumerate() {
-			let value = self.builder.block_params(entry_block)[i];
+			let value = self.builder.block_params(entry_block)[block_param_idx];
 
 			let variable = self.builder.declare_var(ty);
 			self.builder.def_var(variable, value);
 
-			self.values.insert(ident.sym, Some(variable));
+			self.values.insert(*id, Some(variable));
+
+			block_param_idx += 1;
 		}
 
 		match self.codegen_block(block)? {
@@ -380,6 +382,7 @@ impl FunctionGenerator<'_, '_> {
 			MaybeValue::Zst => _ = self.builder.ins().return_(&[]),
 			MaybeValue::Never => {}
 		}
+
 		Ok(())
 	}
 
@@ -416,10 +419,10 @@ impl FunctionGenerator<'_, '_> {
 					let variable = self.builder.declare_var(ty);
 					self.builder.def_var(variable, expr_value);
 
-					self.values.insert(name.sym, Some(variable));
+					self.values.insert(stmt.id, Some(variable));
 				}
 				MaybeValue::Zst => {
-					self.values.insert(name.sym, None);
+					self.values.insert(stmt.id, None);
 				}
 				MaybeValue::Never => {}
 			},
@@ -467,8 +470,9 @@ impl FunctionGenerator<'_, '_> {
 			}
 
 			hir::ExprKind::Access { path } => {
-				let path = path.resolved.as_local().unwrap();
-				match self.values.get(todo!()) {
+				let node_id = path.resolved.as_local().unwrap();
+				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
+				match self.values.get(&hir_id) {
 					Some(Some(var)) => MaybeValue::Value(self.builder.use_var(*var)),
 					Some(None) => MaybeValue::Zst,
 					None => return Err("var undefined"),
@@ -566,10 +570,10 @@ impl FunctionGenerator<'_, '_> {
 					todo!("invalid lvalue");
 				};
 
-				let local = path.resolved.as_local().unwrap();
-				let local = todo!();
-				let Some(variable) = *self.values.get(&local).unwrap() else {
-					// handle zst
+				let node_id = path.resolved.as_local().unwrap();
+				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
+				let Some(variable) = *self.values.get(&hir_id).unwrap() else {
+					// handle ZSTs
 					return Ok(MaybeValue::Zst);
 				};
 
@@ -678,7 +682,11 @@ impl FunctionGenerator<'_, '_> {
 			.ret
 			.as_ref()
 			.map_or(TyKind::Primitive(ty::PrimitiveKind::Unit), |ret| {
-				self.typeck_results.get(&ret.expr_id()).unwrap().clone()
+				self.typeck_results
+					.get(&ret.expr_id())
+					.unwrap()
+					.deref()
+					.clone()
 			});
 
 		if let Some(ty) = self.to_cl_type(&ty) {

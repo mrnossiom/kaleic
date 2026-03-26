@@ -28,13 +28,14 @@ pub fn pipeline(scx: &SessionCtx) {
 
 	let ResolutionResult { resolution_map } = resolve::resolve_root(scx, &ast, &name_env);
 
-	let hir = lowerer::lower_root(scx, &ast, &resolution_map, &node_id_to_def_id);
+	let hir = lowerer::lower_root(scx, &ast, &resolution_map, &node_id_to_def_id, &lang_items);
 
 	scx.dcx().check_sane_or_exit();
 
 	let tcx = ty::TyCtx::new(scx, &name_env, &lang_items);
 
 	ty::compute_items_type(&tcx, &hir);
+	ty::check_entrypoint(&tcx);
 
 	inference::infer_root(&tcx, &hir);
 

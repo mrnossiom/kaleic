@@ -287,6 +287,8 @@ impl Parser<'_> {
 			};
 
 			lhs = Expr {
+				// attributes on binary operation needs paren
+				attrs: Vec::default(),
 				kind: new_kind,
 				span: self.close_span(lo),
 				id: self.make_node_id(),
@@ -324,10 +326,13 @@ impl Parser<'_> {
 	}
 
 	// check for postfix constructs
-	fn parse_expr_postfix(&mut self, expr: Expr) -> Result<ControlFlow<Expr, Expr>> {
+	fn parse_expr_postfix(&mut self, mut expr: Expr) -> Result<ControlFlow<Expr, Expr>> {
 		let lo = expr.span.start();
-		let kind = if self.eat(Dot) {
-			if matches!(self.token.kind, Ident(_)) {
+
+		let (kind, attrs) = if self.eat(Dot) {
+			let attrs = mem::take(&mut expr.attrs);
+
+			let kind = if matches!(self.token.kind, Ident(_)) {
 				// `<expr> . foo` or `<expr> . bar ( <args> )`
 				let field = self.expect_ident()?;
 
@@ -361,14 +366,22 @@ impl Parser<'_> {
 				let report =
 					errors::parser::expected_construct_no_match("a postfix construct", self.token);
 				return Err(Diagnostic::new(report));
-			}
+			};
+
+			(kind, attrs)
 		} else if self.check(OpenParen) {
+			let attrs = mem::take(&mut expr.attrs);
+
 			// `<expr> ()`
-			self.parse_fn_call(expr)?
+			let kind = self.parse_fn_call(expr)?;
+
+			(kind, attrs)
 		} else {
 			return Ok(ControlFlow::Break(expr));
 		};
+
 		Ok(ControlFlow::Continue(Expr {
+			attrs,
 			kind,
 			span: self.close_span(lo),
 			id: self.make_node_id(),
@@ -380,6 +393,8 @@ impl Parser<'_> {
 	/// See [`Self::parse_expr`] for full expression parsing including binary operations
 	fn parse_expr_single(&mut self) -> Result<Expr> {
 		let lo = self.token.span;
+
+		let attrs = self.parse_attrs(&AttrKind::Next)?;
 
 		let kind = if self.eat_kw(kw::Not) {
 			self.parse_expr_not()?
@@ -417,6 +432,7 @@ impl Parser<'_> {
 		};
 
 		Ok(Expr {
+			attrs,
 			kind,
 			span: self.close_span(lo),
 			id: self.make_node_id(),
@@ -544,7 +560,7 @@ impl Parse for Item {
 	fn parse(p: &mut Parser) -> Result<Self> {
 		let lo = p.token.span;
 
-		let attrs = p.parse_while(Pound, |p| p.parse_attr(&AttrKind::Next))?;
+		let attrs = p.parse_attrs(&AttrKind::Next)?;
 
 		let kind = if p.eat_kw(kw::Fn) {
 			ItemKind::Function(Parse::parse(p)?)
@@ -1031,7 +1047,11 @@ impl Parser<'_> {
 	}
 
 	fn parse_attrs(&mut self, kind: &AttrKind) -> Result<Vec<Attr>> {
-		self.parse_while(PoundPound, |p| p.parse_attr(&AttrKind::Parent))
+		let peek = match kind {
+			AttrKind::Parent => PoundPound,
+			AttrKind::Next => Pound,
+		};
+		self.parse_while(peek, |p| p.parse_attr(kind))
 	}
 
 	fn parse_attr(&mut self, kind: &AttrKind) -> Result<Attr> {

@@ -85,10 +85,3 @@ pub(crate) trait JitBackend: CodeGenBackend {
 pub(crate) trait ObjectBackend: CodeGenBackend {
 	fn write_object(self: Box<Self>, path: &Path);
 }
-
-pub(crate) enum BackendDispatch {
-	#[cfg(feature = "backend-cranelift")]
-	Cranelift,
-	#[cfg(feature = "backend-llvm")]
-	Llvm,
-}

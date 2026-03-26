@@ -78,10 +78,10 @@ pub(crate) enum TraitLangItem {
 	AddAssign,
 	Sub,
 	SubAssign,
-	// Mul,
-	// MulAssign,
-	// Div,
-	// DivAssign,
+	Mul,
+	MulAssign,
+	Div,
+	DivAssign,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -200,7 +200,8 @@ impl Collector<'_> {
 
 			Ok(kind)
 		} else {
-			todo!("wrong syntax for `lang_item` attr");
+			let report = todo!("report wrong syntax for `lang_item` attr");
+			self.scx.dcx().emit_build(report);
 		}
 	}
 }
@@ -258,6 +259,13 @@ impl Resolution {
 	pub(crate) fn as_def(self) -> Option<DefId> {
 		match self {
 			Self::Def(def_id) => Some(def_id),
+			_ => None,
+		}
+	}
+
+	pub(crate) fn as_local(self) -> Option<ast::NodeId> {
+		match self {
+			Self::Local(node_id) => Some(node_id),
 			_ => None,
 		}
 	}
@@ -421,7 +429,15 @@ impl visit::Visitor for Resolver<'_> {
 		visit::visit_stmt(self, stmt);
 	}
 
-	fn visit_expr(&mut self, expr @ ast::Expr { kind, span, id }: &ast::Expr) {
+	fn visit_expr(
+		&mut self,
+		expr @ ast::Expr {
+			attrs,
+			kind,
+			span,
+			id,
+		}: &ast::Expr,
+	) {
 		if let ast::ExprKind::Access { path } = kind {
 			self.resolve_path(Namespace::Value, path);
 		}

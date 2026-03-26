@@ -41,13 +41,12 @@ impl<T> Put<T> {
 
 	#[track_caller]
 	pub(crate) fn borrow(&self) -> Ref<'_, T> {
-		Ref::map(self.inner.borrow(), |op| {
-			if let Some(op) = op.as_ref() {
-				op
-			} else {
-				panic!("`Put<T>` has not yet been computed")
-			}
-		})
+		let borrow = self.inner.borrow();
+		if borrow.is_some() {
+			Ref::map(borrow, |op| op.as_ref().unwrap())
+		} else {
+			panic!("`Put<T>` has not yet been computed")
+		}
 	}
 }
 
@@ -87,7 +86,7 @@ impl<K: Eq + std::hash::Hash, V> PutMap<K, V> {
 
 #[derive(Debug)]
 pub(crate) struct TyCtx<'scx> {
-	pub(crate) scx: &'scx SessionCtx,
+	scx: &'scx SessionCtx,
 
 	pub(crate) name_env: &'scx NameEnvironment,
 	lang_items: &'scx FxHashMap<LangItem, DefId>,
@@ -95,7 +94,7 @@ pub(crate) struct TyCtx<'scx> {
 	pub(crate) main_fn_id: Put<DefId>,
 	pub(crate) type_env: Put<FxHashMap<DefId, Rc<LateTy>>>,
 	// per function
-	pub(crate) typeck_results: PutMap<DefId, FxHashMap<ExprId, LateTy>>,
+	pub(crate) typeck_results: PutMap<DefId, FxHashMap<ExprId, Rc<LateTy>>>,
 }
 
 pub(crate) trait TcxHandle {
@@ -318,7 +317,7 @@ impl<Ref: Clone> TyKind<NoInfer, Ref> {
 			Self::Struct(struct_) => todo!(),
 			Self::Enum(enum_) => todo!(),
 			Self::Ref(id) => TyKind::Ref(id.clone()),
-			Self::Infer(_) => unreachable!(),
+			Self::Infer(no_infer) => match *no_infer {},
 			Self::Error => TyKind::Error,
 		}
 	}
@@ -503,6 +502,7 @@ pub(crate) struct TypeCollector<'tcx> {
 impl TypeCollector<'_> {
 	/// Lower ty at item level
 	pub(crate) fn lower_ty(&self, ty: &hir::Ty) -> EarlyItemTy {
+		let _ = self;
 		match &ty.kind {
 			hir::TyKind::Path(path) => match path.resolved {
 				Resolution::Def(def_id) => TyKind::Ref(def_id),
@@ -645,4 +645,26 @@ impl visit::Visitor for TypeCollector<'_> {
 			}
 		}
 	}
+}
+
+pub(crate) fn check_entrypoint(tcx: &TyCtx<'_>) {
+	let main_sym = tcx.scx().symbols.intern("main");
+	let Some(def_id) = tcx.name_env.values.get(&main_sym) else {
+		let report = todo!("no main function");
+		tcx.dcx().emit_build(report);
+	};
+
+	let main_ty = &tcx.type_env.borrow()[def_id];
+
+	let expected_main_ty = LateTy::Fn(FnDecl {
+		inputs: vec![],
+		output: LateTy::Primitive(PrimitiveKind::Unit).into(),
+	});
+
+	if **main_ty != expected_main_ty {
+		let report = todo!("main doesn't match the expected signature");
+		tcx.dcx().emit_build(report);
+	}
+
+	tcx.main_fn_id.put(*def_id);
 }

@@ -1,4 +1,4 @@
-use std::{fmt::Write as _, path::Path};
+use std::{fmt::Write as _, ops::Deref, path::Path, rc::Rc};
 
 use inkwell::{
 	AddressSpace, IntPredicate, OptimizationLevel,
@@ -19,9 +19,9 @@ use crate::{
 	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, ExprId, Function, Struct},
 	resolve::DefId,
-	session::{PrintKind, SessionCtx},
+	session::{PrintKind, ScxHandle, SessionCtx},
 	symbols::Symbol,
-	ty::{self, TyCtx, TyKind},
+	ty::{self, LateTy, TyCtx, TyKind},
 };
 
 type Result<T> = std::result::Result<T, &'static str>;
@@ -39,13 +39,15 @@ impl MaybeValue<'_> {
 	}
 }
 
-pub(crate) struct Generator<'tcx, 'ctx> {
+pub struct Generator<'tcx, 'ctx> {
 	tcx: &'tcx TyCtx<'tcx>,
 
 	ctx: &'ctx Context,
 	builder: Builder<'ctx>,
 	module: Module<'ctx>,
 	jit: ExecutionEngine<'ctx>,
+
+	function_ids: FxHashMap<DefId, FunctionValue<'ctx>>,
 
 	empty_ty: BasicTypeEnum<'ctx>,
 }
@@ -69,7 +71,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		let module = ctx.create_module("repl");
 
 		// TODO: mode to `new_jit` function
-		let opt_level = if tcx.scx.options.opt {
+		let opt_level = if tcx.scx().options.opt {
 			OptimizationLevel::Default
 		} else {
 			OptimizationLevel::None
@@ -86,11 +88,13 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 			module,
 			jit,
 
+			function_ids: FxHashMap::default(),
+
 			empty_ty,
 		}
 	}
 
-	fn to_llvm_type(&self, ty: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
+	fn to_llvm_type(&self, ty: &LateTy) -> Option<BasicTypeEnum<'ctx>> {
 		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Unit => Some(self.empty_ty),
@@ -106,7 +110,6 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_llvm_type(&self.tcx.type_env.borrow()[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
@@ -117,17 +120,17 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 		&self,
 		func_val: FunctionValue<'ctx>,
 		def_id: DefId,
-		decl: &ty::FnDecl,
+		decl: &ty::FnDecl<LateTy>,
 		body: &hir::Block,
 	) -> Result<()> {
 		let type_env = &self.tcx.type_env.borrow();
 		let typeck_results = &self.tcx.typeck_results.borrow_key(&def_id);
 
 		let mut generator = FunctionGenerator {
-			scx: self.tcx.scx,
+			scx: self.tcx.scx(),
 
-			type_env,
 			typeck_results,
+			function_ids: &self.function_ids,
 
 			ctx: self.ctx,
 			module: &self.module,
@@ -144,7 +147,7 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 
 		let name = format!("{}.ll", func_val.get_name().to_string_lossy());
 		self.tcx
-			.scx
+			.scx()
 			.register_artefact(&PrintKind::BackendIr, &name, |artefact| {
 				write!(artefact, "{}", func_val.print_to_string().to_string_lossy())
 			});
@@ -163,63 +166,68 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 
 impl CodeGenBackend for Generator<'_, '_> {
 	fn codegen_root(&mut self, hir: &hir::Root) {
-		let mut function_ids = FxHashMap::default();
-
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let type_env = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap() else {
+					let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref() else {
 						todo!()
 					};
 
-					let func_id = self.declare_func(name.sym, &decl).unwrap();
-					function_ids.insert(item.id, func_id);
+					let func_id = self.declare_func(name.sym, decl).unwrap();
+					self.function_ids.insert(item.def_id, func_id);
 				}
 				hir::ItemKind::ForeignMod { items } => {
 					for item in items {
 						match &item.kind {
 							hir::ForeignItemKind::Function(Function { name, decl, body }) => {
 								let type_env = self.tcx.type_env.borrow();
-								let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap()
+
+								let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref()
 								else {
 									todo!()
 								};
 
-								let _func_id = self.declare_func(name.sym, &decl).unwrap();
+								let func_id = self.declare_func(name.sym, decl).unwrap();
+								self.function_ids.insert(item.def_id, func_id);
 							}
 						}
 					}
 				}
 
 				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => {
-					todo!("codegen constructors here?")
+					// TODO: codegen constructors here?
 				}
 				hir::ItemKind::TypeAlias(_) | hir::ItemKind::Trait { .. } => {}
-				hir::ItemKind::TraitImpl { .. } => todo!("codegen methods"),
+				hir::ItemKind::TraitImpl { .. } => {
+					// TODO: codegen methods
+				}
 			}
 		}
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let type_env = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = type_env.get(&item.item_id()).unwrap() else {
+					let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref() else {
 						todo!()
 					};
 
-					let Some(func_id) = function_ids.get(&item.id) else {
+					let Some(func_id) = self.function_ids.get(&item.def_id) else {
 						println!("assuming fn `{:#?}` is external", name.sym);
 						continue;
 					};
 
 					let body = body.as_ref().unwrap();
-					self.define_func(*func_id, item.item_id(), &decl, body)
-						.unwrap();
+					self.define_func(*func_id, item.def_id, decl, body).unwrap();
 				}
 
-				hir::ItemKind::TraitImpl { .. } => todo!(),
+				hir::ItemKind::TraitImpl { .. } => {
+					// TODO
+				}
 
-				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => todo!(),
+				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => {
+					// TODO
+				}
 
 				hir::ItemKind::ForeignMod { .. }
 				| hir::ItemKind::TypeAlias(_)
@@ -254,7 +262,7 @@ impl ObjectBackend for Generator<'_, '_> {
 				&target_triple,
 				"generic",
 				"",
-				if self.tcx.scx.options.opt {
+				if self.tcx.scx().options.opt {
 					OptimizationLevel::Default
 				} else {
 					OptimizationLevel::None
@@ -288,9 +296,9 @@ impl ObjectBackend for Generator<'_, '_> {
 }
 
 impl<'ctx> Generator<'_, 'ctx> {
-	pub(crate) fn lower_signature(&self, decl: &ty::FnDecl) -> FunctionType<'ctx> {
+	pub(crate) fn lower_signature(&self, decl: &ty::FnDecl<LateTy>) -> FunctionType<'ctx> {
 		let mut args_ty = Vec::new();
-		for ty::Param { name: _, ty } in &decl.inputs {
+		for ty::Param { name: _, ty, id } in &decl.inputs {
 			let type_ = self.to_llvm_type(ty).unwrap();
 			args_ty.push(type_.into());
 		}
@@ -303,22 +311,22 @@ impl<'ctx> Generator<'_, 'ctx> {
 	}
 
 	pub(crate) fn declare_func(
-		&mut self,
+		&self,
 		name: Symbol,
-		decl: &ty::FnDecl,
+		decl: &ty::FnDecl<LateTy>,
 	) -> Result<FunctionValue<'ctx>> {
 		let fn_ty = self.lower_signature(decl);
 
-		let name = self.tcx.scx.symbols.resolve(name);
+		let name = self.tcx.scx().symbols.resolve(name);
 		let fn_val = self.module.add_function(&name, fn_ty, None);
 
 		// set arguments name
 		fn_val
 			.get_param_iter()
 			.zip(&decl.inputs)
-			.for_each(|(arg, ty::Param { name, ty })| {
+			.for_each(|(arg, ty::Param { name, ty, id })| {
 				arg.into_int_value()
-					.set_name(&self.tcx.scx.symbols.resolve(name.sym));
+					.set_name(&self.tcx.scx().symbols.resolve(name.sym));
 			});
 
 		Ok(fn_val)
@@ -328,15 +336,15 @@ impl<'ctx> Generator<'_, 'ctx> {
 struct FunctionGenerator<'scx, 'bld, 'ctx> {
 	scx: &'scx SessionCtx,
 
-	type_env: &'scx FxHashMap<DefId, ty::TyKind>,
-	typeck_results: &'scx FxHashMap<ExprId, ty::TyKind>,
+	typeck_results: &'scx FxHashMap<ExprId, Rc<LateTy>>,
+	function_ids: &'bld FxHashMap<DefId, FunctionValue<'ctx>>,
 
 	ctx: &'ctx Context,
 	module: &'bld Module<'ctx>,
 	builder: &'bld Builder<'ctx>,
 	function: FunctionValue<'ctx>,
 
-	variables: FxHashMap<Symbol, PointerValue<'ctx>>,
+	variables: FxHashMap<hir::NodeId, PointerValue<'ctx>>,
 	// stack of loop and continuation blocks
 	// TODO: support labels
 	loop_stack: Vec<(
@@ -356,7 +364,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 	}
 
 	// TODO: remove duplicate
-	fn to_llvm_type(&self, ty: &ty::TyKind) -> Option<BasicTypeEnum<'ctx>> {
+	fn to_llvm_type(&self, ty: &LateTy) -> Option<BasicTypeEnum<'ctx>> {
 		match ty.clone() {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Unit => Some(self.empty_ty),
@@ -372,18 +380,17 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 			ty::TyKind::Fn(_fn_decl) => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
-			ty::TyKind::Ref(ref_) => self.to_llvm_type(&self.type_env[&ref_]),
 			ty::TyKind::Error => {
 				bug!("error type kind is a placeholder and should not reach codegen")
 			}
 		}
 	}
 
-	fn codegen_body(&mut self, decl: &ty::FnDecl, block: &hir::Block) -> Result<()> {
+	fn codegen_body(&mut self, decl: &ty::FnDecl<LateTy>, block: &hir::Block) -> Result<()> {
 		let bb = self.ctx.append_basic_block(self.function, "entry");
 		self.builder.position_at_end(bb);
 
-		for (ty::Param { name, ty }, value) in
+		for (ty::Param { name, ty, id }, value) in
 			decl.inputs.iter().zip(self.function.get_param_iter())
 		{
 			let Some(ty) = self.to_llvm_type(ty) else {
@@ -393,8 +400,9 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				.builder
 				.build_alloca(ty, &format!("{:#?}", name.sym))
 				.unwrap();
+
 			self.builder.build_store(place, value).unwrap();
-			self.variables.insert(name.sym, place);
+			self.variables.insert(*id, place);
 		}
 
 		match self.codegen_block(block)? {
@@ -443,7 +451,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 					MaybeValue::Never => {}
 				}
 
-				self.variables.insert(name.sym, place);
+				self.variables.insert(stmt.id, place);
 				Ok(expr_value.is_never())
 			}
 		}
@@ -489,14 +497,16 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				MaybeValue::Value(value)
 			}
 			hir::ExprKind::Access { path } => {
-				let place = *self.variables.get(todo!()).unwrap();
+				let node_id = path.resolved.as_local().unwrap();
+				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
+				let place = *self.variables.get(&hir_id).unwrap();
 
 				let ty = &self.typeck_results[&expr.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 
 				let value = self
 					.builder
-					.build_load(ty, place, &self.scx.symbols.resolve(todo!()))
+					.build_load(ty, place, "")
 					.unwrap()
 					.as_basic_value_enum();
 
@@ -507,7 +517,9 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 					todo!("invalid lvalue");
 				};
 
-				let place = *self.variables.get(todo!()).unwrap();
+				let node_id = path.resolved.as_local().unwrap();
+				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
+				let place = *self.variables.get(&hir_id).unwrap();
 				let expr_value = self.codegen_expr(value)?;
 				match expr_value {
 					MaybeValue::Value(value) => {
@@ -537,14 +549,14 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 
 				let call = if let hir::ExprKind::Access { path } = &expr.kind {
 					// direct call
-					let local = path.resolved.as_def().unwrap();
-					let func = self.module.get_function(todo!()).unwrap();
+					let def_id = path.resolved.as_def().unwrap();
+					let func = self.function_ids.get(&def_id).unwrap();
 
 					if args.bit.len() != func.count_params() as usize {
 						return Err("fn call args count mismatch");
 					}
 
-					self.builder.build_call(func, &argsz, "").unwrap()
+					self.builder.build_call(*func, &argsz, "").unwrap()
 				} else {
 					// indirect call
 					let addr = match self.codegen_expr(expr)? {
@@ -561,7 +573,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				match call.try_as_basic_value().basic() {
 					Some(val) => MaybeValue::Value(val),
 					None => {
-						if matches!(expr_ty, TyKind::Primitive(ty::PrimitiveKind::Never)) {
+						if matches!(&**expr_ty, TyKind::Primitive(ty::PrimitiveKind::Never)) {
 							MaybeValue::Never
 						} else {
 							self.empty_value()
@@ -668,7 +680,11 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 			.ret
 			.as_ref()
 			.map_or(TyKind::Primitive(ty::PrimitiveKind::Unit), |ret| {
-				self.typeck_results.get(&ret.expr_id()).unwrap().clone()
+				self.typeck_results
+					.get(&ret.expr_id())
+					.unwrap()
+					.deref()
+					.clone()
 			});
 		let ty = self.to_llvm_type(&ty);
 

@@ -5,13 +5,13 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast::{self, UnaryOp},
 	errors,
-	hir::{self, ExprId, ExprKind, Function, Visitor, visit},
+	hir::{self, ExprId, ExprKind, Function, Visitor},
 	resolve::{DefId, NameEnvironment, Resolution},
-	session::{DcxHandle, Span},
+	session::{DcxHandle, ScxHandle, Span},
 	ty::{self, Infer, InferExprTy, InferKind, LateTy, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
-/// Type Variable Id
+/// *Type* *Var*iable *Id*
 ///
 /// local to a function body
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -23,16 +23,18 @@ pub(crate) struct Inferer<'tcx> {
 	pub(crate) name_env: &'tcx NameEnvironment,
 	pub(crate) type_env: &'tcx FxHashMap<DefId, Rc<LateTy>>,
 
-	pub(crate) local_env: FxHashMap<hir::NodeId, Rc<InferExprTy>>,
-	pub(crate) return_ty: InferExprTy,
-	pub(crate) expr_type: FxHashMap<ExprId, InferExprTy>,
-	pub(crate) infer_map: FxHashMap<TypeVarId, InferExprTy>,
+	pub(crate) expr_tys: FxHashMap<ExprId, InferExprTy>,
+
+	local_env: FxHashMap<hir::NodeId, Rc<InferExprTy>>,
+	/// Expected return type to infer with `return` expressions
+	return_ty: InferExprTy,
+	infer_map: FxHashMap<TypeVarId, InferExprTy>,
 
 	next_ty_var_id: u32,
 	ty_var_expr_map: FxHashMap<TypeVarId, Span>,
 
 	// TODO: support labels
-	pub(crate) loops: Vec<InferExprTy>,
+	loops: Vec<InferExprTy>,
 }
 
 impl<'tcx> Inferer<'tcx> {
@@ -49,9 +51,10 @@ impl<'tcx> Inferer<'tcx> {
 			name_env,
 			type_env,
 
+			expr_tys: FxHashMap::default(),
+
 			local_env: FxHashMap::default(),
 			return_ty: TyKind::Error,
-			expr_type: FxHashMap::default(),
 			infer_map: FxHashMap::default(),
 
 			next_ty_var_id: 0,
@@ -73,6 +76,129 @@ impl<'tcx> Inferer<'tcx> {
 			tvid: self.make_type_variable(span),
 			kind,
 		})
+	}
+}
+
+impl Inferer<'_> {
+	fn finish(self) -> FxHashMap<ExprId, Rc<LateTy>> {
+		let mut expr_late_tys = FxHashMap::default();
+
+		for (node_id, ty_infer) in self.expr_tys {
+			// writeback
+
+			let ctx = &mut visit_ty::Context {
+				tcx: self.tcx,
+				ty_var_expr_map: &self.ty_var_expr_map,
+				infer_map: &self.infer_map,
+			};
+			let v = visit_ty::visit_ty(ctx, &ty_infer);
+			expr_late_tys.insert(node_id, v);
+		}
+
+		expr_late_tys
+	}
+}
+
+fn default_type_for_infer_kind(kind: InferKind) -> Option<LateTy> {
+	// set default types for expression that can be inferred via literals
+	match kind {
+		InferKind::Integer => Some(TyKind::Primitive(PrimitiveKind::SignedInt)),
+		InferKind::Float => Some(TyKind::Primitive(PrimitiveKind::Float)),
+		InferKind::Generic | InferKind::Explicit => None,
+	}
+}
+
+mod visit_ty {
+	use std::rc::Rc;
+
+	use rustc_hash::FxHashMap;
+
+	use crate::{
+		errors,
+		inference::TypeVarId,
+		session::{DcxHandle, Span},
+		ty::{
+			Enum, FieldDef, FnDecl, InferExprTy, LateTy, Param, Struct, TyCtx, Variant, VariantKind,
+		},
+	};
+
+	pub struct Context<'a> {
+		pub tcx: &'a TyCtx<'a>,
+		pub ty_var_expr_map: &'a FxHashMap<TypeVarId, Span>,
+		pub infer_map: &'a FxHashMap<TypeVarId, InferExprTy>,
+	}
+
+	pub fn visit_ty(ctx: &mut Context, early_ty: &InferExprTy) -> Rc<LateTy> {
+		let late_ty = match early_ty {
+			InferExprTy::Primitive(prim) => LateTy::Primitive(prim.clone()),
+			InferExprTy::Fn(func) => LateTy::Fn(visit_func(ctx, func)),
+			InferExprTy::Pointer(ty) => LateTy::Pointer(visit_ty(ctx, ty)),
+			InferExprTy::Struct(struct_) => LateTy::Struct(visit_struct(ctx, struct_)),
+			InferExprTy::Enum(enum_) => LateTy::Enum(visit_enum(ctx, enum_)),
+
+			InferExprTy::Ref(no_ref) => match *no_ref {},
+			InferExprTy::Infer(infer) => {
+				if let Some(ty) = ctx.infer_map.get(&infer.tvid) {
+					(*visit_ty(ctx, &ty.clone())).clone()
+				} else if let Some(ty) = super::default_type_for_infer_kind(infer.kind) {
+					ty
+				} else {
+					let span = ctx.ty_var_expr_map.get(&infer.tvid).unwrap();
+					let report = errors::ty::report_unconstrained(*span);
+					ctx.tcx.dcx().emit_build(report);
+					LateTy::Error
+				}
+			}
+			InferExprTy::Error => LateTy::Error,
+		};
+		Rc::new(late_ty)
+	}
+
+	fn visit_func(
+		ctx: &mut Context,
+		FnDecl { inputs, output }: &FnDecl<InferExprTy>,
+	) -> FnDecl<LateTy> {
+		FnDecl {
+			inputs: inputs
+				.iter()
+				.map(|Param { name, ty, id }| Param {
+					name: *name,
+					ty: visit_ty(ctx, ty),
+					id: *id,
+				})
+				.collect(),
+			output: visit_ty(ctx, output),
+		}
+	}
+
+	fn visit_struct(ctx: &mut Context, Struct { fields }: &Struct<InferExprTy>) -> Struct<LateTy> {
+		Struct {
+			fields: fields
+				.iter()
+				.map(|FieldDef { name, ty }| FieldDef {
+					name: *name,
+					ty: visit_ty(ctx, ty),
+				})
+				.collect(),
+		}
+	}
+
+	fn visit_enum(ctx: &mut Context, Enum { variants }: &Enum<InferExprTy>) -> Enum<LateTy> {
+		Enum {
+			variants: variants
+				.iter()
+				.map(|Variant { name, kind, span }| Variant {
+					name: *name,
+					kind: match kind {
+						VariantKind::Unit => VariantKind::Unit,
+						VariantKind::Struct(struct_) => {
+							VariantKind::Struct(visit_struct(ctx, struct_))
+						}
+					},
+					span: *span,
+				})
+				.collect(),
+		}
 	}
 }
 
@@ -129,53 +255,13 @@ fn typeck_fn(
 	name: ast::Ident,
 	decl: &ty::FnDecl<LateTy>,
 	body: &hir::Block,
-) -> FxHashMap<ExprId, LateTy> {
+) -> FxHashMap<ExprId, Rc<LateTy>> {
 	let type_env = tcx.type_env.borrow();
 
 	let mut inferer = Inferer::new(tcx, decl, body, tcx.name_env, &type_env);
 	inferer.infer_fn(decl, body);
 
-	let mut expr_tys = FxHashMap::default();
-
-	for (node_id, ty_infer) in inferer.expr_type {
-		// writeback
-		match ty_infer.as_no_infer() {
-			Ok(ty) => {
-				expr_tys.insert(node_id, ty);
-			}
-			Err(Infer {
-				tvid: mut tag,
-				kind,
-			}) => loop {
-				let Some(ty) = inferer.infer_map.get(&tag) else {
-					// set default types for expression that can be inferred via literals
-					match kind {
-						InferKind::Integer => {
-							expr_tys.insert(node_id, TyKind::Primitive(PrimitiveKind::SignedInt));
-						}
-						InferKind::Float => {
-							expr_tys.insert(node_id, TyKind::Primitive(PrimitiveKind::Float));
-						}
-						InferKind::Generic | InferKind::Explicit => {
-							let span = todo!("get from expr_id");
-							let report = errors::ty::report_unconstrained(span);
-							tcx.dcx().emit_build(report);
-						}
-					}
-					break;
-				};
-				match ty.clone().as_no_infer() {
-					Ok(ty) => {
-						expr_tys.insert(node_id, ty);
-						break;
-					}
-					Err(Infer { tvid: next_tag, .. }) => tag = next_tag,
-				}
-			},
-		}
-	}
-
-	expr_tys
+	inferer.finish()
 }
 
 impl Inferer<'_> {
@@ -203,7 +289,7 @@ impl Inferer<'_> {
 				}
 			}
 			Resolution::Local(node_id) => {
-				let hir_id = self.tcx.scx.node_id_to_hir_id.borrow()[&node_id];
+				let hir_id = self.tcx.scx().node_id_to_hir_id.borrow()[&node_id];
 				if let Some(ty) = self.local_env.get(&hir_id) {
 					// search in the locals defined, respecting shadowing
 					ty.deref().clone()
@@ -419,7 +505,7 @@ impl Inferer<'_> {
 			}
 		};
 
-		let old = self.expr_type.insert(expr.expr_id(), ty.clone());
+		let old = self.expr_tys.insert(expr.expr_id(), ty.clone());
 		// TODO
 		assert!(old.is_none());
 

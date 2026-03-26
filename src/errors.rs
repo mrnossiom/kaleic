@@ -85,7 +85,7 @@ pub(crate) mod ty {
 	pub fn report_unconstrained(ty_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, ty_span)
 			.with_message("expression's type is unconstrained, need type annotations")
-			.with_label(Label::new(ty_span))
+			.with_label(Label::new(ty_span).with_message("here"))
 	}
 
 	pub fn function_cannot_infer_signature(io_span: Span) -> ReportBuilder {

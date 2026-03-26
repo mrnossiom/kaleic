@@ -12,7 +12,7 @@ use crate::{
 	errors,
 	hir::{self, Path, PathSegment},
 	pretty_print,
-	resolve::{DefId, Resolution},
+	resolve::{DefId, LangItem, Resolution},
 	session::{DcxHandle, Diagnostic, DiagnosticCtx, PrintKind, SessionCtx, Span},
 	symbols::sym,
 };
@@ -22,8 +22,9 @@ pub(crate) fn lower_root(
 	source: &ast::Root,
 	resolution_map: &FxHashMap<ast::NodeId, Resolution>,
 	node_id_to_def_id: &FxHashMap<ast::NodeId, DefId>,
+	lang_items: &FxHashMap<LangItem, DefId>,
 ) -> hir::Root {
-	let mut l = Lowerer::new(scx, resolution_map, node_id_to_def_id);
+	let mut l = Lowerer::new(scx, resolution_map, node_id_to_def_id, lang_items);
 	let hir = source.lower(&mut l);
 	scx.node_id_to_hir_id.put(l.node_id_to_hir_id);
 
@@ -53,6 +54,7 @@ pub(crate) struct Lowerer<'scx> {
 
 	resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
 	node_id_to_def_id: &'scx FxHashMap<ast::NodeId, DefId>,
+	lang_items: &'scx FxHashMap<LangItem, DefId>,
 
 	node_id_to_hir_id: FxHashMap<ast::NodeId, hir::NodeId>,
 }
@@ -62,11 +64,14 @@ impl<'scx> Lowerer<'scx> {
 		scx: &'scx SessionCtx,
 		resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
 		node_id_to_def_id: &'scx FxHashMap<ast::NodeId, DefId>,
+		lang_items: &'scx FxHashMap<LangItem, DefId>,
 	) -> Self {
 		Self {
 			scx,
 			resolution_map,
 			node_id_to_def_id,
+			lang_items,
+
 			node_id_to_hir_id: FxHashMap::default(),
 		}
 	}
@@ -492,7 +497,12 @@ impl Lower for ast::Variant {
 impl Lower for ast::Expr {
 	type Out = hir::Expr;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
-		let Self { kind, span, id } = &self;
+		let Self {
+			attrs,
+			kind,
+			span,
+			id,
+		} = &self;
 		let kind = match kind {
 			ast::ExprKind::Access { path } => hir::ExprKind::Access {
 				path: path.lower(l),
@@ -575,13 +585,13 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 			expr: Box::new(make_unit(l, Span::DUMMY)),
 			label: None,
 		},
-		span: body.span,
+		span: Span::DUMMY,
 		id: l.make_node_id(None),
 	};
 	let altern_blk = hir::Block {
 		stmts: Vec::new(),
 		ret: Some(Box::new(break_expr)),
-		span: body.span,
+		span: Span::DUMMY,
 		id: l.make_node_id(None),
 	};
 
@@ -591,14 +601,13 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 			conseq: body.lower_box(l),
 			altern: Some(Box::new(altern_blk)),
 		},
-		span: body.span,
+		span: Span::DUMMY,
 		id: l.make_node_id(None),
 	};
 	let loop_blk = hir::Block {
 		stmts: Vec::new(),
 		ret: Some(Box::new(if_expr)),
-
-		span: body.span,
+		span: Span::DUMMY,
 		id: l.make_node_id(None),
 	};
 
@@ -670,6 +679,11 @@ impl Lower for ast::TyKind {
 }
 
 fn lower_unary(l: &mut Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir::ExprKind {
+	// let lang_item = match op.bit {
+	// 	ast::UnaryOp::Not => todo!(),
+	// 	ast::UnaryOp::Minus => todo!(),
+	// };
+
 	// TODO: same as lower_binary
 	hir::ExprKind::Unary {
 		op,
@@ -686,6 +700,14 @@ fn lower_binary(
 	// TODO: lower to interface call
 	// `a + b` becomes `Add.add(a, b)` or `<a as Add>.add(b)`
 	// e.g. ExprKind::FnCall { expr: to_core_func(op), args: vec![left, right] }
+
+	// let lang_item = match op.bit {
+	// 	ast::BinaryOp::Plus => TraitLangItem::Add,
+	// 	ast::BinaryOp::Minus => TraitLangItem::Sub,
+	// 	ast::BinaryOp::Mul => TraitLangItem::Sub,
+	// 	ast::BinaryOp::Div => TraitLangItem::Sub,
+	// 	_ => todo!(),
+	// };
 
 	hir::ExprKind::Binary {
 		op,

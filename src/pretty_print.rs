@@ -319,11 +319,12 @@ mod ast_pp {
 	impl PrettyPrint for ast::Expr {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			let Self {
+				attrs,
 				kind,
 				span: _,
 				id: _,
 			} = &self;
-			kind.pprint(f)
+			pp!(f, [attrs, '\n'], (kind))
 		}
 	}
 

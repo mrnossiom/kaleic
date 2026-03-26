@@ -85,16 +85,8 @@ define_symbols! {
 		argv,
 		main,
 
-		true_: "true",
 		false_: "false",
-
-		// types
-		bool,
-		float,
-		never,
-		sint,
-		str,
-		uint,
+		true_: "true",
 
 		// lang items
 		AddTrait,
@@ -102,11 +94,11 @@ define_symbols! {
 		SubTrait,
 		SubAssignTrait,
 
-		never_ty,
 		bool_ty,
-		uint_ty,
-		sint_ty,
 		float_ty,
+		never_ty,
+		sint_ty,
+		uint_ty,
 
 		// attrs
 		lang_item,

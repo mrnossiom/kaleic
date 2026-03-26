@@ -88,9 +88,7 @@ pub(crate) enum AttrMeta {
 
 #[derive(Debug)]
 pub(crate) struct Expr {
-	// TODO
-	// pub(crate
-	//) attrs: Vec<Attr>,
+	pub(crate) attrs: Vec<Attr>,
 	pub(crate) kind: ExprKind,
 	pub(crate) span: Span,
 	pub(crate) id: NodeId,
@@ -690,11 +688,13 @@ pub(crate) mod visit {
 	pub fn visit_expr<V: Visitor>(
 		v: &mut V,
 		Expr {
+			attrs,
 			kind,
 			span: _,
 			id: _,
 		}: &Expr,
 	) {
+		v.visit_attrs(attrs);
 		match kind {
 			ExprKind::Access { path } => v.visit_path(path),
 			ExprKind::LiteralStr { sym: _ }
