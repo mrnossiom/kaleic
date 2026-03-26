@@ -185,6 +185,13 @@ mod ast_pp {
 	impl PrettyPrint for ast::ItemKind {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			match self {
+				Self::ExternUse { name } => pp!(f, "extern use ", (name)),
+				Self::Module {
+					name,
+					items,
+					inline,
+				} => pp!(f, "mod ", (name), ";"),
+
 				Self::Function(func) => func.pprint(f),
 				Self::TypeAlias(ty) => ty.pprint(f),
 

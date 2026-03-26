@@ -1,0 +1,28 @@
+#lang_item("AddTrait")
+trait Add<Rhs = Self> {
+	type Output;
+	fn add(self: Self, other: Rhs) Self::Output;
+}
+
+#lang_item("AddAssignTrait")
+trait AddAssign<Rhs = Self> {
+	// fn add_assign(self: &mut Self, other: Rhs);
+	fn add_assign(self: *Self, other: Rhs);
+}
+
+#lang_item("SubTrait")
+trait Sub<Rhs = Self> {
+	type Output;
+	fn sub(self: Self, other: Rhs) Self::Output;
+}
+
+#lang_item("SubAssignTrait")
+trait SubAssign<Rhs = Self> {
+	// fn sub_assign(self: &mut Self, other: Rhs);
+	fn sub_assign(self: *Self, other: Rhs);
+}
+
+#lang_item("NotTrait")
+trait Not {
+	fn not(self: Self) -> Self;
+}

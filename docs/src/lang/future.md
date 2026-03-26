@@ -237,7 +237,7 @@ Motivation: experiment with floats as a last resort construct and work with rati
 - OCaml syntax?
 
 ```
-fn foo(arg: Ty) -> 
+fn foo(arg: Ty) ->
   a = make_foo();
   b = make_bar(a);
   ()
@@ -328,7 +328,7 @@ _ pattern
 
 # attributes
 
-% bitop
+% bitop? do not use for rem
 * bitop
 = bitop
 + bitop

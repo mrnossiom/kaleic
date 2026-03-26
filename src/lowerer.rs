@@ -12,19 +12,17 @@ use crate::{
 	errors,
 	hir::{self, Path, PathSegment},
 	pretty_print,
-	resolve::{DefId, LangItem, Resolution},
+	resolve::{DefId, EarlyResolution, LangItem, Resolution},
 	session::{DcxHandle, Diagnostic, DiagnosticCtx, PrintKind, SessionCtx, Span},
 	symbols::sym,
 };
 
-pub(crate) fn lower_root(
-	scx: &SessionCtx,
-	source: &ast::Root,
-	resolution_map: &FxHashMap<ast::NodeId, Resolution>,
-	node_id_to_def_id: &FxHashMap<ast::NodeId, DefId>,
-	lang_items: &FxHashMap<LangItem, DefId>,
-) -> hir::Root {
-	let mut l = Lowerer::new(scx, resolution_map, node_id_to_def_id, lang_items);
+pub(crate) fn lower_root(scx: &SessionCtx, source: &ast::Root) -> hir::Root {
+	let resolution_map = scx.resolution_map.borrow();
+	let node_id_to_def_id = scx.node_id_to_def_id.borrow();
+	let lang_items = scx.lang_items.borrow();
+
+	let mut l = Lowerer::new(scx, &resolution_map, &node_id_to_def_id, &lang_items);
 	let hir = source.lower(&mut l);
 	scx.node_id_to_hir_id.put(l.node_id_to_hir_id);
 
@@ -52,7 +50,7 @@ pub(crate) trait Lower {
 pub(crate) struct Lowerer<'scx> {
 	scx: &'scx SessionCtx,
 
-	resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
+	resolution_map: &'scx FxHashMap<ast::NodeId, EarlyResolution>,
 	node_id_to_def_id: &'scx FxHashMap<ast::NodeId, DefId>,
 	lang_items: &'scx FxHashMap<LangItem, DefId>,
 
@@ -62,7 +60,7 @@ pub(crate) struct Lowerer<'scx> {
 impl<'scx> Lowerer<'scx> {
 	pub(crate) fn new(
 		scx: &'scx SessionCtx,
-		resolution_map: &'scx FxHashMap<ast::NodeId, Resolution>,
+		resolution_map: &'scx FxHashMap<ast::NodeId, EarlyResolution>,
 		node_id_to_def_id: &'scx FxHashMap<ast::NodeId, DefId>,
 		lang_items: &'scx FxHashMap<LangItem, DefId>,
 	) -> Self {
@@ -74,18 +72,6 @@ impl<'scx> Lowerer<'scx> {
 
 			node_id_to_hir_id: FxHashMap::default(),
 		}
-	}
-
-	/// Mint a new [`hir::NodeId`] giving the corresponding [`ast::NodeId`] is possible
-	fn make_node_id(&mut self, aid: impl Into<Option<ast::NodeId>>) -> hir::NodeId {
-		static NEXT_NODE_ID: AtomicU32 = AtomicU32::new(0);
-		let hid = hir::NodeId::new(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed));
-
-		if let Some(aid) = aid.into() {
-			self.node_id_to_hir_id.insert(aid, hid);
-		}
-
-		hid
 	}
 
 	fn lower_opt<O, L: Lower<Out = O>>(&mut self, opt: Option<&L>) -> Option<O> {
@@ -150,7 +136,7 @@ impl Lower for ast::Attr {
 			path: lower_attr_path(l, path),
 			meta: meta.lower(l),
 			span: *span,
-			id: l.make_node_id(*id),
+			id: id.lower(l),
 		}
 	}
 }
@@ -178,7 +164,7 @@ impl Lower for ast::Item {
 		hir::Item {
 			kind: kind.lower(l),
 			span: *span,
-			def_id: *l.node_id_to_def_id.get(id).unwrap(),
+			def_id: l.node_id_to_def_id[id],
 		}
 	}
 }
@@ -187,6 +173,18 @@ impl Lower for ast::ItemKind {
 	type Out = hir::ItemKind;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		match &self {
+			Self::ExternUse { .. } => {
+				todo!()
+				// noop?
+			}
+			Self::Module {
+				name,
+				items,
+				inline,
+			} => {
+				todo!("need flat hir")
+			}
+
 			Self::Function(func) => hir::ItemKind::Function(func.lower(l)),
 
 			Self::TypeAlias(ast::TypeAlias { name, alias }) => {
@@ -356,7 +354,7 @@ impl Lower for ast::Block {
 						kind: hir::StmtKind::Expr {
 							expr: Box::new(expr),
 						},
-						id: l.make_node_id(None),
+						id: make_new_node_id(),
 					}
 				}
 				None => continue,
@@ -369,7 +367,7 @@ impl Lower for ast::Block {
 			stmts: out_stmts,
 			ret,
 			span: *span,
-			id: l.make_node_id(*id),
+			id: id.lower(l),
 		}
 	}
 }
@@ -408,7 +406,7 @@ impl Lower for ast::Stmt {
 		Some(StmtOrRet::Stmt(hir::Stmt {
 			kind,
 			span: *span,
-			id: l.make_node_id(*id),
+			id: id.lower(l),
 		}))
 	}
 }
@@ -449,7 +447,7 @@ impl Lower for ast::Param {
 		hir::Param {
 			name: *name,
 			ty: ty.lower(l),
-			id: l.make_node_id(*id),
+			id: id.lower(l),
 		}
 	}
 }
@@ -573,7 +571,7 @@ impl Lower for ast::Expr {
 		hir::Expr {
 			kind,
 			span: *span,
-			id: l.make_node_id(*id),
+			id: id.lower(l),
 		}
 	}
 }
@@ -586,13 +584,13 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 			label: None,
 		},
 		span: Span::DUMMY,
-		id: l.make_node_id(None),
+		id: make_new_node_id(),
 	};
 	let altern_blk = hir::Block {
 		stmts: Vec::new(),
 		ret: Some(Box::new(break_expr)),
 		span: Span::DUMMY,
-		id: l.make_node_id(None),
+		id: make_new_node_id(),
 	};
 
 	let if_expr = hir::Expr {
@@ -602,13 +600,13 @@ fn lower_while_loop(l: &mut Lowerer, cond: &ast::Expr, body: &ast::Block) -> hir
 			altern: Some(Box::new(altern_blk)),
 		},
 		span: Span::DUMMY,
-		id: l.make_node_id(None),
+		id: make_new_node_id(),
 	};
 	let loop_blk = hir::Block {
 		stmts: Vec::new(),
 		ret: Some(Box::new(if_expr)),
 		span: Span::DUMMY,
-		id: l.make_node_id(None),
+		id: make_new_node_id(),
 	};
 
 	hir::ExprKind::Loop {
@@ -620,12 +618,27 @@ impl Lower for ast::Path {
 	type Out = hir::Path;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
 		let Self { segments, span, id } = &self;
-		let res = l.resolution_map[id];
 		hir::Path {
 			segments: segments.iter().lower_iter(l).collect(),
 			span: *span,
-			resolved: res,
+			resolved: l.resolution_map[id].lower(l),
 		}
+	}
+}
+
+impl Lower for EarlyResolution {
+	type Out = Resolution;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		self.map_local(|id| id.lower(l))
+	}
+}
+
+impl Lower for ast::NodeId {
+	type Out = hir::NodeId;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		*l.node_id_to_hir_id
+			.entry(*self)
+			.or_insert_with(make_new_node_id)
 	}
 }
 
@@ -731,7 +744,7 @@ fn lower_short_circuit(
 				stmts: Vec::new(),
 				ret: Some(right.lower_box(l)),
 				span: left.span,
-				id: l.make_node_id(None),
+				id: make_new_node_id(),
 			};
 
 			let name = ast::Ident {
@@ -755,13 +768,13 @@ fn lower_short_circuit(
 			let expr = hir::Expr {
 				kind,
 				span: right.span,
-				id: l.make_node_id(None),
+				id: make_new_node_id(),
 			};
 			let right_block = hir::Block {
 				stmts: Vec::new(),
 				ret: Some(Box::new(expr)),
 				span: right.span,
-				id: l.make_node_id(None),
+				id: make_new_node_id(),
 			};
 			(Box::new(left_block), Box::new(right_block))
 		}
@@ -790,20 +803,20 @@ fn lower_short_circuit(
 			let expr = hir::Expr {
 				kind,
 				span: right.span,
-				id: l.make_node_id(None),
+				id: make_new_node_id(),
 			};
 			let left_block = hir::Block {
 				stmts: Vec::new(),
 				ret: Some(Box::new(expr)),
 				span: left.span,
-				id: l.make_node_id(None),
+				id: make_new_node_id(),
 			};
 
 			let right_block = hir::Block {
 				stmts: Vec::new(),
 				ret: Some(right.lower_box(l)),
 				span: right.span,
-				id: l.make_node_id(None),
+				id: make_new_node_id(),
 			};
 			(Box::new(left_block), Box::new(right_block))
 		}
@@ -841,10 +854,16 @@ fn lower_attr_path(l: &Lowerer<'_>, ast::Path { segments, span, id }: &ast::Path
 	}
 }
 
-fn make_unit(l: &mut Lowerer<'_>, span: Span) -> hir::Expr {
+fn make_unit(l: &Lowerer<'_>, span: Span) -> hir::Expr {
 	hir::Expr {
 		kind: hir::ExprKind::Unit,
 		span,
-		id: l.make_node_id(None),
+		id: make_new_node_id(),
 	}
+}
+
+/// Mint a new [`hir::NodeId`]
+fn make_new_node_id() -> hir::NodeId {
+	static NEXT_NODE_ID: AtomicU32 = AtomicU32::new(0);
+	hir::NodeId::new(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed))
 }

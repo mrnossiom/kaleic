@@ -5,7 +5,7 @@ use ariadne::ReportKind;
 use crate::{
 	ast, codegen, inference, lowerer, parser,
 	pretty_print::pretty_print,
-	resolve::{self, CollectionResult, ResolutionResult},
+	resolve,
 	session::{DcxHandle, Diagnostic, PrintKind, Report, SessionCtx, Span},
 	ty,
 };
@@ -17,28 +17,20 @@ pub fn pipeline(scx: &SessionCtx) {
 	fs::create_dir_all(&scx.options.debug_output).unwrap();
 
 	let ast = parse_files(scx);
-
 	scx.dcx().check_sane_or_exit();
 
-	let CollectionResult {
-		name_env,
-		lang_items,
-		node_id_to_def_id,
-	} = resolve::collect_root(scx, &ast);
-
-	let ResolutionResult { resolution_map } = resolve::resolve_root(scx, &ast, &name_env);
-
-	let hir = lowerer::lower_root(scx, &ast, &resolution_map, &node_id_to_def_id, &lang_items);
-
+	resolve::collect_root(scx, &ast);
+	resolve::resolve_root(scx, &ast);
+	let hir = lowerer::lower_root(scx, &ast);
 	scx.dcx().check_sane_or_exit();
 
+	let name_env = scx.name_env.borrow();
+	let lang_items = scx.lang_items.borrow();
 	let tcx = ty::TyCtx::new(scx, &name_env, &lang_items);
 
 	ty::compute_items_type(&tcx, &hir);
 	ty::check_entrypoint(&tcx);
-
 	inference::infer_root(&tcx, &hir);
-
 	scx.dcx().check_sane_or_exit();
 
 	// TODO: document pass outputs markdown

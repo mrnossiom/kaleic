@@ -4,12 +4,12 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, AttrMeta, ExprKind, NodeId, Visitor, visit},
-	errors,
+	errors, hir,
 	session::{DcxHandle, Diagnostic, PrintKind, SessionCtx},
 	symbols::{Symbol, sym},
 };
 
-pub(crate) fn collect_root(scx: &SessionCtx, ast: &ast::Root) -> CollectionResult {
+pub(crate) fn collect_root(scx: &SessionCtx, ast: &ast::Root) {
 	let mut collector = Collector::new(scx);
 	collector.visit_root(ast);
 
@@ -26,33 +26,21 @@ pub(crate) fn collect_root(scx: &SessionCtx, ast: &ast::Root) -> CollectionResul
 		|artefact| writeln!(artefact, "{name_env:#?}"),
 	);
 
-	CollectionResult {
-		name_env,
-		lang_items,
-		node_id_to_def_id,
-	}
+	scx.name_env.put(name_env);
+	scx.lang_items.put(lang_items);
+	scx.node_id_to_def_id.put(node_id_to_def_id);
 }
 
-pub(crate) struct CollectionResult {
-	pub(crate) name_env: NameEnvironment,
-	pub(crate) lang_items: FxHashMap<LangItem, DefId>,
-	pub(crate) node_id_to_def_id: FxHashMap<ast::NodeId, DefId>,
-}
+pub(crate) fn resolve_root(scx: &SessionCtx, ast: &ast::Root) {
+	let name_env = scx.name_env.borrow();
 
-pub(crate) fn resolve_root(
-	scx: &SessionCtx,
-	ast: &ast::Root,
-	name_env: &NameEnvironment,
-) -> ResolutionResult {
-	let mut resolver = Resolver::new(scx, name_env);
+	let mut resolver = Resolver::new(scx, &name_env);
 	resolver.visit_root(ast);
 
 	let Resolver { resolution_map, .. } = resolver;
-	ResolutionResult { resolution_map }
-}
 
-pub(crate) struct ResolutionResult {
-	pub(crate) resolution_map: FxHashMap<ast::NodeId, Resolution>,
+	// TODO: register resolution artefact
+	scx.resolution_map.put(resolution_map);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -235,12 +223,18 @@ impl visit::Visitor for Collector<'_> {
 				self.register_def(Namespace::Type, def_id, name);
 			}
 
+			ast::ItemKind::Module {
+				name,
+				items,
+				inline,
+			} => {}
+
 			ast::ItemKind::Function(ast::Function { name, .. }) => {
 				self.register_def(Namespace::Value, def_id, name);
 			}
 			ast::ItemKind::ForeignMod { items } => self.visit_items(items),
 
-			ast::ItemKind::TraitImpl { .. } => {
+			ast::ItemKind::ExternUse { .. } | ast::ItemKind::TraitImpl { .. } => {
 				// nothing to collect, type environment with collect trait
 				// implementations and method resolution will select the implementation
 			}
@@ -249,24 +243,34 @@ impl visit::Visitor for Collector<'_> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Resolution {
+pub(crate) enum Resolution<LocalId = hir::NodeId> {
 	Def(DefId),
-	Local(ast::NodeId),
+	Local(LocalId),
 	Error,
 }
 
-impl Resolution {
-	pub(crate) fn as_def(self) -> Option<DefId> {
+pub(crate) type EarlyResolution = Resolution<ast::NodeId>;
+
+impl<LocalId> Resolution<LocalId> {
+	pub(crate) fn into_def(self) -> Option<DefId> {
 		match self {
 			Self::Def(def_id) => Some(def_id),
 			_ => None,
 		}
 	}
 
-	pub(crate) fn as_local(self) -> Option<ast::NodeId> {
+	pub(crate) fn into_local(self) -> Option<LocalId> {
 		match self {
 			Self::Local(node_id) => Some(node_id),
 			_ => None,
+		}
+	}
+
+	pub(crate) fn map_local<T>(self, f: impl FnOnce(LocalId) -> T) -> Resolution<T> {
+		match self {
+			Self::Local(local) => Resolution::Local(f(local)),
+			Self::Def(def) => Resolution::Def(def),
+			Self::Error => Resolution::Error,
 		}
 	}
 }
@@ -279,7 +283,7 @@ struct Resolver<'scx> {
 
 	value_layers: Vec<(ValueLayerKind, FxHashMap<Symbol, ast::NodeId>)>,
 	type_layers: Vec<(TypeLayerKind, FxHashMap<Symbol, ast::NodeId>)>,
-	resolution_map: FxHashMap<ast::NodeId, Resolution>,
+	resolution_map: FxHashMap<ast::NodeId, EarlyResolution>,
 }
 
 impl<'scx> Resolver<'scx> {
@@ -385,6 +389,13 @@ impl visit::Visitor for Resolver<'_> {
 		}: &ast::Item,
 	) {
 		match kind {
+			ast::ItemKind::Module {
+				name,
+				items,
+				inline,
+			} => {
+				todo!()
+			}
 			ast::ItemKind::Function(ast::Function {
 				decl,
 				generics,
@@ -410,7 +421,11 @@ impl visit::Visitor for Resolver<'_> {
 				generics.idents.iter().map(|g| (g.name.sym, g.id)).collect(),
 				|this| visit::visit_item(this, item),
 			),
-			_ => visit::visit_item(self, item),
+
+			ast::ItemKind::ExternUse { .. }
+			| ast::ItemKind::TypeAlias(..)
+			| ast::ItemKind::TraitImpl { .. }
+			| ast::ItemKind::ForeignMod { .. } => visit::visit_item(self, item),
 		}
 	}
 

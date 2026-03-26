@@ -427,7 +427,7 @@ mod visit_ty {
 				}
 				ctx.cycle_detection.push(*def_id);
 
-				let sub_ty = ctx.early_ty_map.get(def_id).unwrap();
+				let sub_ty = &ctx.early_ty_map[def_id];
 				let new_ty = visit_ty(ctx, sub_ty);
 
 				ctx.late_ty_map.insert(*def_id, Rc::clone(&new_ty));
@@ -590,8 +590,8 @@ impl visit::Visitor for TypeCollector<'_> {
 				members,
 			} => {
 				// register trait impl for the mentioned type
-				let type_def_id = type_.resolved.as_def().unwrap();
-				let trait_def_id = trait_.resolved.as_def().unwrap();
+				let type_def_id = type_.resolved.into_def().unwrap();
+				let trait_def_id = trait_.resolved.into_def().unwrap();
 				self.trait_impls
 					.entry(type_def_id)
 					.or_default()

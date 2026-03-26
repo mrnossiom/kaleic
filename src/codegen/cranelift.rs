@@ -214,11 +214,12 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 	fn codegen_root(&mut self, hir: &hir::Root) {
 		let mut function_ids = FxHashMap::default();
 
+		let type_env = self.tcx.type_env.borrow();
+
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let type_env = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref() else {
+					let TyKind::Fn(decl) = &*type_env[&item.def_id] else {
 						todo!()
 					};
 
@@ -233,9 +234,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 					for item in items {
 						match &item.kind {
 							hir::ForeignItemKind::Function(Function { name, decl, body }) => {
-								let type_env = self.tcx.type_env.borrow();
-								let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref()
-								else {
+								let TyKind::Fn(decl) = &*type_env[&item.def_id] else {
 									todo!()
 								};
 
@@ -261,8 +260,8 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let borrow = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = borrow.get(&item.def_id).unwrap().deref() else {
+					let type_env = self.tcx.type_env.borrow();
+					let TyKind::Fn(decl) = &*type_env[&item.def_id] else {
 						todo!()
 					};
 
@@ -298,8 +297,8 @@ impl JitBackend for Generator<'_, JITModule> {
 
 	fn call_main(&self) {
 		let main_fn_id = self.tcx.main_fn_id.borrow();
-		let main_id = self.functions.get(&main_fn_id).unwrap();
-		let func = self.module.get_finalized_function(*main_id);
+		let main_id = self.functions[&main_fn_id];
+		let func = self.module.get_finalized_function(main_id);
 
 		// TODO: this is unsafe for so much reasons, but we assume that our codegen is perfect :)
 		// SAFETY: main signature is enforced
@@ -414,7 +413,7 @@ impl FunctionGenerator<'_, '_> {
 				mutable: _,
 			} => match self.codegen_expr(value)? {
 				MaybeValue::Value(expr_value) => {
-					let ty = self.typeck_results.get(&value.expr_id()).unwrap();
+					let ty = &self.typeck_results[&value.expr_id()];
 					let ty = self.to_cl_type(ty).unwrap();
 					let variable = self.builder.declare_var(ty);
 					self.builder.def_var(variable, expr_value);
@@ -434,7 +433,7 @@ impl FunctionGenerator<'_, '_> {
 		let value = match &expr.kind {
 			hir::ExprKind::LiteralInt { sym } => {
 				let lit = self.scx.symbols.resolve(*sym);
-				let ty = self.typeck_results.get(&expr.expr_id()).unwrap();
+				let ty = &self.typeck_results[&expr.expr_id()];
 				let int_ty = self.to_cl_type(ty).unwrap();
 				let value = self
 					.builder
@@ -444,7 +443,7 @@ impl FunctionGenerator<'_, '_> {
 			}
 			hir::ExprKind::LiteralFloat { sym } => {
 				let lit = self.scx.symbols.resolve(*sym);
-				let ty = self.typeck_results.get(&expr.expr_id()).unwrap();
+				let ty = &self.typeck_results[&expr.expr_id()];
 				let int_ty = self.to_cl_type(ty).unwrap();
 				// FIXME: take ty into account
 				let value = self.builder.ins().f64const(lit.parse::<f64>().unwrap());
@@ -470,8 +469,7 @@ impl FunctionGenerator<'_, '_> {
 			}
 
 			hir::ExprKind::Access { path } => {
-				let node_id = path.resolved.as_local().unwrap();
-				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
+				let hir_id = path.resolved.into_local().unwrap();
 				match self.values.get(&hir_id) {
 					Some(Some(var)) => MaybeValue::Value(self.builder.use_var(*var)),
 					Some(None) => MaybeValue::Zst,
@@ -496,7 +494,7 @@ impl FunctionGenerator<'_, '_> {
 				}
 
 				let call = if let hir::ExprKind::Access { path } = &expr.kind {
-					let item_id = path.resolved.as_def().unwrap();
+					let item_id = path.resolved.into_def().unwrap();
 					let Some(func_id) = self.functions.get(&item_id) else {
 						panic!("did not define function yet")
 					};
@@ -570,9 +568,8 @@ impl FunctionGenerator<'_, '_> {
 					todo!("invalid lvalue");
 				};
 
-				let node_id = path.resolved.as_local().unwrap();
-				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
-				let Some(variable) = *self.values.get(&hir_id).unwrap() else {
+				let hir_id = path.resolved.into_local().unwrap();
+				let Some(variable) = self.values[&hir_id] else {
 					// handle ZSTs
 					return Ok(MaybeValue::Zst);
 				};

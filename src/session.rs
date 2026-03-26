@@ -21,6 +21,7 @@ use crate::{
 	ast, bug,
 	codegen::{Backend, Linker},
 	hir,
+	resolve::{DefId, EarlyResolution, LangItem, NameEnvironment},
 	symbols::SymbolInterner,
 	ty::Put,
 };
@@ -107,6 +108,13 @@ pub struct SessionCtx {
 	pub(crate) symbols: SymbolInterner,
 	pub(crate) source_map: Rc<RwLock<SourceMap>>,
 
+	// collect
+	pub(crate) name_env: Put<NameEnvironment>,
+	pub(crate) lang_items: Put<FxHashMap<LangItem, DefId>>,
+	pub(crate) node_id_to_def_id: Put<FxHashMap<ast::NodeId, DefId>>,
+	// resolve
+	pub(crate) resolution_map: Put<FxHashMap<ast::NodeId, EarlyResolution>>,
+	// lower
 	pub(crate) node_id_to_hir_id: Put<FxHashMap<ast::NodeId, hir::NodeId>>,
 }
 
@@ -121,6 +129,10 @@ impl SessionCtx {
 
 			dcx,
 
+			name_env: Put::default(),
+			lang_items: Put::default(),
+			node_id_to_def_id: Put::default(),
+			resolution_map: Put::default(),
 			node_id_to_hir_id: Put::default(),
 		}
 	}

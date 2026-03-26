@@ -67,6 +67,7 @@ define_symbols! {
 		Let: "let",
 		Loop: "loop",
 		Match: "match",
+		Mod: "mod",
 		Mut: "mut",
 		Not: "not",
 		Or: "or",
@@ -75,6 +76,7 @@ define_symbols! {
 		Trait: "trait",
 		Type: "type",
 		Unsafe: "unsafe",
+		Use: "use",
 		While: "while",
 
 		Underscore: "_",
@@ -84,6 +86,8 @@ define_symbols! {
 		argc,
 		argv,
 		main,
+		std,
+		core,
 
 		false_: "false",
 		true_: "true",
@@ -103,6 +107,8 @@ define_symbols! {
 		// attrs
 		lang_item,
 		link,
+		no_core,
+		no_std,
 	}
 }
 

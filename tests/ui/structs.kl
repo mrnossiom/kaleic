@@ -1,4 +1,6 @@
-//@args --no-std
+//@args
+
+##no_std
 
 // decl Color {r: u8, g: u8, b: u8}
 // decl Mood (

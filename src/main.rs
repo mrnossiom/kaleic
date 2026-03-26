@@ -73,8 +73,6 @@ mod options {
 #[derive(clap::Parser)]
 struct Args {
 	pub(crate) inputs: Vec<PathBuf>,
-	#[clap(long)]
-	pub(crate) no_std: bool,
 
 	#[clap(long)]
 	pub(crate) jit: bool,
@@ -100,13 +98,6 @@ fn main() {
 
 	let SessionCtx { options, .. } = &mut scx;
 	options.inputs = args.inputs;
-	if !args.no_std {
-		options.inputs.extend([
-			"std/rt.kl".into(),
-			"std/libc.kl".into(),
-			// "std/arith.kl".into(),
-		]);
-	}
 
 	args.backend.inspect(|value| options.backend = value.into());
 	options.jit = args.jit;

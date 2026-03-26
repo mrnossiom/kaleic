@@ -354,7 +354,9 @@ pub(crate) struct Item {
 impl Item {
 	pub(crate) fn name(&self) -> Option<Ident> {
 		match self.kind {
-			ItemKind::Function(Function { name, .. })
+			ItemKind::ExternUse { name }
+			| ItemKind::Module { name, .. }
+			| ItemKind::Function(Function { name, .. })
 			| ItemKind::TypeAlias(TypeAlias { name, .. })
 			| ItemKind::Struct { name, .. }
 			| ItemKind::Enum { name, .. }
@@ -395,6 +397,16 @@ pub(crate) struct Generic {
 
 #[derive(Debug)]
 pub(crate) enum ItemKind {
+	/// `extern use <name>`
+	ExternUse {
+		name: Ident,
+	},
+	Module {
+		name: Ident,
+		items: Vec<Item>,
+		inline: bool,
+	},
+
 	Function(Function),
 	TypeAlias(TypeAlias),
 	/// `struct <name> <generics> { <fields>* }`
@@ -614,6 +626,17 @@ pub(crate) mod visit {
 	) {
 		v.visit_attrs(attrs);
 		match kind {
+			ItemKind::ExternUse { name } => {
+				v.visit_ident(name);
+			}
+			ItemKind::Module {
+				name,
+				items,
+				inline: _,
+			} => {
+				v.visit_ident(name);
+				v.visit_items(items);
+			}
 			ItemKind::Function(Function {
 				name,
 				generics,

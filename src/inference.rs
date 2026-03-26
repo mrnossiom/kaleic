@@ -7,7 +7,7 @@ use crate::{
 	errors,
 	hir::{self, ExprId, ExprKind, Function, Visitor},
 	resolve::{DefId, NameEnvironment, Resolution},
-	session::{DcxHandle, ScxHandle, Span},
+	session::{DcxHandle, Span},
 	ty::{self, Infer, InferExprTy, InferKind, LateTy, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
@@ -143,8 +143,8 @@ mod visit_ty {
 				} else if let Some(ty) = super::default_type_for_infer_kind(infer.kind) {
 					ty
 				} else {
-					let span = ctx.ty_var_expr_map.get(&infer.tvid).unwrap();
-					let report = errors::ty::report_unconstrained(*span);
+					let span = ctx.ty_var_expr_map[&infer.tvid];
+					let report = errors::ty::report_unconstrained(span);
 					ctx.tcx.dcx().emit_build(report);
 					LateTy::Error
 				}
@@ -221,7 +221,7 @@ impl Visitor for InferVisitor<'_> {
 				};
 
 				let type_env = self.tcx.type_env.borrow();
-				let TyKind::Fn(decl) = type_env.get(def_id).unwrap().as_ref() else {
+				let TyKind::Fn(decl) = &*type_env[def_id] else {
 					todo!()
 				};
 
@@ -268,7 +268,7 @@ impl Inferer<'_> {
 	fn lower_ty(&self, ty: &hir::Ty) -> InferExprTy {
 		match &ty.kind {
 			hir::TyKind::Path(path) => match path.resolved {
-				Resolution::Def(def_id) => self.type_env.get(&def_id).unwrap().as_infer(),
+				Resolution::Def(def_id) => self.type_env[&def_id].as_infer(),
 				Resolution::Local(id) => todo!("no generics rn"),
 				Resolution::Error => todo!(),
 			},
@@ -288,8 +288,7 @@ impl Inferer<'_> {
 					TyKind::Error
 				}
 			}
-			Resolution::Local(node_id) => {
-				let hir_id = self.tcx.scx().node_id_to_hir_id.borrow()[&node_id];
+			Resolution::Local(hir_id) => {
 				if let Some(ty) = self.local_env.get(&hir_id) {
 					// search in the locals defined, respecting shadowing
 					ty.deref().clone()

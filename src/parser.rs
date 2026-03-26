@@ -27,22 +27,18 @@ use crate::{
 	errors,
 	lexer::{Lexer, Token, TokenKind},
 	session::{DcxHandle, Diagnostic, SessionCtx, SourceFile, Span},
-	symbols::{Symbol, kw},
+	symbols::{Symbol, kw, sym},
 };
 
 pub(crate) fn parse_root(scx: &SessionCtx, source: &SourceFile) -> Root {
 	let mut p = Parser::new(scx, source);
-	match Root::parse(&mut p) {
+	match p.parse_root() {
 		Ok(ast) => ast,
 		Err(diag) => scx.dcx().emit_fatal(&diag),
 	}
 }
 
 type Result<T> = std::result::Result<T, Diagnostic>;
-
-trait Parse: Sized + fmt::Debug {
-	fn parse(p: &mut Parser) -> Result<Self>;
-}
 
 #[derive(Debug)]
 enum AssocOp {
@@ -214,15 +210,7 @@ impl Parser<'_> {
 		Ok(seq)
 	}
 
-	fn parse_until<T: Parse>(&mut self, end: TokenKind) -> Result<Vec<T>> {
-		let mut many = Vec::new();
-		while !self.eat(end) {
-			many.push(T::parse(self)?);
-		}
-		Ok(many)
-	}
-
-	fn parse_until_func<T>(
+	fn parse_until<T>(
 		&mut self,
 		end: TokenKind,
 		mut parse: impl FnMut(&mut Self) -> Result<T>,
@@ -251,6 +239,148 @@ impl Parser<'_> {
 	#[expect(dead_code)]
 	fn look_ahead(&self) -> TokenKind {
 		self.lexer.clone().next().map_or(Eof, |tkn| tkn.kind)
+	}
+}
+
+impl Parser<'_> {
+	fn parse_root(&mut self) -> Result<Root> {
+		let attrs = self.parse_attrs(&AttrKind::Parent)?;
+
+		let mut items = Vec::new();
+		items.extend(self.core_libs_import(&attrs));
+		items.extend(self.parse_until(Eof, Parser::parse_item)?);
+
+		Ok(Root { attrs, items })
+	}
+
+	/// Make an `extern use` item for `std`, `core` or none
+	/// with respect to `no_std` and `no_core` attributes
+	fn core_libs_import(&self, attrs: &[Attr]) -> Option<Item> {
+		enum AutoImportState {
+			None,
+			NoStd(Span),
+			NoCore(Span),
+		}
+
+		let mut state = AutoImportState::None;
+
+		for attr in attrs {
+			if attr.path.is_match(&[sym::no_std]) {
+				match state {
+					AutoImportState::None => state = AutoImportState::NoStd(attr.span),
+					AutoImportState::NoStd(_span) => todo!("lint duplicate"),
+					AutoImportState::NoCore(_span) => {
+						todo!("lint about stricter import restriction")
+					}
+				}
+			}
+			if attr.path.is_match(&[sym::no_core]) {
+				match state {
+					AutoImportState::None | AutoImportState::NoStd(..) => {
+						state = AutoImportState::NoCore(attr.span);
+					}
+					AutoImportState::NoCore(span) => todo!("lint duplicate"),
+				}
+			}
+		}
+
+		let kind = match state {
+			AutoImportState::None => Some(ItemKind::ExternUse {
+				name: ast::Ident::new(sym::std, Span::DUMMY),
+			}),
+			AutoImportState::NoStd(..) => Some(ItemKind::ExternUse {
+				name: ast::Ident::new(sym::core, Span::DUMMY),
+			}),
+			AutoImportState::NoCore(..) => None,
+		};
+
+		kind.map(|kind| Item {
+			attrs: vec![],
+			kind,
+			span: Span::DUMMY,
+			id: self.make_node_id(),
+		})
+	}
+
+	fn parse_item(&mut self) -> Result<Item> {
+		let lo = self.token.span;
+
+		let attrs = self.parse_attrs(&AttrKind::Next)?;
+
+		let kind = if self.eat_kw(kw::Fn) {
+			self.parse_function()?
+		} else if self.eat_kw(kw::Unsafe) {
+			self.parse_item_unsafe_extern()?
+		} else if self.eat_kw(kw::Struct) {
+			self.parse_item_struct()?
+		} else if self.eat_kw(kw::Enum) {
+			self.parse_item_enum()?
+		} else if self.eat_kw(kw::Trait) {
+			self.parse_item_trait()?
+		} else if self.eat_kw(kw::For) {
+			self.parse_item_trait_impl()?
+		} else if self.eat_kw(kw::Type) {
+			self.parse_item_type_alias()?
+		} else if self.eat_kw(kw::Extern) {
+			// TODO: recover to unsafe extern block
+			self.parse_item_extern_use()?
+		} else {
+			let report = errors::parser::expected_construct_no_match("an item", self.token);
+			return Err(Diagnostic::new(report));
+		};
+
+		Ok(Item {
+			kind,
+			attrs,
+			span: self.close_span(lo),
+			id: self.make_node_id(),
+		})
+	}
+
+	fn parse_function(&mut self) -> Result<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Fn));
+
+		let name = self.expect_ident()?;
+		let generics = self.parse_generics()?;
+		let decl = self.parse_fn_decl()?;
+
+		let body = if self.check(OpenBrace) {
+			Some(Box::new(self.parse_block()?))
+		} else if self.eat(Semi) {
+			None
+		} else {
+			let report = errors::parser::expected_construct_no_match(
+				"a function body or a semicolon",
+				self.token,
+			);
+			return Err(Diagnostic::new(report));
+		};
+
+		Ok(ItemKind::Function(Function {
+			name,
+			generics,
+			decl,
+			body,
+		}))
+	}
+
+	fn parse_item_type_alias(&mut self) -> Result<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Type));
+
+		let name = self.expect_ident()?;
+		let alias = if self.eat(Eq) {
+			let ty = Some(Box::new(self.parse_ty()?));
+			self.expect(Semi)?;
+			ty
+		} else if self.eat(Semi) {
+			None
+		} else {
+			let report =
+				errors::parser::expected_construct_no_match("a type alias body", self.token);
+			return Err(Diagnostic::new(report));
+		};
+
+		Ok(ItemKind::TypeAlias(TypeAlias { name, alias }))
 	}
 }
 
@@ -548,99 +678,6 @@ impl Parser<'_> {
 	}
 }
 
-impl Parse for Root {
-	fn parse(p: &mut Parser) -> Result<Self> {
-		let attrs = p.parse_attrs(&AttrKind::Parent)?;
-		let items = p.parse_until::<Item>(Eof)?;
-		Ok(Self { attrs, items })
-	}
-}
-
-impl Parse for Item {
-	fn parse(p: &mut Parser) -> Result<Self> {
-		let lo = p.token.span;
-
-		let attrs = p.parse_attrs(&AttrKind::Next)?;
-
-		let kind = if p.eat_kw(kw::Fn) {
-			ItemKind::Function(Parse::parse(p)?)
-		} else if p.eat_kw(kw::Unsafe) {
-			p.parse_item_unsafe_extern()?
-		} else if p.eat_kw(kw::Struct) {
-			p.parse_item_struct()?
-		} else if p.eat_kw(kw::Enum) {
-			p.parse_item_enum()?
-		} else if p.eat_kw(kw::Trait) {
-			p.parse_item_trait()?
-		} else if p.eat_kw(kw::For) {
-			p.parse_item_trait_impl()?
-		} else if p.eat_kw(kw::Type) {
-			ItemKind::TypeAlias(TypeAlias::parse(p)?)
-		} else if p.eat_kw(kw::Extern) {
-			todo!("recover to unsafe extern block");
-		} else {
-			let report = errors::parser::expected_construct_no_match("an item", p.token);
-			return Err(Diagnostic::new(report));
-		};
-
-		Ok(Self {
-			kind,
-			attrs,
-			span: p.close_span(lo),
-			id: p.make_node_id(),
-		})
-	}
-}
-
-impl Parse for Function {
-	fn parse(p: &mut Parser) -> Result<Self> {
-		debug_assert_eq!(p.last_token.kind, Kw(kw::Fn));
-
-		let name = p.expect_ident()?;
-		let generics = p.parse_generics()?;
-		let decl = p.parse_fn_decl()?;
-
-		let body = if p.check(OpenBrace) {
-			Some(Box::new(p.parse_block()?))
-		} else if p.eat(Semi) {
-			None
-		} else {
-			let report = errors::parser::expected_construct_no_match(
-				"a function body or a semicolon",
-				p.token,
-			);
-			return Err(Diagnostic::new(report));
-		};
-
-		Ok(Self {
-			name,
-			generics,
-			decl,
-			body,
-		})
-	}
-}
-
-impl Parse for TypeAlias {
-	fn parse(p: &mut Parser) -> Result<Self> {
-		debug_assert_eq!(p.last_token.kind, Kw(kw::Type));
-
-		let name = p.expect_ident()?;
-		let alias = if p.eat(Eq) {
-			let ty = Some(Box::new(p.parse_ty()?));
-			p.expect(Semi)?;
-			ty
-		} else if p.eat(Semi) {
-			None
-		} else {
-			let report = errors::parser::expected_construct_no_match("a type alias body", p.token);
-			return Err(Diagnostic::new(report));
-		};
-
-		Ok(Self { name, alias })
-	}
-}
-
 /// Items
 impl Parser<'_> {
 	/// Parse [`ItemKind::ForeignMod`] block of items
@@ -650,7 +687,7 @@ impl Parser<'_> {
 		self.expect(Kw(kw::Extern))?;
 
 		self.expect(OpenBrace)?;
-		let items = self.parse_until_func(CloseBrace, |p| Item::parse(p))?;
+		let items = self.parse_until(CloseBrace, Parser::parse_item)?;
 
 		Ok(ItemKind::ForeignMod { items })
 	}
@@ -715,7 +752,7 @@ impl Parser<'_> {
 		let generics = self.parse_generics()?;
 
 		self.expect(OpenBrace)?;
-		let members = self.parse_until_func(CloseBrace, Item::parse)?;
+		let members = self.parse_until(CloseBrace, Parser::parse_item)?;
 
 		Ok(ItemKind::Trait {
 			name,
@@ -732,7 +769,7 @@ impl Parser<'_> {
 		self.expect(Kw(kw::Impl))?;
 		let trait_ = self.parse_path()?;
 		self.expect(OpenBrace)?;
-		let members = self.parse_until_func(CloseBrace, Item::parse)?;
+		let members = self.parse_until(CloseBrace, Parser::parse_item)?;
 
 		Ok(ItemKind::TraitImpl {
 			type_,
@@ -908,6 +945,15 @@ impl Parser<'_> {
 	fn parse_expr_match(&self) -> Vec<()> {
 		todo!()
 	}
+
+	fn parse_item_extern_use(&mut self) -> Result<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Extern));
+
+		self.expect(Kw(kw::Use))?;
+		let name = self.expect_ident()?;
+
+		Ok(ItemKind::ExternUse { name })
+	}
 }
 
 /// Types
@@ -1037,7 +1083,7 @@ impl Parser<'_> {
 	fn parse_block(&mut self) -> Result<Block> {
 		let lo = self.token.span;
 		self.expect(OpenBrace)?;
-		let stmts = self.parse_until_func(CloseBrace, Self::parse_stmt)?;
+		let stmts = self.parse_until(CloseBrace, Self::parse_stmt)?;
 
 		Ok(Block {
 			stmts,

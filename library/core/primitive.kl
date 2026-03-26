@@ -1,0 +1,57 @@
+#lang_item("never_ty")
+struct never;
+
+#lang_item("bool_ty")
+struct bool;
+
+for bool impl Not {
+    fn not(self: Self) Self {
+        intrinsic_not(self)
+    }
+}
+
+#lang_item("uint_ty")
+struct uint;
+
+for uint impl Add<uint> {
+	type Output = uint;
+	fn add(self: Self, other: uint) Self::Output {
+		intrinsic_add(self, other)
+	}
+}
+
+for uint impl Sub<uint> {
+	type Output = uint;
+	fn sub(self: Self, other: uint) Self::Output {
+		intrinsic_sub(self, other)
+	}
+}
+
+for uint impl SubAssign<uint> {
+	fn sub_assign(self: *Self, other: uint) Self::Output {
+		self.* = self + other;
+	}
+}
+
+#lang_item("sint_ty")
+struct sint;
+
+#lang_item("float_ty")
+struct float;
+
+#internal()
+unsafe extern {
+	fn intrinsic_add(a: uint, b: uint) uint;
+	fn intrinsic_sub(a: uint, b: uint) uint;
+	fn intrinsic_mul(a: uint, b: uint) uint;
+	fn intrinsic_div(a: uint, b: uint) uint;
+	fn intrinsic_urem(a: uint, b: uint) uint;
+	fn intrinsic_srem(a: uint, b: uint) uint;
+
+	fn intrinsic_shl(a: uint, b: uint) uint;
+	fn intrinsic_shr(a: uint, b: uint) uint;
+
+	fn intrinsic_bit_or(a: uint, b: uint) uint;
+	fn intrinsic_bit_and(a: uint, b: uint) uint;
+	fn intrinsic_bit_xor(a: uint, b: uint) uint;
+}

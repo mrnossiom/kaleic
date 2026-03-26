@@ -166,11 +166,13 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 
 impl CodeGenBackend for Generator<'_, '_> {
 	fn codegen_root(&mut self, hir: &hir::Root) {
+		let type_env = self.tcx.type_env.borrow();
+
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
 					let type_env = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref() else {
+					let TyKind::Fn(decl) = &*type_env[&item.def_id] else {
 						todo!()
 					};
 
@@ -181,10 +183,7 @@ impl CodeGenBackend for Generator<'_, '_> {
 					for item in items {
 						match &item.kind {
 							hir::ForeignItemKind::Function(Function { name, decl, body }) => {
-								let type_env = self.tcx.type_env.borrow();
-
-								let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref()
-								else {
+								let TyKind::Fn(decl) = &*type_env[&item.def_id] else {
 									todo!()
 								};
 
@@ -207,8 +206,7 @@ impl CodeGenBackend for Generator<'_, '_> {
 		for item in &hir.items {
 			match &item.kind {
 				hir::ItemKind::Function(Function { name, decl, body }) => {
-					let type_env = self.tcx.type_env.borrow();
-					let TyKind::Fn(decl) = type_env.get(&item.def_id).unwrap().deref() else {
+					let TyKind::Fn(decl) = &*type_env[&item.def_id] else {
 						todo!()
 					};
 
@@ -436,7 +434,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				ty: _,
 				mutable: _,
 			} => {
-				let ty = self.typeck_results.get(&value.expr_id()).unwrap();
+				let ty = &self.typeck_results[&value.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 				let place = self
 					.builder
@@ -464,7 +462,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 			hir::ExprKind::LiteralStr { sym } => {
 				let sym = self.scx.symbols.resolve(*sym);
 
-				let ty = self.typeck_results.get(&expr.expr_id()).unwrap();
+				let ty = &self.typeck_results[&expr.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 
 				let val = todo!();
@@ -473,7 +471,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 			hir::ExprKind::LiteralInt { sym } => {
 				let sym = self.scx.symbols.resolve(*sym);
 
-				let ty = self.typeck_results.get(&expr.expr_id()).unwrap();
+				let ty = &self.typeck_results[&expr.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 
 				let value = ty
@@ -486,7 +484,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 			hir::ExprKind::LiteralFloat { sym } => {
 				let sym = self.scx.symbols.resolve(*sym);
 
-				let ty = self.typeck_results.get(&expr.expr_id()).unwrap();
+				let ty = &self.typeck_results[&expr.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 
 				let value = ty
@@ -497,8 +495,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				MaybeValue::Value(value)
 			}
 			hir::ExprKind::Access { path } => {
-				let node_id = path.resolved.as_local().unwrap();
-				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
+				let hir_id = path.resolved.into_local().unwrap();
 				let place = *self.variables.get(&hir_id).unwrap();
 
 				let ty = &self.typeck_results[&expr.expr_id()];
@@ -517,8 +514,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 					todo!("invalid lvalue");
 				};
 
-				let node_id = path.resolved.as_local().unwrap();
-				let hir_id = self.scx.node_id_to_hir_id.borrow()[&node_id];
+				let hir_id = path.resolved.into_local().unwrap();
 				let place = *self.variables.get(&hir_id).unwrap();
 				let expr_value = self.codegen_expr(value)?;
 				match expr_value {
@@ -549,14 +545,14 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 
 				let call = if let hir::ExprKind::Access { path } = &expr.kind {
 					// direct call
-					let def_id = path.resolved.as_def().unwrap();
-					let func = self.function_ids.get(&def_id).unwrap();
+					let def_id = path.resolved.into_def().unwrap();
+					let func = self.function_ids[&def_id];
 
 					if args.bit.len() != func.count_params() as usize {
 						return Err("fn call args count mismatch");
 					}
 
-					self.builder.build_call(*func, &argsz, "").unwrap()
+					self.builder.build_call(func, &argsz, "").unwrap()
 				} else {
 					// indirect call
 					let addr = match self.codegen_expr(expr)? {
