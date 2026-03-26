@@ -48,20 +48,52 @@
       lpkgs = forAllSystems (system: {
         inherit (mdbook-treesitter.packages.${system}) mdbook-treesitter;
         inherit (tree-sitter-kalei.packages.${system}) tree-sitter-kalei;
+        inherit (self.packages.${system}) mdbook-treesitter-grammars;
       });
     in
     {
       formatter = forAllPkgs ({ pkgs, ... }: pkgs.nixfmt-tree);
 
       packages = forAllPkgs (
-        { pkgs, ... }:
+        { pkgs, lpkgs }:
+        let
+          bundleMdBookTreeSitterGrammars =
+            grammars:
+            pkgs.stdenv.mkDerivation {
+            name = "mdbook-treesitter-grammars";
+            unpackPhase = "true";
+            installPhase = ''
+              mkdir $out
+            ''
+            + pkgs.lib.concatStringsSep "\n" (
+              pkgs.lib.mapAttrsToList (name: grammar: ''
+                mkdir $out/${name}
+                cp ${grammar}/parser $out/${name}.so
+                cp ${grammar}/queries/* $out/${name}/
+              '') grammars
+            );
+          };
+        in
         {
           docs = pkgs.stdenv.mkDerivation {
             name = "kaleic-docs";
             src = ./docs;
-            nativeBuildInputs = [ pkgs.mdbook ];
-            buildPhase = "mdbook build";
+            nativeBuildInputs = [
+              pkgs.mdbook
+              lpkgs.mdbook-treesitter
+            ];
+            postPatch = ''
+              ln -s ${lpkgs.mdbook-treesitter-grammars} treesitter
+            '';
+            buildPhase = ''
+              mdbook build
+            '';
             installPhase = "cp -r book $out";
+          };
+
+          mdbook-treesitter-grammars = bundleMdBookTreeSitterGrammars {
+            kalei = lpkgs.tree-sitter-kalei;
+            rust = pkgs.tree-sitter-grammars.tree-sitter-rust;
           };
         }
       );
@@ -93,12 +125,23 @@
             ];
 
             shellHook = ''
-              echo "[flake] copying tree-sitter parser and queries for kalei and rust"
-              mkdir -p docs/treesitter/kalei docs/treesitter/rust
-              cp -f ${lpkgs.tree-sitter-kalei}/parser docs/treesitter/kalei.so
-              cp -f ${lpkgs.tree-sitter-kalei}/queries/* docs/treesitter/kalei/
-              cp -f ${pkgs.tree-sitter-grammars.tree-sitter-rust}/parser docs/treesitter/rust.so
-              cp -f ${pkgs.tree-sitter-grammars.tree-sitter-rust}/queries/* docs/treesitter/rust/
+              TARGET="docs/treesitter"
+              CURRENT_STORE_PATH="${lpkgs.mdbook-treesitter-grammars}"
+              if [ -L "$TARGET" ]; then
+                EXISTING_PATH=$(readlink -f "$TARGET")
+
+                # relink only if the target path is different
+                if [ "$EXISTING_PATH" != "$CURRENT_STORE_PATH" ]; then
+                  echo "[flake] relinking '$TARGET' to the new tree-sitter parsers and queries"
+                  rm "$TARGET"
+                  ln -s "$CURRENT_STORE_PATH" "$TARGET"
+                fi
+              elif [ -e "$TARGET" ]; then
+                echo "[flake] WARNING: '$TARGET' is not a symlink. skipping."
+              else
+                echo "[flake] linking '$TARGET' to the tree-sitter parsers and queries"
+                ln -s "$CURRENT_STORE_PATH" "$TARGET"
+              fi
             '';
 
             RUST_SRC_PATH = pkgs.rustPlatform.rustLibSrc;
@@ -106,7 +149,6 @@
             LLVM_SYS_211_PREFIX = pkgs.llvmPackages_21.llvm.dev;
 
             RUST_BACKTRACE = "1";
-            RUST_LOG = "info,kaleic=debug,cranelift_jit=warn,cranelift_object=warn";
           };
         }
       );
