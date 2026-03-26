@@ -28,7 +28,7 @@ foo.method().match { <arms> }.continue()
 
 Small arrow syntax (languages)
 
-```kalei
+```
 <match> {
   123 -> {}
   else -> {}
@@ -37,7 +37,7 @@ Small arrow syntax (languages)
 
 Rust large arrow syntax
 
-```kalei
+```
 <match> {
   123 => {}
   _ => {}
@@ -46,7 +46,7 @@ Rust large arrow syntax
 
 no arrows
 
-```kalei
+```
 <match> {
   123 { 456 }
   _ {

@@ -1,12 +1,33 @@
 {
   "nodes": {
+    "mdbook-treesitter": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": "rust-overlay"
+      },
+      "locked": {
+        "lastModified": 1774836508,
+        "narHash": "sha256-TijCWbj3Y0xGCptWpT5jyovL0ZjAJVa9huqHbKVWx+A=",
+        "owner": "mrnossiom",
+        "repo": "mdbook-treesitter",
+        "rev": "dbcb37507119067c2cba0b06f13368b9f01378ff",
+        "type": "github"
+      },
+      "original": {
+        "owner": "mrnossiom",
+        "repo": "mdbook-treesitter",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1772624091,
-        "narHash": "sha256-QKyJ0QGWBn6r0invrMAK8dmJoBYWoOWy7lN+UHzW1jc=",
+        "lastModified": 1774386573,
+        "narHash": "sha256-4hAV26quOxdC6iyG7kYaZcM3VOskcPUrdCQd/nx8obc=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "80bdc1e5ce51f56b19791b52b2901187931f5353",
+        "rev": "46db2e09e1d3f113a13c0d7b81e2f221c63b8ce9",
         "type": "github"
       },
       "original": {
@@ -18,27 +39,70 @@
     },
     "root": {
       "inputs": {
+        "mdbook-treesitter": "mdbook-treesitter",
         "nixpkgs": "nixpkgs",
-        "rust-overlay": "rust-overlay"
+        "rust-overlay": "rust-overlay_2",
+        "tree-sitter-kalei": "tree-sitter-kalei"
       }
     },
     "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "mdbook-treesitter",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1774753967,
+        "narHash": "sha256-HpT5fE8JQSbAxolUnw3VgGAo3urVjcrgtB2rtoxURVw=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "405b9b4c2c6c5a2b1d390524ce8a240729f34a96",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "rust-overlay_2": {
       "inputs": {
         "nixpkgs": [
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1772775058,
-        "narHash": "sha256-i+I9RYN8kYb9/9kibkxd0avkkislD1tyWojSVgIy160=",
+        "lastModified": 1774753967,
+        "narHash": "sha256-HpT5fE8JQSbAxolUnw3VgGAo3urVjcrgtB2rtoxURVw=",
         "owner": "oxalica",
         "repo": "rust-overlay",
-        "rev": "629bbb7f9d02787a54e28398b411da849246253b",
+        "rev": "405b9b4c2c6c5a2b1d390524ce8a240729f34a96",
         "type": "github"
       },
       "original": {
         "owner": "oxalica",
         "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "tree-sitter-kalei": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1774807750,
+        "narHash": "sha256-09ORKB433r0j7xvE+YB50hGVjlAQTjJk21lEKTTZONw=",
+        "owner": "mrnossiom",
+        "repo": "tree-sitter-kalei",
+        "rev": "47fae6f5ecf627fc0e2ad39b0e1da6474729c249",
+        "type": "github"
+      },
+      "original": {
+        "owner": "mrnossiom",
+        "repo": "tree-sitter-kalei",
         "type": "github"
       }
     }

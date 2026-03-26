@@ -21,3 +21,18 @@ fn item() {
   let foo = ();
 }
 ```
+
+- Concern: Bare attributes (i.e. no `[]` to delimit) on expression can conflict
+
+  ```
+  #foo (1)
+  #foo() 1
+
+  #foo [1, 2, 3]
+  #foo[] 1
+  ````
+
+  Currently, attributes have precedence.
+
+  - Do we not have bare attributes? `#foo` is `#foo()`
+  - Do we delimit the attribute?

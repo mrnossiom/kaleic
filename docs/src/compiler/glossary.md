@@ -51,7 +51,7 @@ Here is a non-exhaustive list of them and their use.
 - `ty::TyKind<InferKind, RefKind>`
 
   Holds the concrete definition of a type.
-  
+
   - `ty::EarlyItemTy` (`ty::TyKind<NoInfer, DefId>`)
 
   - `ty::InferTy` (`ty::TyKind<Infer, NoRef>`)

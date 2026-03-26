@@ -2,3 +2,10 @@
 title = "Kalei Compiler Documentation"
 authors = ["Milo Moisson"]
 language = "en"
+
+[preprocessor.treesitter]
+command = "mdbook-treesitter"
+languages = [
+  "kalei",
+  "rust",
+]

@@ -12,22 +12,27 @@
   > - Macros (Textual and Syntactic)
   > - Parametric Polymorphism (“Generics”)
 
+  My goal for generics is to have
+  generics obviously,
+  some kind of checked template programming that uses introspection,
+  vm/interpreted compile time execution that is sandboxed and is proven deterministic but can still access things like the heap (Rust const time is way too restrictive, too much hacks)
+
 - [Parametricity, or Comptime is Bonkers](https://noelwelsh.com/posts/comptime-is-bonkers/)
 
   Though I have not used Zig much,
-  I agree that their comptime are too much free form,
+  I agree that their comptime are is much free form,
   and although all abstractions are leaky, it makes it too easy to depend on some construction
 
   Maybe never allow compiler intrinsic to output information without a trait (except `TypeId`).
 
-  ```
+  ```kalei
   // has to be the identity because T has no observable properties
   fn foo<T>(foo: T) T {}
 
   // as opposed to
-  fn foo<T: Any>(foo: T) _ {}
+  fn foo<T: Any>(value: &T) _ {} // we only care about opaque value identity, is used for type maps context in Rust
   fn foo<T: Shape>() _ {} // e.g. shows that it uses T for reflection
-  fn foo<T: Layout>() _ {}
+  fn foo<T: Layout>() _ {} // layout only gives information for size/alignement
   ```
 
 - [facet - GitHub](https://github.com/facet-rs/facet)
@@ -63,9 +68,9 @@ fn deserialize(s: &str) -> T {
 
 ```kalei
 inline if std.cfg.host.is_linux() {
-  
+
 } else {
-  
+
 }
 ```
 

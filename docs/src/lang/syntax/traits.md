@@ -17,7 +17,7 @@ trait Foo {
 ```
 
 ### Implementation
-  
+
 ```kalei
 struct MyType;
 
