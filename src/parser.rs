@@ -5,8 +5,10 @@
 //! Entrypoint to parsing is [`parse_root`].
 
 use std::{
-	fmt, mem,
+	fmt::{self, Write},
+	mem,
 	ops::ControlFlow,
+	path::{self, PathBuf},
 	sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -19,23 +21,39 @@ use ariadne::{Label, Report, ReportKind};
 use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
-		self, Attr, AttrMeta, BinaryOp, Block, Expr, ExprKind, FieldDef, FnDecl, Function,
-		GenericParams, Generics, Ident as Id, Item, ItemKind, Param, Path, PathSegment, Root,
-		ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp, Variant,
-		VariantKind,
+		self, Attr, AttrKind, AttrMeta, AttrPath, BinaryOp, Block, Expr, ExprKind, FieldDef,
+		FnDecl, Function, GenericParams, Generics, Ident as Id, Item, ItemKind, Param, Path,
+		PathSegment, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp,
+		Variant, VariantKind,
 	},
+	attrs::{ModPath, NoCore, NoStd, try_parse_attr},
 	errors,
 	lexer::{Lexer, Token, TokenKind},
-	session::{DcxHandle, Diagnostic, SessionCtx, SourceFile, Span},
+	pretty_print,
+	session::{ArtefactKind, DcxHandle, Diagnostic, SessionCtx, SourceFile, Span},
 	symbols::{Symbol, kw, sym},
 };
 
 pub(crate) fn parse_root(scx: &SessionCtx, source: &SourceFile) -> Root {
-	let mut p = Parser::new(scx, source);
-	match p.parse_root() {
+	let module = ModuleData {
+		mod_path: Vec::new(),
+		filepath_stack: Vec::new(),
+		current_dir: source.path.parent().unwrap().to_path_buf(),
+	};
+	let mut p = Parser::new(scx, source, module);
+	let ast = match p.parse_root() {
 		Ok(ast) => ast,
 		Err(diag) => scx.dcx().emit_fatal(&diag),
-	}
+	};
+
+	scx.register_artefact(&ArtefactKind::Ast(()), |artefact| {
+		write!(artefact, "{ast:#?}")
+	});
+	scx.register_artefact(&ArtefactKind::AstPretty(()), |artefact| {
+		pretty_print::pretty_print(&ast, artefact)
+	});
+
+	ast
 }
 
 type Result<T> = std::result::Result<T, Diagnostic>;
@@ -99,12 +117,46 @@ struct Parser<'scx> {
 
 	token: Token,
 	last_token: Token,
+
+	module: ModuleData,
+}
+
+#[derive(Debug, Clone)]
+struct ModuleData {
+	mod_path: Vec<Symbol>,
+	/// Used to detect import cycles, usually when used with `#path`
+	filepath_stack: Vec<PathBuf>,
+	current_dir: PathBuf,
+}
+
+impl ModuleData {
+	fn with_file(&self, name: Symbol, filepath: PathBuf) -> Self {
+		let Self {
+			mut mod_path,
+			mut filepath_stack,
+			..
+		} = (*self).clone();
+
+		if filepath_stack.contains(&filepath) {
+			todo!("cycle detected")
+		}
+
+		mod_path.push(name);
+		let current_dir = filepath.parent().unwrap().to_path_buf();
+		filepath_stack.push(filepath);
+
+		Self {
+			mod_path,
+			filepath_stack,
+			current_dir,
+		}
+	}
 }
 
 impl<'scx> Parser<'scx> {
-	fn new(scx: &'scx SessionCtx, file: &'scx SourceFile) -> Self {
+	fn new(scx: &'scx SessionCtx, file: &'scx SourceFile, module: ModuleData) -> Self {
 		let SourceFile {
-			name: _,
+			path,
 			content,
 			offset,
 		} = &file;
@@ -116,6 +168,8 @@ impl<'scx> Parser<'scx> {
 
 			token: Token::DUMMY,
 			last_token: Token::DUMMY,
+
+			module,
 		};
 
 		// init the first token
@@ -244,18 +298,21 @@ impl Parser<'_> {
 
 impl Parser<'_> {
 	fn parse_root(&mut self) -> Result<Root> {
-		let attrs = self.parse_attrs(&AttrKind::Parent)?;
+		let (attrs, items) = self.parse_module_inner()?;
 
-		let mut items = Vec::new();
-		items.extend(self.core_libs_import(&attrs));
-		items.extend(self.parse_until(Eof, Parser::parse_item)?);
+		let mut expanded_items = Vec::new();
+		expanded_items.extend(self.core_libs_import(&attrs));
+		expanded_items.extend(items);
 
-		Ok(Root { attrs, items })
+		Ok(Root {
+			attrs,
+			items: expanded_items,
+		})
 	}
 
 	/// Make an `extern use` item for `std`, `core` or none
 	/// with respect to `no_std` and `no_core` attributes
-	fn core_libs_import(&self, attrs: &[Attr]) -> Option<Item> {
+	fn core_libs_import(&self, root_attrs: &[Attr]) -> Option<Item> {
 		enum AutoImportState {
 			None,
 			NoStd(Span),
@@ -264,8 +321,15 @@ impl Parser<'_> {
 
 		let mut state = AutoImportState::None;
 
-		for attr in attrs {
-			if attr.path.is_match(&[sym::no_std]) {
+		for attr in root_attrs {
+			if let Some(parsed_attr) = try_parse_attr::<NoStd>(self.scx, attr) {
+				let NoStd {} = match parsed_attr {
+					Ok(attr) => attr,
+					Err(diag) => {
+						self.scx.dcx().emit(&diag);
+						continue;
+					}
+				};
 				match state {
 					AutoImportState::None => state = AutoImportState::NoStd(attr.span),
 					AutoImportState::NoStd(_span) => todo!("lint duplicate"),
@@ -274,7 +338,14 @@ impl Parser<'_> {
 					}
 				}
 			}
-			if attr.path.is_match(&[sym::no_core]) {
+			if let Some(parsed_attr) = try_parse_attr::<NoCore>(self.scx, attr) {
+				let NoCore {} = match parsed_attr {
+					Ok(attr) => attr,
+					Err(diag) => {
+						self.scx.dcx().emit(&diag);
+						continue;
+					}
+				};
 				match state {
 					AutoImportState::None | AutoImportState::NoStd(..) => {
 						state = AutoImportState::NoCore(attr.span);
@@ -286,10 +357,10 @@ impl Parser<'_> {
 
 		let kind = match state {
 			AutoImportState::None => Some(ItemKind::ExternUse {
-				name: ast::Ident::new(sym::std, Span::DUMMY),
+				name: Id::new(sym::std, Span::DUMMY),
 			}),
 			AutoImportState::NoStd(..) => Some(ItemKind::ExternUse {
-				name: ast::Ident::new(sym::core, Span::DUMMY),
+				name: Id::new(sym::core, Span::DUMMY),
 			}),
 			AutoImportState::NoCore(..) => None,
 		};
@@ -300,87 +371,6 @@ impl Parser<'_> {
 			span: Span::DUMMY,
 			id: self.make_node_id(),
 		})
-	}
-
-	fn parse_item(&mut self) -> Result<Item> {
-		let lo = self.token.span;
-
-		let attrs = self.parse_attrs(&AttrKind::Next)?;
-
-		let kind = if self.eat_kw(kw::Fn) {
-			self.parse_function()?
-		} else if self.eat_kw(kw::Unsafe) {
-			self.parse_item_unsafe_extern()?
-		} else if self.eat_kw(kw::Struct) {
-			self.parse_item_struct()?
-		} else if self.eat_kw(kw::Enum) {
-			self.parse_item_enum()?
-		} else if self.eat_kw(kw::Trait) {
-			self.parse_item_trait()?
-		} else if self.eat_kw(kw::For) {
-			self.parse_item_trait_impl()?
-		} else if self.eat_kw(kw::Type) {
-			self.parse_item_type_alias()?
-		} else if self.eat_kw(kw::Extern) {
-			// TODO: recover to unsafe extern block
-			self.parse_item_extern_use()?
-		} else {
-			let report = errors::parser::expected_construct_no_match("an item", self.token);
-			return Err(Diagnostic::new(report));
-		};
-
-		Ok(Item {
-			kind,
-			attrs,
-			span: self.close_span(lo),
-			id: self.make_node_id(),
-		})
-	}
-
-	fn parse_function(&mut self) -> Result<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Kw(kw::Fn));
-
-		let name = self.expect_ident()?;
-		let generics = self.parse_generics()?;
-		let decl = self.parse_fn_decl()?;
-
-		let body = if self.check(OpenBrace) {
-			Some(Box::new(self.parse_block()?))
-		} else if self.eat(Semi) {
-			None
-		} else {
-			let report = errors::parser::expected_construct_no_match(
-				"a function body or a semicolon",
-				self.token,
-			);
-			return Err(Diagnostic::new(report));
-		};
-
-		Ok(ItemKind::Function(Function {
-			name,
-			generics,
-			decl,
-			body,
-		}))
-	}
-
-	fn parse_item_type_alias(&mut self) -> Result<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Kw(kw::Type));
-
-		let name = self.expect_ident()?;
-		let alias = if self.eat(Eq) {
-			let ty = Some(Box::new(self.parse_ty()?));
-			self.expect(Semi)?;
-			ty
-		} else if self.eat(Semi) {
-			None
-		} else {
-			let report =
-				errors::parser::expected_construct_no_match("a type alias body", self.token);
-			return Err(Diagnostic::new(report));
-		};
-
-		Ok(ItemKind::TypeAlias(TypeAlias { name, alias }))
 	}
 }
 
@@ -524,7 +514,7 @@ impl Parser<'_> {
 	fn parse_expr_single(&mut self) -> Result<Expr> {
 		let lo = self.token.span;
 
-		let attrs = self.parse_attrs(&AttrKind::Next)?;
+		let attrs = self.parse_attrs(AttrKind::Next)?;
 
 		let kind = if self.eat_kw(kw::Not) {
 			self.parse_expr_not()?
@@ -680,6 +670,189 @@ impl Parser<'_> {
 
 /// Items
 impl Parser<'_> {
+	fn parse_item(&mut self) -> Result<Item> {
+		let lo = self.token.span;
+
+		let mut attrs = self.parse_attrs(AttrKind::Next)?;
+
+		let kind = if self.eat_kw(kw::Fn) {
+			self.parse_function()?
+		} else if self.eat_kw(kw::Unsafe) {
+			self.parse_item_unsafe_extern()?
+		} else if self.eat_kw(kw::Struct) {
+			self.parse_item_struct()?
+		} else if self.eat_kw(kw::Enum) {
+			self.parse_item_enum()?
+		} else if self.eat_kw(kw::Trait) {
+			self.parse_item_trait()?
+		} else if self.eat_kw(kw::For) {
+			self.parse_item_trait_impl()?
+		} else if self.eat_kw(kw::Type) {
+			self.parse_item_type_alias()?
+		} else if self.eat_kw(kw::Mod) {
+			self.parse_item_mod(&mut attrs)?
+		} else if self.eat_kw(kw::Extern) {
+			// TODO: recover to unsafe extern block
+			self.parse_item_extern_use()?
+		} else {
+			let report = errors::parser::expected_construct_no_match("an item", self.token);
+			return Err(Diagnostic::new(report));
+		};
+
+		Ok(Item {
+			kind,
+			attrs,
+			span: self.close_span(lo),
+			id: self.make_node_id(),
+		})
+	}
+
+	fn parse_module_inner(&mut self) -> Result<(Vec<Attr>, Vec<Item>)> {
+		let attrs = self.parse_attrs(AttrKind::Parent)?;
+		let items = self.parse_until(Eof, Parser::parse_item)?;
+		Ok((attrs, items))
+	}
+
+	fn parse_function(&mut self) -> Result<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Fn));
+
+		let name = self.expect_ident()?;
+		let generics = self.parse_generics()?;
+		let decl = self.parse_fn_decl()?;
+
+		let body = if self.check(OpenBrace) {
+			Some(Box::new(self.parse_block()?))
+		} else if self.eat(Semi) {
+			None
+		} else {
+			let report = errors::parser::expected_construct_no_match(
+				"a function body or a semicolon",
+				self.token,
+			);
+			return Err(Diagnostic::new(report));
+		};
+
+		Ok(ItemKind::Function(Function {
+			name,
+			generics,
+			decl,
+			body,
+		}))
+	}
+
+	fn parse_item_type_alias(&mut self) -> Result<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Type));
+
+		let name = self.expect_ident()?;
+		let alias = if self.eat(Eq) {
+			let ty = Some(Box::new(self.parse_ty()?));
+			self.expect(Semi)?;
+			ty
+		} else if self.eat(Semi) {
+			None
+		} else {
+			let report =
+				errors::parser::expected_construct_no_match("a type alias body", self.token);
+			return Err(Diagnostic::new(report));
+		};
+
+		Ok(ItemKind::TypeAlias(TypeAlias { name, alias }))
+	}
+
+	fn parse_item_mod(&mut self, attrs: &mut Vec<Attr>) -> Result<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Mod));
+
+		let mut custom_path = None;
+
+		for attr in &*attrs {
+			if let Some(parsed_attr) = try_parse_attr::<ModPath>(self.scx, attr) {
+				let path = match parsed_attr {
+					Ok(ModPath { path }) => path,
+					Err(diag) => {
+						self.scx.dcx().emit(&diag);
+						continue;
+					}
+				};
+				let before = custom_path.replace(path);
+				assert!(before.is_none());
+			}
+		}
+
+		let name = self.expect_ident()?;
+		let (inner_attrs, items, inline) = if self.eat(Semi) {
+			let filepath = match custom_path {
+				Some(path) => self.module.current_dir.join(path),
+				None => self.submodule_path(name)?,
+			};
+			let value = self.scx.source_map.write().load_source_from_file(&filepath);
+			let file = match value {
+				Ok(file) => file,
+				Err(err) => todo!("could not read file {}: {err}", filepath.display()),
+			};
+
+			let submodule = self.module.with_file(name.sym, filepath);
+			let mut parser = Parser::new(self.scx, &file, submodule);
+			let (attrs, items) = parser.parse_module_inner()?;
+			(attrs, items, false)
+		} else {
+			self.expect(OpenBrace)?;
+			let (attrs, items) = self.parse_module_inner()?;
+			self.expect(CloseBrace)?;
+			(attrs, items, true)
+		};
+
+		attrs.extend(inner_attrs);
+
+		Ok(ItemKind::Module {
+			name,
+			items,
+			inline,
+		})
+	}
+
+	fn submodule_path(&self, name: Id) -> Result<PathBuf> {
+		// `<ident>.kl`
+		let sibling_path = format!("{}.kl", self.scx.symbols.resolve(name.sym));
+		let sibling_path = self.module.current_dir.join(sibling_path);
+		let sibling_path_exists = match sibling_path.try_exists() {
+			Ok(exists) => exists,
+			Err(err) => todo!(),
+		};
+		// `<ident>/mod.kl`
+		let child_path = format!(
+			"{}{}mod.kl",
+			self.scx.symbols.resolve(name.sym),
+			path::MAIN_SEPARATOR
+		);
+		let child_path = self.module.current_dir.join(child_path);
+		let child_path_exists = match child_path.try_exists() {
+			Ok(exists) => exists,
+			Err(err) => todo!(),
+		};
+
+		let file_path = match (sibling_path_exists, child_path_exists) {
+			(true, false) => sibling_path,
+			(false, true) => child_path,
+			// Both files exist, so we can't load the scope
+			(true, true) => {
+				let report = errors::parser::module_multiple_candidates(
+					name.span,
+					&child_path,
+					&sibling_path,
+				);
+				return Err(Diagnostic::new(report));
+			}
+			// Neither file exists, so we can't load the scope
+			(false, false) => {
+				let report =
+					errors::parser::module_no_candidates(name.span, &child_path, &sibling_path);
+				return Err(Diagnostic::new(report));
+			}
+		};
+
+		Ok(file_path)
+	}
+
 	/// Parse [`ItemKind::ForeignMod`] block of items
 	fn parse_item_unsafe_extern(&mut self) -> Result<ItemKind> {
 		debug_assert_eq!(self.last_token.kind, Kw(kw::Unsafe));
@@ -860,6 +1033,20 @@ impl Parser<'_> {
 		})
 	}
 
+	fn parse_attr_path(&mut self) -> Result<AttrPath> {
+		let lo = self.token.span;
+
+		let mut segments = Vec::new();
+		segments.push(self.expect_ident()?);
+		segments.extend(self.parse_while(ColonColon, Self::expect_ident)?);
+
+		Ok(AttrPath {
+			segments,
+			span: self.close_span(lo),
+			id: self.make_node_id(),
+		})
+	}
+
 	fn parse_path_segment(&mut self) -> Result<PathSegment> {
 		let lo = self.token.span;
 
@@ -915,8 +1102,15 @@ impl Parser<'_> {
 		self.expect(Lt)?;
 		while !self.eat(Gt) && !finished {
 			let name = self.expect_ident()?;
+			let default = if self.eat(Eq) {
+				Some(self.parse_ty()?)
+			} else {
+				None
+			};
+
 			generics.push(ast::Generic {
 				name,
+				default,
 				id: self.make_node_id(),
 			});
 
@@ -1092,7 +1286,7 @@ impl Parser<'_> {
 		})
 	}
 
-	fn parse_attrs(&mut self, kind: &AttrKind) -> Result<Vec<Attr>> {
+	fn parse_attrs(&mut self, kind: AttrKind) -> Result<Vec<Attr>> {
 		let peek = match kind {
 			AttrKind::Parent => PoundPound,
 			AttrKind::Next => Pound,
@@ -1100,7 +1294,7 @@ impl Parser<'_> {
 		self.parse_while(peek, |p| p.parse_attr(kind))
 	}
 
-	fn parse_attr(&mut self, kind: &AttrKind) -> Result<Attr> {
+	fn parse_attr(&mut self, kind: AttrKind) -> Result<Attr> {
 		match kind {
 			AttrKind::Parent => debug_assert!(matches!(self.last_token.kind, PoundPound)),
 			AttrKind::Next => debug_assert!(matches!(self.last_token.kind, Pound)),
@@ -1108,7 +1302,7 @@ impl Parser<'_> {
 
 		let lo = self.last_token.span;
 
-		let path = self.parse_path()?;
+		let path = self.parse_attr_path()?;
 
 		let meta = if self.eat(OpenParen) {
 			let exprs = self.parse_seq_rest(OpenParen, CloseParen, Comma, Parser::parse_expr)?;
@@ -1127,16 +1321,9 @@ impl Parser<'_> {
 		Ok(Attr {
 			path,
 			meta,
+			kind,
 			span: self.close_span(lo),
 			id: self.make_node_id(),
 		})
 	}
-}
-
-/// What should the attr attach to
-enum AttrKind {
-	/// `##path`
-	Parent,
-	/// `#path`
-	Next,
 }

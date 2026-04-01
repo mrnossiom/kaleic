@@ -1,12 +1,10 @@
-use std::{fmt::Write as _, fs, process::Command};
+use std::{fs, process::Command};
 
 use ariadne::ReportKind;
 
 use crate::{
-	ast, codegen, inference, lowerer, parser,
-	pretty_print::pretty_print,
-	resolve,
-	session::{DcxHandle, Diagnostic, PrintKind, Report, SessionCtx, Span},
+	codegen, inference, lowerer, parser, resolve,
+	session::{DcxHandle, Diagnostic, Report, SessionCtx, Span},
 	ty,
 };
 
@@ -16,7 +14,22 @@ pub fn pipeline(scx: &SessionCtx) {
 	}
 	fs::create_dir_all(&scx.options.debug_output).unwrap();
 
-	let ast = parse_files(scx);
+	let source = if let Some(filename) = &scx.options.input {
+		let source = scx.source_map.write().load_source_from_file(filename);
+		match source {
+			Ok(source) => source,
+			Err(err) => {
+				let report = Report::build(ReportKind::Error, Span::DUMMY)
+					.with_message("no input filename given");
+				scx.dcx().emit_fatal(&Diagnostic::new(report))
+			}
+		}
+	} else {
+		let report =
+			Report::build(ReportKind::Error, Span::DUMMY).with_message("no input filename given");
+		scx.dcx().emit_fatal(&Diagnostic::new(report))
+	};
+	let ast = parser::parse_root(scx, &source);
 	scx.dcx().check_sane_or_exit();
 
 	resolve::collect_root(scx, &ast);
@@ -74,50 +87,4 @@ pub fn pipeline(scx: &SessionCtx) {
 
 		cmd.status().unwrap();
 	}
-}
-
-fn parse_files(scx: &SessionCtx) -> ast::Root {
-	if scx.options.inputs.is_empty() {
-		let report = Report::build(ReportKind::Error, Span::DUMMY)
-			.with_message("expected at least one input file");
-		scx.dcx().emit_fatal(&Diagnostic::new(report))
-	}
-
-	scx.options
-		.inputs
-		.iter()
-		.map(|filename| {
-			let source = scx
-				.source_map
-				.write()
-				.load_source_from_file(filename)
-				.unwrap();
-
-			// parsing source
-			let ast = parser::parse_root(scx, &source);
-
-			scx.register_artefact(
-				&PrintKind::Ast,
-				&format!("ast.{}.txt", filename.file_stem().unwrap().display()),
-				|artefact| write!(artefact, "{ast:#?}"),
-			);
-			scx.register_artefact(
-				&PrintKind::AstPretty,
-				&format!("ast-pretty.{}.txt", filename.file_stem().unwrap().display()),
-				|artefact| pretty_print(&ast, artefact),
-			);
-
-			ast
-		})
-		.fold(
-			ast::Root {
-				attrs: Vec::new(),
-				items: Vec::new(),
-			},
-			|mut final_, cur| {
-				final_.attrs.extend(cur.attrs);
-				final_.items.extend(cur.items);
-				final_
-			},
-		)
 }

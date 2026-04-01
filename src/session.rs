@@ -175,12 +175,11 @@ impl fmt::Write for ArtefactWriter {
 impl SessionCtx {
 	pub(crate) fn register_artefact(
 		&self,
-		kind: &PrintKind,
-		name: &str,
+		meta: &ArtefactKind,
 		f: impl FnOnce(&mut ArtefactWriter) -> fmt::Result,
 	) {
-		if self.options.print.contains(kind) {
-			let file = fs::File::create(self.options.debug_output.join(name)).unwrap();
+		if self.options.print.contains(&meta.kind()) {
+			let file = fs::File::create(self.options.debug_output.join(meta.filename())).unwrap();
 			f(&mut ArtefactWriter(file)).unwrap();
 		}
 	}
@@ -241,6 +240,8 @@ impl DiagnosticCtx {
 	}
 }
 
+type TubeId = ();
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PrintKind {
 	// IRs
@@ -250,8 +251,49 @@ pub enum PrintKind {
 	HigherIrPretty,
 	BackendIr,
 
-	CollectedItems,
-	TypeEnvironment,
+	NameEnv,
+	TypeEnv,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ArtefactKind {
+	// IRs
+	Ast(TubeId),
+	AstPretty(TubeId),
+	HigherIr(TubeId),
+	HigherIrPretty(TubeId),
+	BackendIr(DefId, Backend),
+
+	NameEnv(TubeId),
+	TypeEnv(TubeId),
+}
+
+impl ArtefactKind {
+	pub(crate) fn kind(&self) -> PrintKind {
+		match self {
+			Self::Ast(..) => PrintKind::Ast,
+			Self::AstPretty(..) => PrintKind::AstPretty,
+			Self::HigherIr(..) => PrintKind::HigherIr,
+			Self::HigherIrPretty(..) => PrintKind::HigherIrPretty,
+			Self::BackendIr(..) => PrintKind::BackendIr,
+			Self::NameEnv(..) => PrintKind::NameEnv,
+			Self::TypeEnv(..) => PrintKind::TypeEnv,
+		}
+	}
+
+	pub(crate) fn filename(&self) -> &'static str {
+		match self {
+			Self::Ast(tube_id) => "ast.txt",
+			Self::AstPretty(tube_id) => "ast-pretty.kl",
+			Self::HigherIr(tube_id) => "hir.txt",
+			Self::HigherIrPretty(tube_id) => "hir-pretty.kl",
+			Self::BackendIr(def_id, Backend::Cranelift) => "bir.ll",
+			Self::BackendIr(def_id, Backend::Llvm) => "bir.clif",
+			Self::BackendIr(_, Backend::NoBackend) => unreachable!(),
+			Self::NameEnv(tube_id) => "name-env.txt",
+			Self::TypeEnv(tube_id) => "type-env.txt",
+		}
+	}
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -263,7 +305,7 @@ pub enum OutputKind {
 
 #[derive(Debug)]
 pub struct Options {
-	pub inputs: Vec<PathBuf>,
+	pub input: Option<PathBuf>,
 	pub output: PathBuf,
 
 	pub backend: Backend,
@@ -278,7 +320,7 @@ pub struct Options {
 impl Default for Options {
 	fn default() -> Self {
 		Self {
-			inputs: Vec::default(),
+			input: None,
 			jit: true,
 			opt: false,
 			backend: Backend::default(),
@@ -313,7 +355,8 @@ impl Diagnostic {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SourceFile {
-	pub(crate) name: String,
+	/// Canonicalized filename used to guess modules path
+	pub(crate) path: PathBuf,
 	pub(crate) content: String,
 	pub(crate) offset: BytePos,
 }
@@ -327,16 +370,17 @@ pub(crate) struct SourceMap {
 
 impl SourceMap {
 	pub(crate) fn load_source_from_file(&mut self, path: &Path) -> io::Result<Rc<SourceFile>> {
-		let src = std::fs::read_to_string(path)?;
+		let path = fs::canonicalize(path)?;
 
-		Ok(self.load_source(&path.to_string_lossy(), src))
+		let src = std::fs::read_to_string(&path)?;
+		Ok(self.load_source(path, src))
 	}
 
-	pub(crate) fn load_source(&mut self, name: &str, src: String) -> Rc<SourceFile> {
+	pub(crate) fn load_source(&mut self, path: PathBuf, src: String) -> Rc<SourceFile> {
 		let src_len = BytePos::from_usize(src.len());
 
 		let src_file = Rc::new(SourceFile {
-			name: name.to_owned(),
+			path,
 			content: src.clone(),
 			offset: self.offset,
 		});
@@ -382,9 +426,14 @@ impl ariadne::Cache<BytePos> for &SourceMap {
 		let source = &self.diagnostic_sources[file_idx.to_usize()];
 		Result::<_, &'static str>::Ok(source)
 	}
+
 	fn display<'a>(&self, id: &'a BytePos) -> Option<impl fmt::Display + 'a> {
 		let file_idx = self.lookup_source_file_idx(*id);
-		Some(self.sources[file_idx.to_usize()].name.clone())
+		let path = self.sources[file_idx.to_usize()]
+			.path
+			.to_string_lossy()
+			.into_owned();
+		Some(path)
 	}
 }
 

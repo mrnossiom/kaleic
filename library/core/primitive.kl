@@ -5,7 +5,7 @@ struct never;
 struct bool;
 
 for bool impl Not {
-    fn not(self: Self) Self {
+    fn not_(self: Self) Self {
         intrinsic_not(self)
     }
 }

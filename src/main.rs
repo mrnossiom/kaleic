@@ -62,8 +62,8 @@ mod options {
 				PrintKind::Hir => Self::HigherIr,
 				PrintKind::HirPretty => Self::HigherIrPretty,
 				PrintKind::BackendIr => Self::BackendIr,
-				PrintKind::Items => Self::CollectedItems,
-				PrintKind::Env => Self::TypeEnvironment,
+				PrintKind::Items => Self::NameEnv,
+				PrintKind::Env => Self::TypeEnv,
 			}
 		}
 	}
@@ -72,7 +72,7 @@ mod options {
 // this has no default option, default options are in the options struct
 #[derive(clap::Parser)]
 struct Args {
-	pub(crate) inputs: Vec<PathBuf>,
+	pub(crate) input: Option<PathBuf>,
 
 	#[clap(long)]
 	pub(crate) jit: bool,
@@ -97,8 +97,8 @@ fn main() {
 	let mut scx = SessionCtx::default();
 
 	let SessionCtx { options, .. } = &mut scx;
-	options.inputs = args.inputs;
-
+	args.input
+		.inspect(|value| options.input = Some(value.into()));
 	args.backend.inspect(|value| options.backend = value.into());
 	options.jit = args.jit;
 	options.opt = args.opt;

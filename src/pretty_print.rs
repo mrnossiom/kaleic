@@ -282,7 +282,11 @@ mod ast_pp {
 
 	impl PrettyPrint for ast::Generic {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self { name, id: _ } = &self;
+			let Self {
+				name,
+				default,
+				id: _,
+			} = &self;
 			pp!(f, (name))
 		}
 	}
@@ -527,14 +531,42 @@ mod ast_pp {
 			let Self {
 				path,
 				meta,
+				kind,
 				span: _,
 				id: _,
 			} = self;
-			match meta {
-				ast::AttrMeta::None => pp!(f, "#", (path)),
-				ast::AttrMeta::Tuple(exprs) => pp!(f, "#", (path), "(", [exprs, ", "], ")"),
-				ast::AttrMeta::Map(exprs) => pp!(f, "#", (path), "{", [exprs, ", "], "}"),
-				ast::AttrMeta::List(exprs) => pp!(f, "#", (path), "[", [exprs, ", "], "]"),
+			// TODO: handle parent attr
+			pp!(f, (kind), (path), (meta))
+		}
+	}
+
+	impl PrettyPrint for ast::AttrPath {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				segments,
+				span: _,
+				id: _,
+			} = &self;
+			pp!(f, [segments, "::"])
+		}
+	}
+
+	impl PrettyPrint for ast::AttrMeta {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::None => Ok(()),
+				Self::Tuple(exprs) => pp!(f, "(", [exprs, ", "], ")"),
+				Self::Map(exprs) => pp!(f, "{", [exprs, ", "], "}"),
+				Self::List(exprs) => pp!(f, "[", [exprs, ", "], "]"),
+			}
+		}
+	}
+
+	impl PrettyPrint for ast::AttrKind {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::Parent => pp!(f, "##"),
+				Self::Next => pp!(f, "#"),
 			}
 		}
 	}
@@ -876,6 +908,24 @@ mod hir_pp {
 				Self::Break { expr, label } => pp!(f, "break ", (? " '" label), (expr)),
 				Self::Continue { label } => pp!(f, "continue ", (? " '" label)),
 			}
+		}
+	}
+
+	impl PrettyPrint for hir::Generics {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self { idents, span: _ } = &self;
+			pp!(f, [idents, ", "])
+		}
+	}
+
+	impl PrettyPrint for hir::Generic {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self {
+				name,
+				default,
+				id: _,
+			} = &self;
+			pp!(f, (name), (? " = " default))
 		}
 	}
 }

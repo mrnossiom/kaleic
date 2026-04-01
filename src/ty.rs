@@ -12,7 +12,7 @@ use crate::{
 	hir::{self, ExprId, Visitor, visit},
 	inference::TypeVarId,
 	resolve::{DefId, LangItem, NameEnvironment, Resolution, TypeLangItem},
-	session::{DcxHandle, PrintKind, ScxHandle, SessionCtx, Span},
+	session::{ArtefactKind, DcxHandle, ScxHandle, SessionCtx, Span},
 };
 
 #[derive(Debug)]
@@ -354,14 +354,11 @@ pub(crate) fn compute_items_type(tcx: &TyCtx<'_>, hir: &hir::Root) {
 
 	tcx.type_env.put(type_env);
 
-	tcx.scx().register_artefact(
-		&PrintKind::TypeEnvironment,
-		"type-environment.txt",
-		|artefact| {
+	tcx.scx()
+		.register_artefact(&ArtefactKind::TypeEnv(()), |artefact| {
 			let env = tcx.type_env.borrow();
 			writeln!(artefact, "{env:#?}")
-		},
-	);
+		});
 }
 
 fn compute_item_types(
@@ -650,8 +647,9 @@ impl visit::Visitor for TypeCollector<'_> {
 pub(crate) fn check_entrypoint(tcx: &TyCtx<'_>) {
 	let main_sym = tcx.scx().symbols.intern("main");
 	let Some(def_id) = tcx.name_env.values.get(&main_sym) else {
-		let report = todo!("no main function");
+		let report = errors::ty::no_main_function();
 		tcx.dcx().emit_build(report);
+		return;
 	};
 
 	let main_ty = &tcx.type_env.borrow()[def_id];
@@ -662,7 +660,7 @@ pub(crate) fn check_entrypoint(tcx: &TyCtx<'_>) {
 	});
 
 	if **main_ty != expected_main_ty {
-		let report = todo!("main doesn't match the expected signature");
+		let report = errors::ty::main_function_wrong_signature(todo!());
 		tcx.dcx().emit_build(report);
 	}
 

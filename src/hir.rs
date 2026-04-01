@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-	ast::{self, Ident, Spanned},
+	ast::{BinaryOp, Ident, Spanned, UnaryOp},
 	resolve::{self, DefId},
 	session::Span,
 	symbols::Symbol,
@@ -65,14 +65,14 @@ pub(crate) struct Item<Kind = ItemKind> {
 #[derive(Debug, Clone)]
 pub(crate) struct Struct {
 	pub(crate) name: Ident,
-	pub(crate) generics: ast::Generics,
+	pub(crate) generics: Generics,
 	pub(crate) fields: Vec<FieldDef>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Enum {
 	pub(crate) name: Ident,
-	pub(crate) generics: ast::Generics,
+	pub(crate) generics: Generics,
 	pub(crate) variants: Vec<Variant>,
 }
 
@@ -85,8 +85,8 @@ pub(crate) enum ItemKind {
 	TypeAlias(TypeAlias),
 
 	Trait {
-		name: ast::Ident,
-		generics: ast::Generics,
+		name: Ident,
+		generics: Generics,
 		members: Vec<Item<TraitItemKind>>,
 	},
 	TraitImpl {
@@ -147,20 +147,20 @@ pub(crate) struct AttrPath {
 
 #[derive(Debug, Clone)]
 pub(crate) struct TypeAlias {
-	pub(crate) name: ast::Ident,
+	pub(crate) name: Ident,
 	pub(crate) alias: Option<Box<Ty>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Function {
-	pub(crate) name: ast::Ident,
+	pub(crate) name: Ident,
 	pub(crate) decl: Box<FnDecl>,
 	pub(crate) body: Option<Box<Block>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct Variant {
-	pub(crate) name: ast::Ident,
+	pub(crate) name: Ident,
 	pub(crate) fields: Vec<FieldDef>,
 	pub(crate) span: Span,
 }
@@ -178,7 +178,7 @@ pub(crate) enum ForeignItemKind {
 
 #[derive(Debug, Clone)]
 pub(crate) struct FieldDef {
-	pub(crate) name: ast::Ident,
+	pub(crate) name: Ident,
 	pub(crate) ty: Ty,
 }
 
@@ -219,7 +219,7 @@ pub(crate) enum StmtKind {
 	},
 
 	Let {
-		name: ast::Ident,
+		name: Ident,
 		ty: Option<Box<Ty>>,
 		value: Box<Expr>,
 		mutable: bool,
@@ -255,11 +255,11 @@ pub(crate) enum ExprKind {
 	},
 
 	Unary {
-		op: Spanned<ast::UnaryOp>,
+		op: Spanned<UnaryOp>,
 		expr: Box<Expr>,
 	},
 	Binary {
-		op: Spanned<ast::BinaryOp>,
+		op: Spanned<BinaryOp>,
 		left: Box<Expr>,
 		right: Box<Expr>,
 	},
@@ -283,13 +283,13 @@ pub(crate) enum ExprKind {
 	},
 	Method {
 		expr: Box<Expr>,
-		name: ast::Ident,
+		name: Ident,
 		params: Vec<Expr>,
 	},
 
 	Field {
 		expr: Box<Expr>,
-		name: ast::Ident,
+		name: Ident,
 	},
 	Deref {
 		expr: Box<Expr>,
@@ -317,6 +317,19 @@ pub(crate) enum Abi {
 	#[default]
 	Kalei,
 	C,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Generics {
+	pub(crate) idents: Vec<Generic>,
+	pub(crate) span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Generic {
+	pub(crate) name: Ident,
+	pub(crate) default: Option<Ty>,
+	pub(crate) id: NodeId,
 }
 
 pub(crate) mod visit {
@@ -383,7 +396,7 @@ pub(crate) mod visit {
 			visit_variant(self, variant);
 		}
 
-		fn visit_generics(&mut self, generics: &ast::Generics) {
+		fn visit_generics(&mut self, generics: &Generics) {
 			visit_generics(self, generics);
 		}
 
@@ -740,13 +753,17 @@ pub(crate) mod visit {
 		v.visit_fields(fields);
 	}
 
-	pub fn visit_generics<V: Visitor>(
-		v: &mut V,
-		ast::Generics { idents, span: _ }: &ast::Generics,
-	) {
+	pub fn visit_generics<V: Visitor>(v: &mut V, Generics { idents, span: _ }: &Generics) {
 		for generic in idents {
-			let ast::Generic { name, id: _ } = generic;
+			let Generic {
+				name,
+				default,
+				id: _,
+			} = generic;
 			v.visit_ident(name);
+			if let Some(ty) = default {
+				v.visit_ty(ty);
+			}
 		}
 	}
 

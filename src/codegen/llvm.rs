@@ -16,10 +16,10 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	ast, bug,
-	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
+	codegen::{Backend, CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, ExprId, Function, Struct},
 	resolve::DefId,
-	session::{PrintKind, ScxHandle, SessionCtx},
+	session::{ArtefactKind, ScxHandle, SessionCtx},
 	symbols::Symbol,
 	ty::{self, LateTy, TyCtx, TyKind},
 };
@@ -54,20 +54,19 @@ pub struct Generator<'tcx, 'ctx> {
 
 impl<'tcx> Generator<'tcx, '_> {
 	pub(crate) fn new_jit(tcx: &'tcx TyCtx<'_>) -> Self {
-		// TODO: do not leak
-		let context = Box::leak(Box::new(Context::create()));
-		Self::new(tcx, context)
+		Self::new(tcx)
 	}
 
 	pub(crate) fn new_object(tcx: &'tcx TyCtx<'_>) -> Self {
-		// TODO: do not leak
-		let context = Box::leak(Box::new(Context::create()));
-		Self::new(tcx, context)
+		Self::new(tcx)
 	}
 }
 
 impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
-	pub(crate) fn new(tcx: &'tcx TyCtx, ctx: &'ctx Context) -> Self {
+	pub(crate) fn new(tcx: &'tcx TyCtx) -> Self {
+		// TODO: do not leak
+		let ctx = Box::leak(Box::new(Context::create()));
+
 		let module = ctx.create_module("repl");
 
 		// TODO: mode to `new_jit` function
@@ -99,15 +98,16 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 			ty::TyKind::Primitive(kind) => match kind {
 				ty::PrimitiveKind::Unit => Some(self.empty_ty),
 				ty::PrimitiveKind::Never => None,
-				ty::PrimitiveKind::Bool => Some(self.ctx.i8_type().into()),
+				ty::PrimitiveKind::Bool => Some(self.ctx.bool_type().into()),
 				ty::PrimitiveKind::UnsignedInt | ty::PrimitiveKind::SignedInt => {
 					Some(self.ctx.i32_type().into())
 				}
 				ty::PrimitiveKind::Float => Some(self.ctx.f32_type().into()),
 				ty::PrimitiveKind::Str => todo!(),
 			},
-			ty::TyKind::Pointer(_kind) => todo!(),
-			ty::TyKind::Fn(_fn_decl) => Some(self.ctx.ptr_type(AddressSpace::default()).into()),
+			ty::TyKind::Pointer(..) | ty::TyKind::Fn(..) => {
+				Some(self.ctx.ptr_type(AddressSpace::default()).into())
+			}
 			ty::TyKind::Struct(enum_) => todo!(),
 			ty::TyKind::Enum(struct_) => todo!(),
 			ty::TyKind::Error => {
@@ -145,12 +145,10 @@ impl<'tcx, 'ctx> Generator<'tcx, 'ctx> {
 
 		generator.codegen_body(decl, body)?;
 
-		let name = format!("{}.ll", func_val.get_name().to_string_lossy());
-		self.tcx
-			.scx()
-			.register_artefact(&PrintKind::BackendIr, &name, |artefact| {
-				write!(artefact, "{}", func_val.print_to_string().to_string_lossy())
-			});
+		self.tcx.scx().register_artefact(
+			&ArtefactKind::BackendIr(def_id, Backend::Llvm),
+			|artefact| write!(artefact, "{}", func_val.print_to_string().to_string_lossy()),
+		);
 
 		if !func_val.verify(true) {
 			let name = func_val.get_name().to_string_lossy().into_owned();
@@ -315,8 +313,9 @@ impl<'ctx> Generator<'_, 'ctx> {
 	) -> Result<FunctionValue<'ctx>> {
 		let fn_ty = self.lower_signature(decl);
 
-		let name = self.tcx.scx().symbols.resolve(name);
-		let fn_val = self.module.add_function(&name, fn_ty, None);
+		let fn_val = self
+			.module
+			.add_function(&self.tcx.scx().symbols.resolve(name), fn_ty, None);
 
 		// set arguments name
 		fn_val
@@ -469,27 +468,33 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				MaybeValue::Value(val)
 			}
 			hir::ExprKind::LiteralInt { sym } => {
-				let sym = self.scx.symbols.resolve(*sym);
+				let number = {
+					let lit = self.scx.symbols.resolve(*sym);
+					lit.parse::<u64>().unwrap()
+				};
 
 				let ty = &self.typeck_results[&expr.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 
 				let value = ty
 					.into_int_type()
-					.const_int(sym.parse::<u64>().unwrap(), true)
+					.const_int(number, true)
 					.as_basic_value_enum();
 
 				MaybeValue::Value(value)
 			}
 			hir::ExprKind::LiteralFloat { sym } => {
-				let sym = self.scx.symbols.resolve(*sym);
+				let number = {
+					let lit = self.scx.symbols.resolve(*sym);
+					lit.parse::<f64>().unwrap()
+				};
 
 				let ty = &self.typeck_results[&expr.expr_id()];
 				let ty = self.to_llvm_type(ty).unwrap();
 
 				let value = ty
 					.into_float_type()
-					.const_float(sym.parse::<f64>().unwrap())
+					.const_float(number)
 					.as_basic_value_enum();
 
 				MaybeValue::Value(value)

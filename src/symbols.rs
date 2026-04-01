@@ -1,7 +1,7 @@
 use core::fmt;
 use std::num::NonZero;
 
-use parking_lot::RwLock;
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use string_interner::Symbol as _;
 use string_interner::{StringInterner, backend::StringBackend};
 
@@ -109,6 +109,7 @@ define_symbols! {
 		link,
 		no_core,
 		no_std,
+		path,
 	}
 }
 
@@ -208,11 +209,10 @@ impl SymbolInterner {
 		self.inner.write().get_or_intern(symbol)
 	}
 
-	#[must_use]
-	pub(crate) fn resolve(&self, symbol: Symbol) -> String {
-		match self.inner.read().resolve(symbol) {
-			Some(s) => s.to_owned(),
+	pub(crate) fn resolve(&'_ self, symbol: Symbol) -> MappedRwLockReadGuard<'_, str> {
+		RwLockReadGuard::map(self.inner.read(), |s| match s.resolve(symbol) {
+			Some(s) => s,
 			None => bug!("there is a single symbol interner, thus all symbol are valid"),
-		}
+		})
 	}
 }

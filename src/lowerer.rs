@@ -13,7 +13,7 @@ use crate::{
 	hir::{self, Path, PathSegment},
 	pretty_print,
 	resolve::{DefId, EarlyResolution, LangItem, Resolution},
-	session::{DcxHandle, Diagnostic, DiagnosticCtx, PrintKind, SessionCtx, Span},
+	session::{ArtefactKind, DcxHandle, Diagnostic, DiagnosticCtx, SessionCtx, Span},
 	symbols::sym,
 };
 
@@ -26,10 +26,10 @@ pub(crate) fn lower_root(scx: &SessionCtx, source: &ast::Root) -> hir::Root {
 	let hir = source.lower(&mut l);
 	scx.node_id_to_hir_id.put(l.node_id_to_hir_id);
 
-	scx.register_artefact(&PrintKind::HigherIr, "hir.txt", |artefact| {
+	scx.register_artefact(&ArtefactKind::HigherIr(()), |artefact| {
 		write!(artefact, "{hir:#?}")
 	});
-	scx.register_artefact(&PrintKind::HigherIrPretty, "hir-pretty.txt", |artefact| {
+	scx.register_artefact(&ArtefactKind::HigherIrPretty(()), |artefact| {
 		pretty_print::pretty_print(&hir, artefact)
 	});
 
@@ -129,17 +129,31 @@ impl Lower for ast::Attr {
 		let Self {
 			path,
 			meta,
+			kind: _,
 			span,
 			id,
 		} = &self;
 		hir::Attr {
-			path: lower_attr_path(l, path),
+			path: path.lower(l),
 			meta: meta.lower(l),
 			span: *span,
 			id: id.lower(l),
 		}
 	}
 }
+
+impl Lower for ast::AttrPath {
+	type Out = hir::AttrPath;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { segments, span, id } = &self;
+		hir::AttrPath {
+			segments: segments.clone(),
+			span: *span,
+			resolved: l.resolution_map[id].lower(l),
+		}
+	}
+}
+
 impl Lower for ast::AttrMeta {
 	type Out = hir::AttrMeta;
 	fn lower(&self, l: &mut Lowerer) -> Self::Out {
@@ -199,7 +213,7 @@ impl Lower for ast::ItemKind {
 				fields,
 			} => hir::ItemKind::Struct(hir::Struct {
 				name: *name,
-				generics: generics.clone(),
+				generics: generics.lower(l),
 				fields: fields.iter().lower_iter(l).collect(),
 			}),
 			Self::Enum {
@@ -208,7 +222,7 @@ impl Lower for ast::ItemKind {
 				variants,
 			} => hir::ItemKind::Enum(hir::Enum {
 				name: *name,
-				generics: generics.clone(),
+				generics: generics.lower(l),
 				variants: variants.iter().lower_iter(l).collect(),
 			}),
 
@@ -220,7 +234,7 @@ impl Lower for ast::ItemKind {
 				let scx = l.scx;
 				hir::ItemKind::Trait {
 					name: *name,
-					generics: generics.clone(),
+					generics: generics.lower(l),
 					members: members
 						.iter()
 						.lower_iter(l)
@@ -691,6 +705,29 @@ impl Lower for ast::TyKind {
 	}
 }
 
+impl Lower for ast::Generics {
+	type Out = hir::Generics;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { idents, span } = &self;
+		hir::Generics {
+			idents: idents.iter().lower_iter(l).collect(),
+			span: *span,
+		}
+	}
+}
+
+impl Lower for ast::Generic {
+	type Out = hir::Generic;
+	fn lower(&self, l: &mut Lowerer) -> Self::Out {
+		let Self { name, default, id } = &self;
+		hir::Generic {
+			name: *name,
+			default: l.lower_opt(default.as_ref()),
+			id: id.lower(l),
+		}
+	}
+}
+
 fn lower_unary(l: &mut Lowerer, op: Spanned<ast::UnaryOp>, expr: &ast::Expr) -> hir::ExprKind {
 	// let lang_item = match op.bit {
 	// 	ast::UnaryOp::Not => todo!(),
@@ -826,31 +863,6 @@ fn lower_short_circuit(
 		cond: left.lower_box(l),
 		conseq,
 		altern: Some(altern),
-	}
-}
-
-fn lower_attr_path(l: &Lowerer<'_>, ast::Path { segments, span, id }: &ast::Path) -> hir::AttrPath {
-	let segments = segments
-		.iter()
-		.map(
-			|ast::PathSegment {
-			     name,
-			     generics,
-			     span,
-			 }| {
-				if !generics.params.is_empty() {
-					let report = errors::lowerer::generic_in_attr_path(generics.span);
-					l.scx.dcx().emit_build(report);
-				}
-				*name
-			},
-		)
-		.collect();
-
-	hir::AttrPath {
-		segments,
-		span: *span,
-		resolved: todo!("add resolution kind for attributes"),
 	}
 }
 

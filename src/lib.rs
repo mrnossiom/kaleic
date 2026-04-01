@@ -1,5 +1,6 @@
 //! # Kaleidoscope
 
+pub mod attrs;
 pub mod driver;
 pub mod errors;
 pub mod pretty_print;

@@ -3,6 +3,8 @@ use ariadne::{Label, ReportKind};
 use crate::session::{Report, ReportBuilder, Span};
 
 pub(crate) mod parser {
+	use std::path::Path;
+
 	use crate::lexer::{Token, TokenKind};
 
 	use super::*;
@@ -24,6 +26,34 @@ pub(crate) mod parser {
 				Label::new(token.span)
 					.with_message(format!("found {} that was unexpected", token.kind)),
 			)
+	}
+
+	pub fn module_multiple_candidates(
+		name_span: Span,
+		child_path: &Path,
+		sibling_path: &Path,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, name_span)
+			.with_message(format!(
+				"found both {} and {} as possible candidates",
+				child_path.display(),
+				sibling_path.display()
+			))
+			.with_label(Label::new(name_span).with_message("while trying to load this module"))
+	}
+
+	pub fn module_no_candidates(
+		name_span: Span,
+		child_path: &Path,
+		sibling_path: &Path,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, name_span)
+			.with_message(format!(
+				"searched for {} and {} as possible candidates, but found none",
+				child_path.display(),
+				sibling_path.display()
+			))
+			.with_label(Label::new(name_span).with_message("while trying to load this module"))
 	}
 }
 
@@ -181,5 +211,15 @@ pub(crate) mod ty {
 			))
 			.with_label(Label::new(original).with_message("this is the first item encountered"))
 			.with_label(Label::new(conflicted).with_message("this item has the same name"))
+	}
+
+	pub fn no_main_function() -> ReportBuilder {
+		Report::build(ReportKind::Error, Span::DUMMY).with_message("no main function")
+	}
+
+	pub fn main_function_wrong_signature(fn_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, fn_span)
+			.with_message("main function doesn't match the expected signature")
+			.with_label(Label::new(fn_span).with_message("here"))
 	}
 }

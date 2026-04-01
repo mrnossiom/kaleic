@@ -69,8 +69,16 @@ pub(crate) struct Root {
 
 #[derive(Debug)]
 pub(crate) struct Attr {
-	pub(crate) path: Path,
+	pub(crate) path: AttrPath,
 	pub(crate) meta: AttrMeta,
+	pub(crate) kind: AttrKind,
+	pub(crate) span: Span,
+	pub(crate) id: NodeId,
+}
+
+#[derive(Debug)]
+pub(crate) struct AttrPath {
+	pub(crate) segments: Vec<Ident>,
 	pub(crate) span: Span,
 	pub(crate) id: NodeId,
 }
@@ -84,6 +92,15 @@ pub(crate) enum AttrMeta {
 	Map(Vec<Expr>),
 	/// `#path[blah1, blah2, blah3]`
 	List(Vec<Expr>),
+}
+
+/// What should the attr attach to
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum AttrKind {
+	/// `##path`
+	Parent,
+	/// `#path`
+	Next,
 }
 
 #[derive(Debug)]
@@ -287,13 +304,13 @@ pub(crate) struct Param {
 	pub(crate) id: NodeId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Ty {
 	pub(crate) kind: TyKind,
 	pub(crate) span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TyKind {
 	/// See [`Path`]
 	Path(Path),
@@ -308,21 +325,21 @@ pub(crate) enum TyKind {
 	Unit,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Path {
 	pub(crate) segments: Vec<PathSegment>,
 	pub(crate) span: Span,
 	pub(crate) id: NodeId,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PathSegment {
 	pub(crate) name: Ident,
 	pub(crate) generics: GenericParams,
 	pub(crate) span: Span,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GenericParams {
 	pub(crate) params: Vec<Ty>,
 	pub(crate) span: Span,
@@ -333,13 +350,6 @@ impl Path {
 	pub(crate) fn simple(&self) -> Ident {
 		assert_eq!(self.segments.len(), 1);
 		self.segments[0].name
-	}
-
-	pub(crate) fn is_match(&self, path: &[Symbol]) -> bool {
-		self.segments.len() == path.len()
-			&& self.segments.iter().zip(path).all(|(segment, sym)| {
-				segment.name.sym == *sym && segment.generics.params.is_empty()
-			})
 	}
 }
 
@@ -392,6 +402,7 @@ pub(crate) struct Generics {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Generic {
 	pub(crate) name: Ident,
+	pub(crate) default: Option<Ty>,
 	pub(crate) id: NodeId,
 }
 
@@ -600,11 +611,12 @@ pub(crate) mod visit {
 		Attr {
 			path,
 			meta,
+			kind,
 			span: _,
 			id: _,
 		}: &Attr,
 	) {
-		v.visit_path(path);
+		// TODO: visit attr path
 		match meta {
 			AttrMeta::None => {}
 			AttrMeta::Tuple(exprs) | AttrMeta::Map(exprs) | AttrMeta::List(exprs) => {
@@ -907,8 +919,15 @@ pub(crate) mod visit {
 
 	pub fn visit_generics<V: Visitor>(v: &mut V, Generics { idents, span: _ }: &Generics) {
 		for generic in idents {
-			let Generic { name, id: _ } = generic;
+			let Generic {
+				name,
+				default,
+				id: _,
+			} = generic;
 			v.visit_ident(name);
+			if let Some(ty) = default {
+				v.visit_ty(ty);
+			}
 		}
 	}
 

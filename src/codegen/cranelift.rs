@@ -10,10 +10,10 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast::{self, BinaryOp},
 	bug,
-	codegen::{CodeGenBackend, JitBackend, ObjectBackend},
+	codegen::{Backend, CodeGenBackend, JitBackend, ObjectBackend},
 	hir::{self, Enum, ExprId, Function, Struct},
 	resolve::DefId,
-	session::{PrintKind, ScxHandle, SessionCtx},
+	session::{ArtefactKind, ScxHandle, SessionCtx},
 	symbols::Symbol,
 	ty::{self, LateTy, TyCtx, TyKind},
 };
@@ -140,10 +140,9 @@ impl<M: Module> Generator<'_, M> {
 
 		let signature = self.lower_signature(decl);
 
-		let func_name = self.tcx.scx().symbols.resolve(name);
 		let func_id = self
 			.module
-			.declare_function(&func_name, linkage, &signature)
+			.declare_function(&self.tcx.scx().symbols.resolve(name), linkage, &signature)
 			.unwrap();
 
 		self.functions.insert(def_id, func_id);
@@ -188,19 +187,10 @@ impl<M: Module> Generator<'_, M> {
 			.optimize(self.module.isa(), &mut ControlPlane::default())
 			.unwrap();
 
-		let name = format!(
-			"{:#?}.clif",
-			self.functions
-				.iter()
-				.find(|(k, v)| **v == func_id)
-				.unwrap()
-				.0
+		self.tcx.scx().register_artefact(
+			&ArtefactKind::BackendIr(def_id, Backend::Cranelift),
+			|artefact| write!(artefact, "{}", context.func.display()),
 		);
-		self.tcx
-			.scx()
-			.register_artefact(&PrintKind::BackendIr, &name, |artefact| {
-				write!(artefact, "{}", context.func.display())
-			});
 
 		self.module.define_function(func_id, &mut context).unwrap();
 
@@ -248,7 +238,7 @@ impl<M: Module> CodeGenBackend for Generator<'_, M> {
 
 				hir::ItemKind::Struct(Struct { .. }) | hir::ItemKind::Enum(Enum { .. }) => {
 					// TODO
-					// todo!("codegen constructors here?")
+					todo!("codegen constructors here?")
 				}
 				hir::ItemKind::TypeAlias(..) | hir::ItemKind::Trait { .. } => {}
 				hir::ItemKind::TraitImpl { .. } => {
@@ -432,31 +422,36 @@ impl FunctionGenerator<'_, '_> {
 	fn codegen_expr(&mut self, expr: &hir::Expr) -> Result<MaybeValue> {
 		let value = match &expr.kind {
 			hir::ExprKind::LiteralInt { sym } => {
-				let lit = self.scx.symbols.resolve(*sym);
+				let number = {
+					let lit = self.scx.symbols.resolve(*sym);
+					lit.parse::<i64>().unwrap()
+				};
+
 				let ty = &self.typeck_results[&expr.expr_id()];
 				let int_ty = self.to_cl_type(ty).unwrap();
-				let value = self
-					.builder
-					.ins()
-					.iconst(int_ty, lit.parse::<i64>().unwrap());
+				let value = self.builder.ins().iconst(int_ty, number);
 				MaybeValue::Value(value)
 			}
 			hir::ExprKind::LiteralFloat { sym } => {
-				let lit = self.scx.symbols.resolve(*sym);
+				let number = {
+					let lit = self.scx.symbols.resolve(*sym);
+					lit.parse::<f64>().unwrap()
+				};
 				let ty = &self.typeck_results[&expr.expr_id()];
 				let int_ty = self.to_cl_type(ty).unwrap();
 				// FIXME: take ty into account
-				let value = self.builder.ins().f64const(lit.parse::<f64>().unwrap());
+				let value = self.builder.ins().f64const(number);
 				MaybeValue::Value(value)
 			}
 			hir::ExprKind::LiteralStr { sym } => {
-				let lit = self.scx.symbols.resolve(*sym);
-				let data_id = self.module.declare_anonymous_data(false, false).unwrap();
 				let data = {
+					let lit = self.scx.symbols.resolve(*sym);
 					let mut data = DataDescription::new();
-					data.define(lit.into_boxed_str().into());
+					data.define(lit.to_owned().into_boxed_str().into());
 					data
 				};
+				let data_id = self.module.declare_anonymous_data(false, false).unwrap();
+
 				self.module.define_data(data_id, &data).unwrap();
 
 				let global_value = self.module.declare_data_in_func(data_id, self.builder.func);
@@ -495,13 +490,9 @@ impl FunctionGenerator<'_, '_> {
 
 				let call = if let hir::ExprKind::Access { path } = &expr.kind {
 					let item_id = path.resolved.into_def().unwrap();
-					let Some(func_id) = self.functions.get(&item_id) else {
-						panic!("did not define function yet")
-					};
+					let func_id = self.functions[&item_id];
 
-					let local_func = self
-						.module
-						.declare_func_in_func(*func_id, self.builder.func);
+					let local_func = self.module.declare_func_in_func(func_id, self.builder.func);
 
 					self.builder.ins().call(local_func, &argsz)
 				} else {

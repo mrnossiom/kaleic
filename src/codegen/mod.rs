@@ -12,7 +12,7 @@ pub(crate) use self::cranelift::Generator as CraneliftBackend;
 #[cfg(feature = "backend-llvm")]
 pub(crate) use self::llvm::Generator as LlvmBackend;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Backend {
 	#[cfg(feature = "backend-cranelift")]
 	Cranelift,

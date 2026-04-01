@@ -3,9 +3,10 @@ use std::{collections::hash_map::Entry, fmt, fmt::Write};
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast::{self, AttrMeta, ExprKind, NodeId, Visitor, visit},
+	ast::{self, NodeId, Visitor, visit},
+	attrs::{AttrParse, RegisterLangItem},
 	errors, hir,
-	session::{DcxHandle, Diagnostic, PrintKind, SessionCtx},
+	session::{ArtefactKind, DcxHandle, SessionCtx},
 	symbols::{Symbol, sym},
 };
 
@@ -20,11 +21,9 @@ pub(crate) fn collect_root(scx: &SessionCtx, ast: &ast::Root) {
 		..
 	} = collector;
 
-	scx.register_artefact(
-		&PrintKind::CollectedItems,
-		"name-environment.txt",
-		|artefact| writeln!(artefact, "{name_env:#?}"),
-	);
+	scx.register_artefact(&ArtefactKind::NameEnv(()), |artefact| {
+		writeln!(artefact, "{name_env:#?}")
+	});
 
 	scx.name_env.put(name_env);
 	scx.lang_items.put(lang_items);
@@ -82,7 +81,7 @@ pub(crate) enum TypeLangItem {
 }
 
 impl LangItem {
-	fn parse(sym: Symbol) -> Option<Self> {
+	pub(crate) fn parse(sym: Symbol) -> Option<Self> {
 		match sym {
 			sym::AddTrait => Some(Self::Trait(TraitLangItem::Add)),
 			sym::AddAssignTrait => Some(Self::Trait(TraitLangItem::AddAssign)),
@@ -175,23 +174,6 @@ impl Collector<'_> {
 			}
 		}
 	}
-
-	fn parse_lang_item(&self, item: &ast::Item, attr: &ast::Attr) -> Result<LangItem, Diagnostic> {
-		if let AttrMeta::Tuple(exprs) = &attr.meta
-			&& let [expr] = exprs.as_slice()
-			&& let ExprKind::LiteralStr { sym } = expr.kind
-		{
-			let Some(kind) = LangItem::parse(sym) else {
-				let report = errors::resolve::invalid_lang_item(expr.span);
-				return Err(Diagnostic::new(report));
-			};
-
-			Ok(kind)
-		} else {
-			let report = todo!("report wrong syntax for `lang_item` attr");
-			self.scx.dcx().emit_build(report);
-		}
-	}
 }
 
 impl visit::Visitor for Collector<'_> {
@@ -207,9 +189,11 @@ impl visit::Visitor for Collector<'_> {
 		let def_id = self.create_def(*id);
 
 		for attr in attrs {
-			if attr.path.is_match(&[sym::lang_item]) {
-				match self.parse_lang_item(item, attr) {
-					Ok(kind) => self.register_lang_item(kind, def_id),
+			if RegisterLangItem::match_path(&attr.path) {
+				match RegisterLangItem::parse(self.scx, attr) {
+					Ok(RegisterLangItem {
+						lang_item: lang_item_kind,
+					}) => self.register_lang_item(lang_item_kind, def_id),
 					Err(diag) => self.scx.dcx().emit(&diag),
 				}
 			}
@@ -234,7 +218,13 @@ impl visit::Visitor for Collector<'_> {
 			}
 			ast::ItemKind::ForeignMod { items } => self.visit_items(items),
 
-			ast::ItemKind::ExternUse { .. } | ast::ItemKind::TraitImpl { .. } => {
+			ast::ItemKind::ExternUse { .. } => {
+				todo!(
+					"packages are not yet developed, use \n#path(\"path/to/tube/lib.rs\")\nmod tube_name;"
+				)
+			}
+
+			ast::ItemKind::TraitImpl { .. } => {
 				// nothing to collect, type environment with collect trait
 				// implementations and method resolution will select the implementation
 			}
@@ -395,6 +385,7 @@ impl visit::Visitor for Resolver<'_> {
 				inline,
 			} => {
 				todo!()
+				// self.with_resolution_layer()
 			}
 			ast::ItemKind::Function(ast::Function {
 				decl,
