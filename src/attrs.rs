@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use crate::{
 	ast::{Attr, AttrMeta, AttrPath, ExprKind, Ident},
-	errors,
 	resolve::LangItem,
 	session::{Diagnostic, SessionCtx},
 	symbols::{Symbol, sym},
@@ -67,7 +66,7 @@ impl AttrParse for RegisterLangItem {
 			&& let ExprKind::LiteralStr { sym } = expr.kind
 		{
 			let Some(lang_item) = LangItem::parse(sym) else {
-				let report = errors::resolve::invalid_lang_item(expr.span);
+				let report = errors::invalid_lang_item(expr.span);
 				return Err(Diagnostic::new(report));
 			};
 
@@ -108,5 +107,17 @@ impl AttrParse for NoCore {
 		} else {
 			todo!()
 		}
+	}
+}
+
+mod errors {
+	use ariadne::{Label, ReportKind};
+
+	use crate::session::{Report, Span};
+
+	pub fn invalid_lang_item(lang_item_span: Span) -> ariadne::ReportBuilder<Span, ReportKind> {
+		Report::build(ReportKind::Error, lang_item_span)
+			.with_message("language item does not exist")
+			.with_label(Label::new(lang_item_span).with_message("here"))
 	}
 }

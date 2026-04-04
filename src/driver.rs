@@ -3,7 +3,7 @@ use std::{fs, process::Command};
 use ariadne::ReportKind;
 
 use crate::{
-	codegen, inference, lowerer, parser, resolve,
+	codegen, collect, inference, lowerer, parser, resolve,
 	session::{DcxHandle, Diagnostic, Report, SessionCtx, Span},
 	ty,
 };
@@ -32,7 +32,7 @@ pub fn pipeline(scx: &SessionCtx) {
 	let ast = parser::parse_root(scx, &source);
 	scx.dcx().check_sane_or_exit();
 
-	resolve::collect_root(scx, &ast);
+	collect::collect_root(scx, &ast);
 	resolve::resolve_root(scx, &ast);
 	let hir = lowerer::lower_root(scx, &ast);
 	scx.dcx().check_sane_or_exit();
@@ -47,7 +47,9 @@ pub fn pipeline(scx: &SessionCtx) {
 	scx.dcx().check_sane_or_exit();
 
 	// TODO: document pass outputs markdown
-	// if scx.options.document { }
+	// if scx.options.document {
+	// 	doc::document_tube(&tcx);
+	// }
 
 	// codegen hir bodies
 	if scx.options.jit {

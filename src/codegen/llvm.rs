@@ -17,8 +17,8 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast, bug,
 	codegen::{Backend, CodeGenBackend, JitBackend, ObjectBackend},
+	collect::DefId,
 	hir::{self, Enum, ExprId, Function, Struct},
-	resolve::DefId,
 	session::{ArtefactKind, ScxHandle, SessionCtx},
 	symbols::Symbol,
 	ty::{self, LateTy, TyCtx, TyKind},

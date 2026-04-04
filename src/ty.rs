@@ -8,10 +8,11 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::Ident,
-	bug, errors,
+	bug,
+	collect::{DefId, NameEnvironment},
 	hir::{self, ExprId, Visitor, visit},
 	inference::TypeVarId,
-	resolve::{DefId, LangItem, NameEnvironment, Resolution, TypeLangItem},
+	resolve::{LangItem, Resolution, TypeLangItem},
 	session::{ArtefactKind, DcxHandle, ScxHandle, SessionCtx, Span},
 };
 
@@ -395,7 +396,7 @@ mod visit_ty {
 	use rustc_hash::FxHashMap;
 
 	use crate::{
-		resolve::DefId,
+		collect::DefId,
 		ty::{EarlyItemTy, Enum, FieldDef, FnDecl, LateTy, Param, Struct, Variant, VariantKind},
 	};
 
@@ -599,7 +600,7 @@ impl visit::Visitor for TypeCollector<'_> {
 
 			hir::ItemKind::TypeAlias(hir::TypeAlias { name, alias }) => {
 				let Some(alias) = alias else {
-					let report = errors::ty::type_alias_empty(*span);
+					let report = errors::type_alias_empty(*span);
 					self.tcx.dcx().emit_build(report);
 					return;
 				};
@@ -647,7 +648,7 @@ impl visit::Visitor for TypeCollector<'_> {
 pub(crate) fn check_entrypoint(tcx: &TyCtx<'_>) {
 	let main_sym = tcx.scx().symbols.intern("main");
 	let Some(def_id) = tcx.name_env.values.get(&main_sym) else {
-		let report = errors::ty::no_main_function();
+		let report = errors::no_main_function();
 		tcx.dcx().emit_build(report);
 		return;
 	};
@@ -660,9 +661,37 @@ pub(crate) fn check_entrypoint(tcx: &TyCtx<'_>) {
 	});
 
 	if **main_ty != expected_main_ty {
-		let report = errors::ty::main_function_wrong_signature(todo!());
+		let report = errors::main_function_wrong_signature(todo!());
 		tcx.dcx().emit_build(report);
 	}
 
 	tcx.main_fn_id.put(*def_id);
+}
+
+pub(crate) mod errors {
+	use ariadne::{Label, ReportKind};
+
+	use crate::session::{Report, ReportBuilder, Span};
+
+	pub fn function_cannot_infer_signature(io_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, io_span)
+			.with_message("function cannot infer its signature")
+			.with_label(Label::new(io_span).with_message("specify a concrete type"))
+	}
+
+	pub fn type_alias_empty(item_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, item_span)
+			.with_message("type alias have to be defined outside trait definitions")
+			.with_label(Label::new(item_span).with_message("define this type alias"))
+	}
+
+	pub fn no_main_function() -> ReportBuilder {
+		Report::build(ReportKind::Error, Span::DUMMY).with_message("no main function")
+	}
+
+	pub fn main_function_wrong_signature(fn_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, fn_span)
+			.with_message("main function doesn't match the expected signature")
+			.with_label(Label::new(fn_span).with_message("here"))
+	}
 }

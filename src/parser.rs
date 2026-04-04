@@ -27,7 +27,6 @@ use crate::{
 		Variant, VariantKind,
 	},
 	attrs::{ModPath, NoCore, NoStd, try_parse_attr},
-	errors,
 	lexer::{Lexer, Token, TokenKind},
 	pretty_print,
 	session::{ArtefactKind, DcxHandle, Diagnostic, SessionCtx, SourceFile, Span},
@@ -216,7 +215,7 @@ impl Parser<'_> {
 			self.bump();
 			Ok(self.token)
 		} else {
-			let report = errors::parser::expected_token_kind(expected_kind, self.token);
+			let report = errors::expected_token_kind(expected_kind, self.token);
 			Err(Diagnostic::new(report))
 		}
 	}
@@ -230,7 +229,7 @@ impl Parser<'_> {
 	fn expect_ident(&mut self) -> Result<Id> {
 		self.eat_ident().ok_or_else(|| {
 			let placeholder = self.scx.symbols.intern("_");
-			let report = errors::parser::expected_token_kind(Ident(placeholder), self.token);
+			let report = errors::expected_token_kind(Ident(placeholder), self.token);
 			Diagnostic::new(report)
 		})
 	}
@@ -483,8 +482,7 @@ impl Parser<'_> {
 					arms: todo!("parse match expression"),
 				}
 			} else {
-				let report =
-					errors::parser::expected_construct_no_match("a postfix construct", self.token);
+				let report = errors::expected_construct_no_match("a postfix construct", self.token);
 				return Err(Diagnostic::new(report));
 			};
 
@@ -547,7 +545,7 @@ impl Parser<'_> {
 		} else if self.eat_kw(kw::Continue) {
 			self.parse_expr_continue()?
 		} else {
-			let report = errors::parser::expected_construct_no_match("an expression", self.token);
+			let report = errors::expected_construct_no_match("an expression", self.token);
 			return Err(Diagnostic::new(report));
 		};
 
@@ -695,7 +693,7 @@ impl Parser<'_> {
 			// TODO: recover to unsafe extern block
 			self.parse_item_extern_use()?
 		} else {
-			let report = errors::parser::expected_construct_no_match("an item", self.token);
+			let report = errors::expected_construct_no_match("an item", self.token);
 			return Err(Diagnostic::new(report));
 		};
 
@@ -725,10 +723,8 @@ impl Parser<'_> {
 		} else if self.eat(Semi) {
 			None
 		} else {
-			let report = errors::parser::expected_construct_no_match(
-				"a function body or a semicolon",
-				self.token,
-			);
+			let report =
+				errors::expected_construct_no_match("a function body or a semicolon", self.token);
 			return Err(Diagnostic::new(report));
 		};
 
@@ -751,8 +747,7 @@ impl Parser<'_> {
 		} else if self.eat(Semi) {
 			None
 		} else {
-			let report =
-				errors::parser::expected_construct_no_match("a type alias body", self.token);
+			let report = errors::expected_construct_no_match("a type alias body", self.token);
 			return Err(Diagnostic::new(report));
 		};
 
@@ -835,17 +830,13 @@ impl Parser<'_> {
 			(false, true) => child_path,
 			// Both files exist, so we can't load the scope
 			(true, true) => {
-				let report = errors::parser::module_multiple_candidates(
-					name.span,
-					&child_path,
-					&sibling_path,
-				);
+				let report =
+					errors::module_multiple_candidates(name.span, &child_path, &sibling_path);
 				return Err(Diagnostic::new(report));
 			}
 			// Neither file exists, so we can't load the scope
 			(false, false) => {
-				let report =
-					errors::parser::module_no_candidates(name.span, &child_path, &sibling_path);
+				let report = errors::module_no_candidates(name.span, &child_path, &sibling_path);
 				return Err(Diagnostic::new(report));
 			}
 		};
@@ -888,8 +879,7 @@ impl Parser<'_> {
 		} else if self.eat(Semi) {
 			Vec::new()
 		} else {
-			let report =
-				errors::parser::expected_construct_no_match("a struct definition", self.token);
+			let report = errors::expected_construct_no_match("a struct definition", self.token);
 			return Err(Diagnostic::new(report));
 		};
 
@@ -1145,6 +1135,7 @@ impl Parser<'_> {
 
 		self.expect(Kw(kw::Use))?;
 		let name = self.expect_ident()?;
+		self.expect(Semi)?;
 
 		Ok(ItemKind::ExternUse { name })
 	}
@@ -1162,7 +1153,7 @@ impl Parser<'_> {
 		// } else if self.eat(Ampersand) {
 		// 	self.parse_ty_reference()?
 		} else {
-			let report = errors::parser::expected_construct_no_match("a type", self.token);
+			let report = errors::expected_construct_no_match("a type", self.token);
 			return Err(Diagnostic::new(report));
 		};
 
@@ -1325,5 +1316,63 @@ impl Parser<'_> {
 			span: self.close_span(lo),
 			id: self.make_node_id(),
 		})
+	}
+}
+
+mod errors {
+	use std::path::Path;
+
+	use ariadne::{Label, ReportKind};
+
+	use crate::{
+		lexer::{Token, TokenKind},
+		session::{Report, ReportBuilder, Span},
+	};
+
+	pub fn expected_token_kind(expected: TokenKind, actual: Token) -> ReportBuilder {
+		Report::build(ReportKind::Error, actual.span)
+			.with_message(format!("expected {expected}"))
+			.with_label(
+				Label::new(actual.span)
+					.with_message(format!("found {} that was unexpected", actual.kind)),
+			)
+	}
+
+	/// Construct should fit in the sentence "expected {}"
+	pub fn expected_construct_no_match(construct: &str, token: Token) -> ReportBuilder {
+		Report::build(ReportKind::Error, token.span)
+			.with_message(format!("expected {construct}"))
+			.with_label(
+				Label::new(token.span)
+					.with_message(format!("found {} that was unexpected", token.kind)),
+			)
+	}
+
+	pub fn module_multiple_candidates(
+		name_span: Span,
+		child_path: &Path,
+		sibling_path: &Path,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, name_span)
+			.with_message(format!(
+				"found both {} and {} as possible candidates",
+				child_path.display(),
+				sibling_path.display()
+			))
+			.with_label(Label::new(name_span).with_message("while trying to load this module"))
+	}
+
+	pub fn module_no_candidates(
+		name_span: Span,
+		child_path: &Path,
+		sibling_path: &Path,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, name_span)
+			.with_message(format!(
+				"searched for {} and {} as possible candidates, but found none",
+				child_path.display(),
+				sibling_path.display()
+			))
+			.with_label(Label::new(name_span).with_message("while trying to load this module"))
 	}
 }

@@ -20,8 +20,9 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast, bug,
 	codegen::{Backend, Linker},
+	collect::{DefId, NameEnvironment},
 	hir,
-	resolve::{DefId, EarlyResolution, LangItem, NameEnvironment},
+	resolve::{EarlyResolution, LangItem},
 	symbols::SymbolInterner,
 	ty::Put,
 };

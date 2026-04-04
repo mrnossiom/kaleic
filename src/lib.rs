@@ -2,7 +2,6 @@
 
 pub mod attrs;
 pub mod driver;
-pub mod errors;
 pub mod pretty_print;
 pub mod session;
 pub mod symbols;
@@ -11,11 +10,13 @@ pub mod ast;
 pub mod lexer;
 pub mod parser;
 
+pub mod collect;
 pub mod hir;
-pub mod inference;
 pub mod lowerer;
-
 pub mod resolve;
+
+pub mod doc;
+pub mod inference;
 pub mod ty;
 
 pub mod codegen;

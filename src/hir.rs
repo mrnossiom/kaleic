@@ -4,7 +4,8 @@ use std::fmt;
 
 use crate::{
 	ast::{BinaryOp, Ident, Spanned, UnaryOp},
-	resolve::{self, DefId},
+	collect::DefId,
+	resolve,
 	session::Span,
 	symbols::Symbol,
 };

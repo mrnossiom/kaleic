@@ -9,10 +9,10 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, Spanned},
-	errors,
+	collect::DefId,
 	hir::{self, Path, PathSegment},
 	pretty_print,
-	resolve::{DefId, EarlyResolution, LangItem, Resolution},
+	resolve::{EarlyResolution, LangItem, Resolution},
 	session::{ArtefactKind, DcxHandle, Diagnostic, DiagnosticCtx, SessionCtx, Span},
 	symbols::sym,
 };
@@ -288,7 +288,7 @@ impl TryFrom<hir::Item> for hir::Item<hir::TraitItemKind> {
 			hir::ItemKind::Function(func) => hir::TraitItemKind::Function(func),
 			hir::ItemKind::TypeAlias(ty) => hir::TraitItemKind::TypeAlias(ty),
 			_ => {
-				let diag = Diagnostic::new(errors::lowerer::incorrect_item_in_trait(span));
+				let diag = Diagnostic::new(errors::incorrect_item_in_trait(span));
 				return Err(diag);
 			}
 		};
@@ -312,7 +312,7 @@ impl TryFrom<hir::Item> for hir::Item<hir::ForeignItemKind> {
 			hir::ForeignItemKind::Function(func)
 		} else {
 			// FIXME: adapt diagnostic
-			let diag = Diagnostic::new(errors::lowerer::incorrect_item_in_trait(span));
+			let diag = Diagnostic::new(errors::incorrect_item_in_trait(span));
 			return Err(diag);
 		};
 		Ok(Self {
@@ -359,7 +359,7 @@ impl Lower for ast::Block {
 					continue;
 				}
 				Some(StmtOrRet::Ret(expr)) => {
-					let report = errors::lowerer::no_semicolon_mid_block(expr.span);
+					let report = errors::no_semicolon_mid_block(expr.span);
 					l.scx.dcx().emit_build(report);
 
 					// recover like there was a semicolon
@@ -878,4 +878,30 @@ fn make_unit(l: &Lowerer<'_>, span: Span) -> hir::Expr {
 fn make_new_node_id() -> hir::NodeId {
 	static NEXT_NODE_ID: AtomicU32 = AtomicU32::new(0);
 	hir::NodeId::new(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+mod errors {
+	use ariadne::{Label, ReportKind};
+
+	use crate::session::{Report, ReportBuilder, Span};
+
+	pub fn no_semicolon_mid_block(expr_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, expr_span)
+			.with_message("expression is missing a semicolon but is not at the end")
+			.with_label(Label::new(expr_span.end()).with_message("here"))
+			.with_message("you may need to add a semicolon at the end of the expression")
+	}
+
+	pub fn incorrect_item_in_trait(item_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, item_span)
+			.with_message("invalid item in trait definition".to_string())
+			.with_label(Label::new(item_span).with_message("found an item that was unexpected"))
+			.with_help("only type definitions and functions are allowed")
+	}
+
+	pub fn generic_in_attr_path(generics: Span) -> ariadne::ReportBuilder<Span, ReportKind> {
+		Report::build(ReportKind::Error, generics)
+			.with_message("attribute paths cannot contain generics".to_string())
+			.with_label(Label::new(generics).with_message("remove these generics"))
+	}
 }

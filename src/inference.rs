@@ -4,9 +4,9 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, UnaryOp},
-	errors,
+	collect::{DefId, NameEnvironment},
 	hir::{self, ExprId, ExprKind, Function, Visitor},
-	resolve::{DefId, NameEnvironment, Resolution},
+	resolve::Resolution,
 	session::{DcxHandle, Span},
 	ty::{self, Infer, InferExprTy, InferKind, LateTy, Param, PrimitiveKind, TyCtx, TyKind},
 };
@@ -113,8 +113,8 @@ mod visit_ty {
 
 	use rustc_hash::FxHashMap;
 
+	use super::errors;
 	use crate::{
-		errors,
 		inference::TypeVarId,
 		session::{DcxHandle, Span},
 		ty::{
@@ -144,7 +144,7 @@ mod visit_ty {
 					ty
 				} else {
 					let span = ctx.ty_var_expr_map[&infer.tvid];
-					let report = errors::ty::report_unconstrained(span);
+					let report = errors::report_unconstrained(span);
 					ctx.tcx.dcx().emit_build(report);
 					LateTy::Error
 				}
@@ -283,7 +283,7 @@ impl Inferer<'_> {
 				if let Some(ty) = self.type_env.get(&def_id) {
 					ty.as_infer()
 				} else {
-					let report = errors::ty::variable_not_in_scope(var.span);
+					let report = errors::variable_not_in_scope(var.span);
 					self.tcx.dcx().emit_build(report);
 					TyKind::Error
 				}
@@ -410,14 +410,13 @@ impl Inferer<'_> {
 				let expr_ty = self.infer_expr(expr);
 
 				let TyKind::Fn(func) = expr_ty else {
-					let report =
-						errors::ty::tried_to_call_non_function(expr.span, args.span, &expr_ty);
+					let report = errors::tried_to_call_non_function(expr.span, args.span, &expr_ty);
 					self.tcx.dcx().emit_build(report);
 					return TyKind::Error;
 				};
 
 				if func.inputs.len() != args.bit.len() {
-					let report = errors::ty::function_nb_args_mismatch(
+					let report = errors::function_nb_args_mismatch(
 						args.span,
 						func.inputs.len(),
 						args.bit.len(),
@@ -529,7 +528,7 @@ impl Inferer<'_> {
 			(_, _) if expected == actual => expected.clone(),
 
 			(_, _) => {
-				let report = errors::ty::unification_mismatch(expected, actual);
+				let report = errors::unification_mismatch(expected, actual);
 				self.tcx.dcx().emit_build(report);
 				TyKind::Error
 			}
@@ -549,7 +548,7 @@ impl Inferer<'_> {
 				if infer.kind == actual_infer.kind {
 					TyKind::Infer(*actual_infer)
 				} else {
-					let report = errors::ty::infer_kind_unification_mismatch(
+					let report = errors::infer_kind_unification_mismatch(
 						infer.kind,
 						self.ty_var_expr_map[&infer.tvid],
 						actual_infer.kind,
@@ -560,7 +559,7 @@ impl Inferer<'_> {
 				}
 			}
 			(_, ty) => {
-				let report = errors::ty::infer_ty_unification_mismatch(
+				let report = errors::infer_ty_unification_mismatch(
 					infer.kind,
 					self.ty_var_expr_map[&infer.tvid],
 					ty,
@@ -574,5 +573,90 @@ impl Inferer<'_> {
 		self.infer_map.insert(infer.tvid, unified.clone());
 
 		unified
+	}
+}
+
+mod errors {
+	use ariadne::{Color, Label, ReportKind};
+
+	use crate::{
+		session::{Report, ReportBuilder, Span},
+		ty::{InferExprTy, InferKind},
+	};
+
+	pub fn report_unconstrained(ty_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, ty_span)
+			.with_message("expression's type is unconstrained, need type annotations")
+			.with_label(Label::new(ty_span).with_message("here"))
+	}
+
+	pub fn variable_not_in_scope(ident_span: Span) -> ReportBuilder {
+		Report::build(ReportKind::Error, ident_span)
+			.with_message("variable is not in scope")
+			.with_label(Label::new(ident_span).with_message("unknown variable"))
+	}
+
+	pub fn function_nb_args_mismatch(
+		call_span: Span,
+		expected_nb: usize,
+		actual_nb: usize,
+		// def_span: Span,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, call_span)
+			.with_message("wrong number of arguments to this function")
+			.with_label(Label::new(call_span).with_message(format!(
+				"expect {expected_nb} arguments but got {actual_nb}"
+			)))
+		// TODO: show definition of the original function
+		// .with_label(Label::new(def_span).with_message("here is the original definition"))
+	}
+
+	pub fn tried_to_call_non_function(
+		expr_span: Span,
+		call_span: Span,
+		actual_ty: &InferExprTy,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, expr_span)
+			.with_message("tried to call an expression that is not a function")
+			.with_label(Label::new(expr_span).with_message(format!(
+				"this is expected to be a function, but is {actual_ty}"
+			)))
+			.with_label(Label::new(call_span).with_message("this is the call"))
+	}
+
+	pub fn unification_mismatch(expected: &InferExprTy, actual: &InferExprTy) -> ReportBuilder {
+		todo!("ty mismatch `{expected}` vs. `{actual}`");
+	}
+
+	pub fn infer_kind_unification_mismatch(
+		infer: InferKind,
+		infer_span: Span,
+		actual_infer: InferKind,
+		actual_infer_span: Span,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, infer_span)
+			.with_message("mismatched types")
+			.with_label(
+				Label::new(actual_infer_span)
+					.with_message(format!("expected {infer}, found {actual_infer}"))
+					.with_color(Color::Red),
+			)
+			.with_label(
+				Label::new(infer_span)
+					.with_message("expected because of this expression")
+					.with_color(Color::Blue),
+			)
+	}
+
+	pub fn infer_ty_unification_mismatch(
+		infer: InferKind,
+		infer_span: Span,
+		ty: &InferExprTy,
+		ty_span: Span,
+	) -> ReportBuilder {
+		Report::build(ReportKind::Error, infer_span)
+			.with_message("mismatched types")
+			.with_label(Label::new(infer_span).with_message(format!("expected {infer}")))
+			.with_label(Label::new(ty_span).with_message(format!("found {ty}")))
 	}
 }
