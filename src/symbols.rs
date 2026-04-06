@@ -56,6 +56,7 @@ define_symbols! {
 		And: "and",
 		Break: "break",
 		Continue: "continue",
+		Crate: "crate",
 		Def: "def",
 		Else: "else",
 		Enum: "enum",
@@ -79,6 +80,7 @@ define_symbols! {
 		Use: "use",
 		While: "while",
 
+		SelfTy: "Self",
 		Underscore: "_",
 	},
 	symbols {
@@ -97,6 +99,11 @@ define_symbols! {
 		AddAssignTrait,
 		SubTrait,
 		SubAssignTrait,
+		MulTrait,
+		MulAssignTrait,
+		DivTrait,
+		DivAssignTrait,
+		NotTrait,
 
 		bool_ty,
 		float_ty,

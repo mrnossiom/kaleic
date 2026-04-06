@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
 	ast::{Attr, AttrMeta, AttrPath, ExprKind, Ident},
-	resolve::LangItem,
+	collect::LangItem,
 	session::{Diagnostic, SessionCtx},
 	symbols::{Symbol, sym},
 };

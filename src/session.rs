@@ -20,10 +20,10 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast, bug,
 	codegen::{Backend, Linker},
-	collect::{DefId, NameEnvironment},
+	collect::{DefId, LangItem, ModuleId, NameEnvironment},
 	hir,
-	resolve::{EarlyResolution, LangItem},
-	symbols::SymbolInterner,
+	resolve::PartialRes,
+	symbols::{Symbol, SymbolInterner},
 	ty::Put,
 };
 
@@ -113,8 +113,9 @@ pub struct SessionCtx {
 	pub(crate) name_env: Put<NameEnvironment>,
 	pub(crate) lang_items: Put<FxHashMap<LangItem, DefId>>,
 	pub(crate) node_id_to_def_id: Put<FxHashMap<ast::NodeId, DefId>>,
+	pub(crate) modules: Put<FxHashMap<(ModuleId, Symbol), ModuleId>>,
 	// resolve
-	pub(crate) resolution_map: Put<FxHashMap<ast::NodeId, EarlyResolution>>,
+	pub(crate) resolutions: Put<FxHashMap<ast::NodeId, PartialRes>>,
 	// lower
 	pub(crate) node_id_to_hir_id: Put<FxHashMap<ast::NodeId, hir::NodeId>>,
 }
@@ -133,7 +134,8 @@ impl SessionCtx {
 			name_env: Put::default(),
 			lang_items: Put::default(),
 			node_id_to_def_id: Put::default(),
-			resolution_map: Put::default(),
+			modules: Put::default(),
+			resolutions: Put::default(),
 			node_id_to_hir_id: Put::default(),
 		}
 	}

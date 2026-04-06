@@ -9,11 +9,12 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast::Ident,
 	bug,
-	collect::{DefId, NameEnvironment},
+	collect::{DefId, LangItem, ModuleId, NameEnvironment, Namespace, TypeLangItem},
 	hir::{self, ExprId, Visitor, visit},
 	inference::TypeVarId,
-	resolve::{LangItem, Resolution, TypeLangItem},
+	resolve::Res,
 	session::{ArtefactKind, DcxHandle, ScxHandle, SessionCtx, Span},
+	symbols::sym,
 };
 
 #[derive(Debug)]
@@ -502,10 +503,14 @@ impl TypeCollector<'_> {
 	pub(crate) fn lower_ty(&self, ty: &hir::Ty) -> EarlyItemTy {
 		let _ = self;
 		match &ty.kind {
-			hir::TyKind::Path(path) => match path.resolved {
-				Resolution::Def(def_id) => TyKind::Ref(def_id),
-				Resolution::Local(id) => todo!("no generics rn"),
-				Resolution::Error => todo!(),
+			hir::TyKind::Path(qpath) => match qpath {
+				hir::QualifiedPath::Resolved(path) => match path.res {
+					Res::Def(def_id) => TyKind::Ref(def_id),
+					Res::Local(id) => todo!("no generics rn"),
+					Res::SelfTy => todo!(),
+					Res::Error => todo!(),
+				},
+				hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
 			},
 			hir::TyKind::Pointer(ty) => TyKind::Pointer(Rc::new(self.lower_ty(ty))),
 			hir::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
@@ -588,8 +593,8 @@ impl visit::Visitor for TypeCollector<'_> {
 				members,
 			} => {
 				// register trait impl for the mentioned type
-				let type_def_id = type_.resolved.into_def().unwrap();
-				let trait_def_id = trait_.resolved.into_def().unwrap();
+				let type_def_id = type_.res.into_def().unwrap();
+				let trait_def_id = trait_.res.into_def().unwrap();
 				self.trait_impls
 					.entry(type_def_id)
 					.or_default()
@@ -646,8 +651,8 @@ impl visit::Visitor for TypeCollector<'_> {
 }
 
 pub(crate) fn check_entrypoint(tcx: &TyCtx<'_>) {
-	let main_sym = tcx.scx().symbols.intern("main");
-	let Some(def_id) = tcx.name_env.values.get(&main_sym) else {
+	let main_path = (ModuleId::ROOT, sym::main);
+	let Some(def_id) = tcx.name_env[Namespace::Value].get(&main_path) else {
 		let report = errors::no_main_function();
 		tcx.dcx().emit_build(report);
 		return;

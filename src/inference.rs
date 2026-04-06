@@ -6,7 +6,7 @@ use crate::{
 	ast::{self, UnaryOp},
 	collect::{DefId, NameEnvironment},
 	hir::{self, ExprId, ExprKind, Function, Visitor},
-	resolve::Resolution,
+	resolve::Res,
 	session::{DcxHandle, Span},
 	ty::{self, Infer, InferExprTy, InferKind, LateTy, Param, PrimitiveKind, TyCtx, TyKind},
 };
@@ -267,19 +267,28 @@ fn typeck_fn(
 impl Inferer<'_> {
 	fn lower_ty(&self, ty: &hir::Ty) -> InferExprTy {
 		match &ty.kind {
-			hir::TyKind::Path(path) => match path.resolved {
-				Resolution::Def(def_id) => self.type_env[&def_id].as_infer(),
-				Resolution::Local(id) => todo!("no generics rn"),
-				Resolution::Error => todo!(),
+			hir::TyKind::Path(qpath) => match qpath {
+				hir::QualifiedPath::Resolved(path) => match path.res {
+					Res::Def(def_id) => self.type_env[&def_id].as_infer(),
+					Res::Local(id) => todo!("no generics rn"),
+					Res::SelfTy => todo!(),
+					Res::Error => todo!(),
+				},
+				hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
 			},
 			hir::TyKind::Pointer(ty) => TyKind::Pointer(Rc::new(self.lower_ty(ty))),
 			hir::TyKind::Unit => TyKind::Primitive(PrimitiveKind::Unit),
 		}
 	}
 
-	fn resolve_var_ty(&self, var: &hir::Path) -> InferExprTy {
-		match var.resolved {
-			Resolution::Def(def_id) => {
+	fn resolve_var_ty(&self, var: &hir::QualifiedPath) -> InferExprTy {
+		let var = match var {
+			hir::QualifiedPath::Resolved(path) => path,
+			hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
+		};
+
+		match var.res {
+			Res::Def(def_id) => {
 				if let Some(ty) = self.type_env.get(&def_id) {
 					ty.as_infer()
 				} else {
@@ -288,7 +297,7 @@ impl Inferer<'_> {
 					TyKind::Error
 				}
 			}
-			Resolution::Local(hir_id) => {
+			Res::Local(hir_id) => {
 				if let Some(ty) = self.local_env.get(&hir_id) {
 					// search in the locals defined, respecting shadowing
 					ty.deref().clone()
@@ -296,7 +305,7 @@ impl Inferer<'_> {
 					todo!()
 				}
 			}
-			Resolution::Error => todo!(),
+			Res::SelfTy | Res::Error => todo!(),
 		}
 	}
 
@@ -366,7 +375,7 @@ impl Inferer<'_> {
 
 	fn infer_expr(&mut self, expr @ hir::Expr { kind, span, id: _ }: &hir::Expr) -> InferExprTy {
 		let ty = match kind {
-			hir::ExprKind::Access { path } => self.resolve_var_ty(path),
+			hir::ExprKind::Access { qpath } => self.resolve_var_ty(qpath),
 			hir::ExprKind::LiteralStr { sym } => TyKind::Primitive(PrimitiveKind::Str),
 			hir::ExprKind::LiteralInt { sym } => self.make_infer_ty(*span, InferKind::Integer),
 			hir::ExprKind::LiteralFloat { sym } => self.make_infer_ty(*span, InferKind::Float),
@@ -450,14 +459,14 @@ impl Inferer<'_> {
 
 				self.unify(&conseq_ty, &altern_ty)
 			}
-			hir::ExprKind::Loop { block } => {
+			hir::ExprKind::Loop { body } => {
 				let infer_ty = self.make_infer_ty(
-					block.ret.as_ref().map_or(Span::DUMMY, |e| e.span),
+					body.ret.as_ref().map_or(Span::DUMMY, |e| e.span),
 					InferKind::Generic,
 				);
 				self.loops.push(infer_ty);
 
-				let block_ty = self.infer_block(block);
+				let block_ty = self.infer_block(body);
 				// enforce no ret loop
 				self.unify(&TyKind::Primitive(PrimitiveKind::Unit), &block_ty);
 
@@ -471,11 +480,11 @@ impl Inferer<'_> {
 			hir::ExprKind::Deref { expr } => todo!("ensure expr ty is pointer"),
 
 			hir::ExprKind::Assign { target, value } => {
-				let ExprKind::Access { path } = &target.kind else {
+				let ExprKind::Access { qpath } = &target.kind else {
 					todo!("invalid lvalue")
 				};
 
-				let target_ty = self.resolve_var_ty(path);
+				let target_ty = self.resolve_var_ty(qpath);
 				let value_ty = self.infer_expr(value);
 				self.unify(&target_ty, &value_ty)
 			}

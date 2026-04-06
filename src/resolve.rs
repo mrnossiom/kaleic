@@ -2,78 +2,36 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, Visitor, visit},
-	collect::{DefId, NameEnvironment, Namespace},
+	collect::{DefId, ModuleId, NameEnvironment, Namespace},
 	hir,
 	session::{DcxHandle, SessionCtx},
-	symbols::{Symbol, sym},
+	symbols::{Symbol, kw},
 };
 
 pub(crate) fn resolve_root(scx: &SessionCtx, ast: &ast::Root) {
 	let name_env = scx.name_env.borrow();
+	let modules = scx.modules.borrow();
 
-	let mut resolver = Resolver::new(scx, &name_env);
+	let mut resolver = Resolver::new(scx, &name_env, &modules);
 	resolver.visit_root(ast);
 
-	let Resolver { resolution_map, .. } = resolver;
+	let Resolver { resolutions, .. } = resolver;
 
 	// TODO: register resolution artefact
-	scx.resolution_map.put(resolution_map);
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum LangItem {
-	Trait(TraitLangItem),
-	Type(TypeLangItem),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum TraitLangItem {
-	Add,
-	AddAssign,
-	Sub,
-	SubAssign,
-	Mul,
-	MulAssign,
-	Div,
-	DivAssign,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum TypeLangItem {
-	Never,
-	Bool,
-	UInt,
-	SInt,
-	Float,
-}
-
-impl LangItem {
-	pub(crate) fn parse(sym: Symbol) -> Option<Self> {
-		match sym {
-			sym::AddTrait => Some(Self::Trait(TraitLangItem::Add)),
-			sym::AddAssignTrait => Some(Self::Trait(TraitLangItem::AddAssign)),
-			sym::SubTrait => Some(Self::Trait(TraitLangItem::Sub)),
-			sym::SubAssignTrait => Some(Self::Trait(TraitLangItem::SubAssign)),
-			sym::never_ty => Some(Self::Type(TypeLangItem::Never)),
-			sym::bool_ty => Some(Self::Type(TypeLangItem::Bool)),
-			sym::uint_ty => Some(Self::Type(TypeLangItem::UInt)),
-			sym::sint_ty => Some(Self::Type(TypeLangItem::SInt)),
-			sym::float_ty => Some(Self::Type(TypeLangItem::Float)),
-			_ => None,
-		}
-	}
+	scx.resolutions.put(resolutions);
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Resolution<LocalId = hir::NodeId> {
+pub(crate) enum Res<LocalId = hir::NodeId> {
 	Def(DefId),
 	Local(LocalId),
+	SelfTy,
 	Error,
 }
 
-pub(crate) type EarlyResolution = Resolution<ast::NodeId>;
+pub(crate) type EarlyRes = Res<ast::NodeId>;
 
-impl<LocalId> Resolution<LocalId> {
+impl<LocalId> Res<LocalId> {
 	pub(crate) fn into_def(self) -> Option<DefId> {
 		match self {
 			Self::Def(def_id) => Some(def_id),
@@ -88,11 +46,35 @@ impl<LocalId> Resolution<LocalId> {
 		}
 	}
 
-	pub(crate) fn map_local<T>(self, f: impl FnOnce(LocalId) -> T) -> Resolution<T> {
+	pub(crate) fn map_local<T>(self, f: impl FnOnce(LocalId) -> T) -> Res<T> {
 		match self {
-			Self::Local(local) => Resolution::Local(f(local)),
-			Self::Def(def) => Resolution::Def(def),
-			Self::Error => Resolution::Error,
+			Self::Local(local) => Res::Local(f(local)),
+			Self::Def(def) => Res::Def(def),
+			Self::SelfTy => Res::SelfTy,
+			Self::Error => Res::Error,
+		}
+	}
+}
+
+// used for paths in types, e.g. assoc items
+#[derive(Debug, Clone)]
+pub(crate) struct PartialRes {
+	pub(crate) res: EarlyRes,
+	pub(crate) unresolved_segments: usize,
+}
+
+impl PartialRes {
+	fn new_full(res: EarlyRes) -> Self {
+		Self {
+			res,
+			unresolved_segments: 0,
+		}
+	}
+
+	fn new_self(unresolved_segments: usize) -> Self {
+		Self {
+			res: Res::SelfTy,
+			unresolved_segments,
 		}
 	}
 }
@@ -102,101 +84,130 @@ struct Resolver<'scx> {
 	scx: &'scx SessionCtx,
 
 	name_env: &'scx NameEnvironment,
+	modules: &'scx FxHashMap<(ModuleId, Symbol), ModuleId>,
 
-	value_layers: Vec<(ValueLayerKind, FxHashMap<Symbol, ast::NodeId>)>,
-	type_layers: Vec<(TypeLayerKind, FxHashMap<Symbol, ast::NodeId>)>,
-	resolution_map: FxHashMap<ast::NodeId, EarlyResolution>,
+	layers: Vec<(LayerKind, FxHashMap<Symbol, ast::NodeId>)>,
+	resolutions: FxHashMap<ast::NodeId, PartialRes>,
+
+	current_module: ModuleId,
 }
 
 impl<'scx> Resolver<'scx> {
 	#[must_use]
-	pub(crate) fn new(scx: &'scx SessionCtx, name_env: &'scx NameEnvironment) -> Self {
+	pub(crate) fn new(
+		scx: &'scx SessionCtx,
+		name_env: &'scx NameEnvironment,
+		modules: &'scx FxHashMap<(ModuleId, Symbol), ModuleId>,
+	) -> Self {
 		Self {
 			scx,
 			name_env,
-			value_layers: Vec::default(),
-			type_layers: Vec::default(),
-			resolution_map: FxHashMap::default(),
+			modules,
+			layers: Vec::default(),
+			resolutions: FxHashMap::default(),
+			current_module: ModuleId::ROOT,
 		}
 	}
 }
 
 impl Resolver<'_> {
-	fn with_value_bindings(
+	fn with_layer(
 		&mut self,
-		layer_kind: ValueLayerKind,
+		layer_kind: LayerKind,
 		bindings: FxHashMap<Symbol, ast::NodeId>,
 		f: impl FnOnce(&mut Self),
 	) {
-		self.value_layers.push((layer_kind, bindings));
+		self.layers.push((layer_kind, bindings));
 		f(self);
-		self.value_layers.pop();
+		self.layers.pop().unwrap();
 	}
 
-	fn with_type_bindings(
-		&mut self,
-		layer_kind: TypeLayerKind,
-		bindings: FxHashMap<Symbol, ast::NodeId>,
-		f: impl FnOnce(&mut Self),
-	) {
-		self.type_layers.push((layer_kind, bindings));
+	fn with_module(&mut self, name: Symbol, f: impl FnOnce(&mut Self)) {
+		let parent = self.current_module;
+		self.current_module = self.modules[&(parent, name)];
 		f(self);
-		self.type_layers.pop();
+		self.current_module = parent;
 	}
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum ValueLayerKind {
-	Param,
-	Local,
-}
+pub(crate) enum LayerKind {
+	Module,
 
-#[derive(Debug, Clone)]
-pub(crate) enum TypeLayerKind {
+	// value ns
+	Params,
+	Locals,
+
+	// type ns
 	Generics,
+}
+
+impl LayerKind {
+	fn is_namespace(&self, ns: Namespace) -> bool {
+		match self {
+			Self::Module => true,
+			Self::Params | Self::Locals => ns == Namespace::Value,
+			Self::Generics => ns == Namespace::Type,
+		}
+	}
 }
 
 impl Resolver<'_> {
 	fn resolve_path(&mut self, ns: Namespace, path: &ast::Path) {
-		let path_simple = path.simple();
+		assert!(path.segments.iter().all(|s| s.generics.params.is_empty()));
 
-		let res = match ns {
-			Namespace::Type => 'res: {
-				for (layer_kind, bindings) in self.type_layers.iter().rev() {
-					if let Some(id) = bindings.get(&path_simple.sym) {
-						break 'res match layer_kind {
-							TypeLayerKind::Generics => Resolution::Local(*id),
-						};
-					}
-				}
-				if let Some(node_id) = self.name_env.types.get(&path_simple.sym) {
-					Resolution::Def(*node_id)
-				} else {
-					let report = errors::type_not_in_scope(path.span);
-					self.scx.dcx().emit_build(report);
-					Resolution::Error
-				}
-			}
-			Namespace::Value => 'res: {
-				for (layer_kind, bindings) in self.value_layers.iter().rev() {
-					if let Some(id) = bindings.get(&path_simple.sym) {
-						break 'res match layer_kind {
-							ValueLayerKind::Param | ValueLayerKind::Local => Resolution::Local(*id),
-						};
-					}
-				}
-				if let Some(node_id) = self.name_env.values.get(&path_simple.sym) {
-					Resolution::Def(*node_id)
-				} else {
-					let report = errors::value_not_in_scope(path.span);
-					self.scx.dcx().emit_build(report);
-					Resolution::Error
-				}
-			}
+		let (base, rest) = path.segments.split_first().unwrap();
+
+		let res = if base.name.sym == kw::SelfTy {
+			PartialRes::new_self(rest.len())
+		} else if rest.is_empty() {
+			// search layers and module ctx
+			self.resolve_local(ns, &base.name)
+		} else {
+			// resolve all module segments then search module or relative res
+			self.resolve_long_path(path)
 		};
 
-		let before = self.resolution_map.insert(path.id, res);
+		let before = self.resolutions.insert(path.id, res);
 		assert!(before.is_none());
+	}
+
+	fn resolve_local(&self, ns: Namespace, local: &ast::Ident) -> PartialRes {
+		let relevant_layers = self
+			.layers
+			.iter()
+			.rev()
+			.filter(|(layer, _)| layer.is_namespace(ns));
+
+		let mut local_res = None;
+		for (layer_kind, bindings) in relevant_layers {
+			if let Some(id) = bindings.get(&local.sym) {
+				let res = match layer_kind {
+					LayerKind::Module => break,
+					LayerKind::Locals | LayerKind::Params | LayerKind::Generics => {
+						local_res.replace(Res::Local(*id));
+						break;
+					}
+				};
+			}
+		}
+
+		if let Some(local_res) = local_res {
+			PartialRes::new_full(local_res)
+		} else if let Some(def_res) = self.name_env[ns].get(&(self.current_module, local.sym)) {
+			PartialRes::new_full(Res::Def(*def_res))
+		} else {
+			let report = errors::not_in_scope(ns, local.span);
+			self.scx.dcx().emit_build(report);
+			PartialRes::new_full(Res::Error)
+		}
+	}
+
+	fn resolve_long_path(&mut self, path: &ast::Path) -> PartialRes {
+		// TODO: resolve full path taking module import into account
+		todo!()
+
+		// TODO: stop and do partial res at type
 	}
 }
 
@@ -216,8 +227,13 @@ impl visit::Visitor for Resolver<'_> {
 				items,
 				inline,
 			} => {
+				self.with_module(name.sym, |this| {
+					this.visit_items(items);
+				});
+			}
+			ast::ItemKind::Import { tree } => {
 				todo!()
-				// self.with_resolution_layer()
+				// noop?
 			}
 			ast::ItemKind::Function(ast::Function {
 				decl,
@@ -225,12 +241,12 @@ impl visit::Visitor for Resolver<'_> {
 				body,
 				..
 			}) => {
-				self.with_type_bindings(
-					TypeLayerKind::Generics,
+				self.with_layer(
+					LayerKind::Generics,
 					generics.idents.iter().map(|g| (g.name.sym, g.id)).collect(),
 					|this| {
-						this.with_value_bindings(
-							ValueLayerKind::Param,
+						this.with_layer(
+							LayerKind::Params,
 							decl.params.iter().map(|p| (p.name.sym, p.id)).collect(),
 							|this| visit::visit_item(this, item),
 						);
@@ -239,13 +255,13 @@ impl visit::Visitor for Resolver<'_> {
 			}
 			ast::ItemKind::Struct { generics, .. }
 			| ast::ItemKind::Enum { generics, .. }
-			| ast::ItemKind::Trait { generics, .. } => self.with_type_bindings(
-				TypeLayerKind::Generics,
+			| ast::ItemKind::Trait { generics, .. } => self.with_layer(
+				LayerKind::Generics,
 				generics.idents.iter().map(|g| (g.name.sym, g.id)).collect(),
 				|this| visit::visit_item(this, item),
 			),
 
-			ast::ItemKind::ExternUse { .. }
+			ast::ItemKind::ExternImport { .. }
 			| ast::ItemKind::TypeAlias(..)
 			| ast::ItemKind::TraitImpl { .. }
 			| ast::ItemKind::ForeignMod { .. } => visit::visit_item(self, item),
@@ -261,7 +277,8 @@ impl visit::Visitor for Resolver<'_> {
 
 	fn visit_stmt(&mut self, stmt @ ast::Stmt { kind, span, id }: &ast::Stmt) {
 		if let ast::StmtKind::Let { name, .. } = kind {
-			let (_layer_kind, bindings) = self.value_layers.last_mut().unwrap();
+			// TODO
+			let (_layer_kind, bindings) = self.layers.last_mut().unwrap();
 			bindings.insert(name.sym, *id);
 		}
 		visit::visit_stmt(self, stmt);
@@ -288,17 +305,14 @@ impl visit::Visitor for Resolver<'_> {
 mod errors {
 	use ariadne::{Label, ReportKind};
 
-	use crate::session::{Report, ReportBuilder, Span};
+	use crate::{
+		collect::Namespace,
+		session::{Report, ReportBuilder, Span},
+	};
 
-	pub fn type_not_in_scope(path_span: Span) -> ReportBuilder {
+	pub fn not_in_scope(ns: Namespace, path_span: Span) -> ReportBuilder {
 		Report::build(ReportKind::Error, path_span)
-			.with_message("type is invalid")
-			.with_label(Label::new(path_span).with_message("type is not in scope"))
-	}
-
-	pub fn value_not_in_scope(path_span: Span) -> ReportBuilder {
-		Report::build(ReportKind::Error, path_span)
-			.with_message("value is invalid")
-			.with_label(Label::new(path_span).with_message("value is not in scope"))
+			.with_message(format!("{ns} is invalid"))
+			.with_label(Label::new(path_span).with_message(format!("{ns} is not in scope")))
 	}
 }

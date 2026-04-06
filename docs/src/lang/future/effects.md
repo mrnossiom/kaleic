@@ -14,6 +14,8 @@
 
 	Focuses on static effects (i.e. effects that give information at compile time, not attached to the concept of coroutine).
 
+- [Flix lang](https://flix.dev)
+
 ## Samples
 
 ### Name resolution

@@ -22,9 +22,9 @@ use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
 		self, Attr, AttrKind, AttrMeta, AttrPath, BinaryOp, Block, Expr, ExprKind, FieldDef,
-		FnDecl, Function, GenericParams, Generics, Ident as Id, Item, ItemKind, Param, Path,
-		PathSegment, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias, UnaryOp,
-		Variant, VariantKind,
+		FnDecl, Function, GenericParams, Generics, Ident as Id, ImportTree, Item, ItemKind, Param,
+		Path, PathSegment, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias,
+		UnaryOp, Variant, VariantKind,
 	},
 	attrs::{ModPath, NoCore, NoStd, try_parse_attr},
 	lexer::{Lexer, Token, TokenKind},
@@ -355,10 +355,10 @@ impl Parser<'_> {
 		}
 
 		let kind = match state {
-			AutoImportState::None => Some(ItemKind::ExternUse {
+			AutoImportState::None => Some(ItemKind::ExternImport {
 				name: Id::new(sym::std, Span::DUMMY),
 			}),
-			AutoImportState::NoStd(..) => Some(ItemKind::ExternUse {
+			AutoImportState::NoStd(..) => Some(ItemKind::ExternImport {
 				name: Id::new(sym::core, Span::DUMMY),
 			}),
 			AutoImportState::NoCore(..) => None,
@@ -685,6 +685,8 @@ impl Parser<'_> {
 			self.parse_item_trait()?
 		} else if self.eat_kw(kw::For) {
 			self.parse_item_trait_impl()?
+		} else if self.eat_kw(kw::Use) {
+			self.parse_item_import()?
 		} else if self.eat_kw(kw::Type) {
 			self.parse_item_type_alias()?
 		} else if self.eat_kw(kw::Mod) {
@@ -752,6 +754,33 @@ impl Parser<'_> {
 		};
 
 		Ok(ItemKind::TypeAlias(TypeAlias { name, alias }))
+	}
+
+	fn parse_item_import(&mut self) -> Result<ItemKind> {
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Use));
+
+		let tree = self.parse_import_tree()?;
+
+		self.expect(Semi)?;
+
+		Ok(ItemKind::Import { tree })
+	}
+
+	fn parse_import_tree(&mut self) -> Result<ImportTree> {
+		if self.eat(Star) {
+			Ok(ImportTree::Glob)
+		} else if self.check(OpenBrace) {
+			Ok(ImportTree::Branches(todo!()))
+		} else {
+			let name = self.expect_ident()?;
+
+			if self.eat(ColonColon) {
+				let subtree = self.parse_import_tree()?;
+				Ok(ImportTree::Module(name, Box::new(subtree)))
+			} else {
+				Ok(ImportTree::Item(name))
+			}
+		}
 	}
 
 	fn parse_item_mod(&mut self, attrs: &mut Vec<Attr>) -> Result<ItemKind> {
@@ -1137,7 +1166,7 @@ impl Parser<'_> {
 		let name = self.expect_ident()?;
 		self.expect(Semi)?;
 
-		Ok(ItemKind::ExternUse { name })
+		Ok(ItemKind::ExternImport { name })
 	}
 }
 

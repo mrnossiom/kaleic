@@ -364,3 +364,7 @@ struct Fields {
 
 fields.$let
 ```
+
+### Exhaustive patterns in `match`
+
+See <https://arxiv.org/abs/2504.18920v3>

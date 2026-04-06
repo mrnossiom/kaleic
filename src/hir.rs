@@ -1,6 +1,6 @@
 //! **H**igher **IR**
 
-use std::fmt;
+use std::{fmt, num::NonZero};
 
 use crate::{
 	ast::{BinaryOp, Ident, Spanned, UnaryOp},
@@ -16,11 +16,11 @@ use crate::{
 ///  the new `hir::NodeId` takes the old inner number,
 ///  else the lowerer mints a new number.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct NodeId(u32);
+pub(crate) struct NodeId(NonZero<u32>);
 
 impl NodeId {
-	pub(crate) fn new(n: u32) -> Self {
-		Self(n)
+	pub(crate) fn new(value: NonZero<u32>) -> Self {
+		Self(value)
 	}
 }
 
@@ -110,7 +110,7 @@ pub(crate) struct Ty {
 #[derive(Debug, Clone)]
 pub(crate) enum TyKind {
 	/// See [`Path`]
-	Path(Path),
+	Path(QualifiedPath),
 
 	/// `* <ty>`
 	Pointer(Box<Ty>),
@@ -130,7 +130,13 @@ pub(crate) struct PathSegment {
 pub(crate) struct Path {
 	pub(crate) segments: Vec<PathSegment>,
 	pub(crate) span: Span,
-	pub(crate) resolved: resolve::Resolution,
+	pub(crate) res: resolve::Res,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum QualifiedPath {
+	Resolved(Path),
+	TypeRelative { def_id: DefId, segment: PathSegment },
 }
 
 #[derive(Debug, Clone)]
@@ -143,7 +149,7 @@ pub(crate) struct GenericParams {
 pub(crate) struct AttrPath {
 	pub(crate) segments: Vec<Ident>,
 	pub(crate) span: Span,
-	pub(crate) resolved: resolve::Resolution,
+	// pub(crate) resolved: resolve::Res,
 }
 
 #[derive(Debug, Clone)]
@@ -252,7 +258,7 @@ pub(crate) enum ExprKind {
 		sym: Symbol,
 	},
 	Access {
-		path: Path,
+		qpath: QualifiedPath,
 	},
 
 	Unary {
@@ -275,7 +281,7 @@ pub(crate) enum ExprKind {
 	},
 	// Match { },
 	Loop {
-		block: Box<Block>,
+		body: Box<Block>,
 	},
 
 	FnCall {
@@ -371,6 +377,10 @@ pub(crate) mod visit {
 
 		fn visit_ty(&mut self, ty: &Ty) {
 			visit_ty(self, ty);
+		}
+
+		fn visit_qualified_path(&mut self, path: &QualifiedPath) {
+			visit_qualified_path(self, path);
 		}
 
 		fn visit_path(&mut self, path: &Path) {
@@ -590,7 +600,7 @@ pub(crate) mod visit {
 		}: &Expr,
 	) {
 		match kind {
-			ExprKind::Access { path } => v.visit_path(path),
+			ExprKind::Access { qpath: path } => v.visit_qualified_path(path),
 			ExprKind::LiteralStr { sym: _ }
 			| ExprKind::LiteralInt { sym: _ }
 			| ExprKind::LiteralFloat { sym: _ }
@@ -617,7 +627,7 @@ pub(crate) mod visit {
 					v.visit_block(altern);
 				}
 			}
-			ExprKind::Loop { block } => v.visit_block(block),
+			ExprKind::Loop { body } => v.visit_block(body),
 			ExprKind::Method { expr, name, params } => {
 				v.visit_expr(expr);
 				v.visit_ident(name);
@@ -692,7 +702,7 @@ pub(crate) mod visit {
 
 	pub fn visit_ty<V: Visitor>(v: &mut V, Ty { kind, span: _ }: &Ty) {
 		match kind {
-			TyKind::Path(path) => v.visit_path(path),
+			TyKind::Path(qpath) => v.visit_qualified_path(qpath),
 			TyKind::Pointer(ty) => v.visit_ty(ty),
 			TyKind::Unit => {}
 		}
@@ -703,11 +713,22 @@ pub(crate) mod visit {
 		Path {
 			segments,
 			span: _,
-			resolved: _,
+			res: _,
 		}: &Path,
 	) {
 		for segment in segments {
 			v.visit_path_segment(segment);
+		}
+	}
+
+	pub fn visit_qualified_path<V: Visitor>(v: &mut V, qpath: &QualifiedPath) {
+		match qpath {
+			QualifiedPath::Resolved(path) => {
+				v.visit_path(path);
+			}
+			QualifiedPath::TypeRelative { def_id, segment } => {
+				v.visit_path_segment(segment);
+			}
 		}
 	}
 

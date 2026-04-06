@@ -499,8 +499,12 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 
 				MaybeValue::Value(value)
 			}
-			hir::ExprKind::Access { path } => {
-				let hir_id = path.resolved.into_local().unwrap();
+			hir::ExprKind::Access { qpath } => {
+				let path = match qpath {
+					hir::QualifiedPath::Resolved(path) => path,
+					hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
+				};
+				let hir_id = path.res.into_local().unwrap();
 				let place = *self.variables.get(&hir_id).unwrap();
 
 				let ty = &self.typeck_results[&expr.expr_id()];
@@ -515,11 +519,15 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				MaybeValue::Value(value)
 			}
 			hir::ExprKind::Assign { target, value } => {
-				let hir::ExprKind::Access { path } = &target.kind else {
+				let hir::ExprKind::Access { qpath } = &target.kind else {
 					todo!("invalid lvalue");
 				};
 
-				let hir_id = path.resolved.into_local().unwrap();
+				let path = match qpath {
+					hir::QualifiedPath::Resolved(path) => path,
+					hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
+				};
+				let hir_id = path.res.into_local().unwrap();
 				let place = *self.variables.get(&hir_id).unwrap();
 				let expr_value = self.codegen_expr(value)?;
 				match expr_value {
@@ -548,9 +556,13 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 					}
 				}
 
-				let call = if let hir::ExprKind::Access { path } = &expr.kind {
+				let call = if let hir::ExprKind::Access { qpath } = &expr.kind {
 					// direct call
-					let def_id = path.resolved.into_def().unwrap();
+					let path = match qpath {
+						hir::QualifiedPath::Resolved(path) => path,
+						hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
+					};
+					let def_id = path.res.into_def().unwrap();
 					let func = self.function_ids[&def_id];
 
 					if args.bit.len() != func.count_params() as usize {
@@ -588,7 +600,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 				conseq,
 				altern,
 			} => self.codegen_if(cond, conseq, altern.as_deref())?,
-			hir::ExprKind::Loop { block } => {
+			hir::ExprKind::Loop { body } => {
 				let loop_ = self.ctx.append_basic_block(self.function, "loop");
 				let cont = self.ctx.append_basic_block(self.function, "cont");
 
@@ -605,7 +617,7 @@ impl<'ctx> FunctionGenerator<'_, '_, 'ctx> {
 
 				self.builder.position_at_end(loop_);
 
-				match self.codegen_block(block)? {
+				match self.codegen_block(body)? {
 					MaybeValue::Value(value) => {
 						_ = self.builder.build_unconditional_branch(loop_).unwrap();
 					}

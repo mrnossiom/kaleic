@@ -463,8 +463,13 @@ impl FunctionGenerator<'_, '_> {
 				MaybeValue::Value(value)
 			}
 
-			hir::ExprKind::Access { path } => {
-				let hir_id = path.resolved.into_local().unwrap();
+			hir::ExprKind::Access { qpath } => {
+				let path = match qpath {
+					hir::QualifiedPath::Resolved(path) => path,
+					hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
+				};
+				let hir_id = path.res.into_local().unwrap();
+
 				match self.values.get(&hir_id) {
 					Some(Some(var)) => MaybeValue::Value(self.builder.use_var(*var)),
 					Some(None) => MaybeValue::Zst,
@@ -488,8 +493,12 @@ impl FunctionGenerator<'_, '_> {
 					}
 				}
 
-				let call = if let hir::ExprKind::Access { path } = &expr.kind {
-					let item_id = path.resolved.into_def().unwrap();
+				let call = if let hir::ExprKind::Access { qpath } = &expr.kind {
+					let path = match qpath {
+						hir::QualifiedPath::Resolved(path) => path,
+						hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
+					};
+					let item_id = path.res.into_def().unwrap();
 					let func_id = self.functions[&item_id];
 
 					let local_func = self.module.declare_func_in_func(func_id, self.builder.func);
@@ -517,7 +526,7 @@ impl FunctionGenerator<'_, '_> {
 				conseq,
 				altern,
 			} => self.codegen_if(cond, conseq, altern.as_deref())?,
-			hir::ExprKind::Loop { block } => {
+			hir::ExprKind::Loop { body } => {
 				let loop_ = self.builder.create_block();
 				let cont = self.builder.create_block();
 
@@ -532,7 +541,7 @@ impl FunctionGenerator<'_, '_> {
 
 				self.builder.switch_to_block(loop_);
 
-				self.codegen_block(block)?;
+				self.codegen_block(body)?;
 				self.builder.ins().jump(loop_, &[]);
 
 				self.builder.seal_block(loop_);
@@ -555,11 +564,15 @@ impl FunctionGenerator<'_, '_> {
 			hir::ExprKind::Deref { expr } => todo!(),
 
 			hir::ExprKind::Assign { target, value } => {
-				let hir::ExprKind::Access { path } = &target.kind else {
+				let hir::ExprKind::Access { qpath } = &target.kind else {
 					todo!("invalid lvalue");
 				};
 
-				let hir_id = path.resolved.into_local().unwrap();
+				let path = match qpath {
+					hir::QualifiedPath::Resolved(path) => path,
+					hir::QualifiedPath::TypeRelative { def_id, segment } => todo!(),
+				};
+				let hir_id = path.res.into_local().unwrap();
 				let Some(variable) = self.values[&hir_id] else {
 					// handle ZSTs
 					return Ok(MaybeValue::Zst);

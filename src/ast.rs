@@ -85,6 +85,7 @@ pub(crate) struct AttrPath {
 
 #[derive(Debug)]
 pub(crate) enum AttrMeta {
+	/// `#path`
 	None,
 	/// `#path(foo, bar)`
 	Tuple(Vec<Expr>),
@@ -345,14 +346,6 @@ pub(crate) struct GenericParams {
 	pub(crate) span: Span,
 }
 
-impl Path {
-	// TODO: remove simple api
-	pub(crate) fn simple(&self) -> Ident {
-		assert_eq!(self.segments.len(), 1);
-		self.segments[0].name
-	}
-}
-
 #[derive(Debug)]
 pub(crate) struct Item {
 	pub(crate) attrs: Vec<Attr>,
@@ -364,7 +357,7 @@ pub(crate) struct Item {
 impl Item {
 	pub(crate) fn name(&self) -> Option<Ident> {
 		match self.kind {
-			ItemKind::ExternUse { name }
+			ItemKind::ExternImport { name }
 			| ItemKind::Module { name, .. }
 			| ItemKind::Function(Function { name, .. })
 			| ItemKind::TypeAlias(TypeAlias { name, .. })
@@ -372,7 +365,9 @@ impl Item {
 			| ItemKind::Enum { name, .. }
 			| ItemKind::Trait { name, .. } => Some(name),
 
-			ItemKind::TraitImpl { .. } | ItemKind::ForeignMod { .. } => None,
+			ItemKind::Import { .. } | ItemKind::TraitImpl { .. } | ItemKind::ForeignMod { .. } => {
+				None
+			}
 		}
 	}
 }
@@ -409,8 +404,11 @@ pub(crate) struct Generic {
 #[derive(Debug)]
 pub(crate) enum ItemKind {
 	/// `extern use <name>`
-	ExternUse {
+	ExternImport {
 		name: Ident,
+	},
+	Import {
+		tree: ImportTree,
 	},
 	Module {
 		name: Ident,
@@ -504,6 +502,14 @@ pub(crate) enum StmtKind {
 
 	/// A single lonely `;`
 	Empty,
+}
+
+#[derive(Debug)]
+pub(crate) enum ImportTree {
+	Branches(Vec<Self>),
+	Module(Ident, Box<Self>),
+	Item(Ident),
+	Glob,
 }
 
 pub(crate) mod visit {
@@ -638,8 +644,11 @@ pub(crate) mod visit {
 	) {
 		v.visit_attrs(attrs);
 		match kind {
-			ItemKind::ExternUse { name } => {
+			ItemKind::ExternImport { name } => {
 				v.visit_ident(name);
+			}
+			ItemKind::Import { tree } => {
+				todo!()
 			}
 			ItemKind::Module {
 				name,

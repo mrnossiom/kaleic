@@ -185,7 +185,8 @@ mod ast_pp {
 	impl PrettyPrint for ast::ItemKind {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			match self {
-				Self::ExternUse { name } => pp!(f, "extern use ", (name)),
+				Self::ExternImport { name } => pp!(f, "extern use ", (name)),
+				Self::Import { tree } => pp!(f, "use ", (tree), ";"),
 				Self::Module {
 					name,
 					items,
@@ -570,6 +571,17 @@ mod ast_pp {
 			}
 		}
 	}
+
+	impl PrettyPrint for ast::ImportTree {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::Branches(branches) => pp!(f, "{", [branches, ", "], "}"),
+				Self::Module(name, tree) => pp!(f, (name), "::", (tree)),
+				Self::Item(name) => pp!(f, (name)),
+				Self::Glob => pp!(f, "*"),
+			}
+		}
+	}
 }
 
 mod hir_pp {
@@ -606,11 +618,7 @@ mod hir_pp {
 
 	impl PrettyPrint for hir::AttrPath {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
-			let Self {
-				segments,
-				span: _,
-				resolved: _,
-			} = &self;
+			let Self { segments, span: _ } = &self;
 			pp!(f, [segments, "::"])
 		}
 	}
@@ -771,6 +779,15 @@ mod hir_pp {
 		}
 	}
 
+	impl PrettyPrint for hir::QualifiedPath {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			match self {
+				Self::Resolved(path) => path.pprint(f),
+				Self::TypeRelative { .. } => todo!(),
+			}
+		}
+	}
+
 	impl PrettyPrint for hir::FieldDef {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			let Self { name, ty } = &self;
@@ -783,7 +800,7 @@ mod hir_pp {
 			let Self {
 				segments,
 				span: _,
-				resolved: _,
+				res: _,
 			} = self;
 			pp!(f, [segments, ", "])
 		}
@@ -880,7 +897,7 @@ mod hir_pp {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			// TODO: parenthesize ambiguous expressions
 			match &self {
-				Self::Access { path } => path.pprint(f),
+				Self::Access { qpath } => qpath.pprint(f),
 				Self::LiteralStr { sym } => pp!(f, "\"", (sym), "\""),
 				Self::LiteralInt { sym } | Self::LiteralFloat { sym } => sym.pprint(f),
 				Self::Unit => write!(f, "()"),
@@ -893,7 +910,7 @@ mod hir_pp {
 					conseq,
 					altern,
 				} => pp!(f, "if ", (cond), " ", (conseq), (? " else " altern)),
-				Self::Loop { block } => pp!(f, "loop ", (block)),
+				Self::Loop { body } => pp!(f, "loop ", (body)),
 
 				Self::FnCall { expr, args } => pp!(f, (expr), "(", [args.bit, ", "], ")"),
 				Self::Method { expr, name, params } => {
