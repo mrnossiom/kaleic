@@ -1,4 +1,4 @@
-fn main() {
+def main() {
 	let n = 0;
 
 	while n != 5 {
@@ -6,12 +6,12 @@ fn main() {
 
 		print_num(res);
 		putchar(10); // newline
-		
+
 		n = n + 1;
 	};
 }
 
-fn num_to_ascii(n: uint) uint /*Option<Number>*/ {
+def num_to_ascii(n: uint) uint /*Option<Number>*/ {
 	if n <= 9 {
 		let num_ascii_base = 48;
 		// Some(num_ascii_base + n)
@@ -22,7 +22,7 @@ fn num_to_ascii(n: uint) uint /*Option<Number>*/ {
 	}
 }
 
-fn print_num_rev(n: uint) {
+def print_num_rev(n: uint) {
 	if n == 0 {
 		putchar(num_to_ascii(0));
 	} else {
@@ -34,7 +34,7 @@ fn print_num_rev(n: uint) {
 	};
 }
 
-fn print_num(n: uint) {
+def print_num(n: uint) {
     if n == 0 {
         putchar(num_to_ascii(0));
         return;
@@ -56,16 +56,16 @@ fn print_num(n: uint) {
 		// Get the current most significant digit
         let digit = temp / divisor;
         putchar(num_to_ascii(digit));
-        
+
         // Remove the most significant digit
         temp = temp % divisor;
-        
+
         // Reduce divisor
         divisor = divisor / 10;
     };
 }
 
-fn fibo(n: uint) uint {
+def fibo(n: uint) uint {
 	let a = 0;
 	let b = 1;
 

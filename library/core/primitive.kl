@@ -5,7 +5,7 @@ struct never;
 struct bool;
 
 for bool impl Not {
-    fn not_(self: Self) Self {
+    def not_(self: Self) Self {
         intrinsic_not(self)
     }
 }
@@ -15,20 +15,20 @@ struct uint;
 
 for uint impl Add<uint> {
 	type Output = uint;
-	fn add(self: Self, other: uint) Self::Output {
+	def add(self: Self, other: uint) Self::Output {
 		intrinsic_add(self, other)
 	}
 }
 
 for uint impl Sub<uint> {
 	type Output = uint;
-	fn sub(self: Self, other: uint) Self::Output {
+	def sub(self: Self, other: uint) Self::Output {
 		intrinsic_sub(self, other)
 	}
 }
 
 for uint impl SubAssign<uint> {
-	fn sub_assign(self: *Self, other: uint) Self::Output {
+	def sub_assign(self: *Self, other: uint) Self::Output {
 		self.* = self + other;
 	}
 }
@@ -41,17 +41,17 @@ struct float;
 
 #internal()
 unsafe extern {
-	fn intrinsic_add(a: uint, b: uint) uint;
-	fn intrinsic_sub(a: uint, b: uint) uint;
-	fn intrinsic_mul(a: uint, b: uint) uint;
-	fn intrinsic_div(a: uint, b: uint) uint;
-	fn intrinsic_urem(a: uint, b: uint) uint;
-	fn intrinsic_srem(a: uint, b: uint) uint;
+	def intrinsic_add(a: uint, b: uint) uint;
+	def intrinsic_sub(a: uint, b: uint) uint;
+	def intrinsic_mul(a: uint, b: uint) uint;
+	def intrinsic_div(a: uint, b: uint) uint;
+	def intrinsic_urem(a: uint, b: uint) uint;
+	def intrinsic_srem(a: uint, b: uint) uint;
+	def intrinsic_not(a: uint, b: uint) uint;
 
-	fn intrinsic_shl(a: uint, b: uint) uint;
-	fn intrinsic_shr(a: uint, b: uint) uint;
-
-	fn intrinsic_bit_or(a: uint, b: uint) uint;
-	fn intrinsic_bit_and(a: uint, b: uint) uint;
-	fn intrinsic_bit_xor(a: uint, b: uint) uint;
+	def intrinsic_shl(a: uint, b: uint) uint;
+	def intrinsic_shr(a: uint, b: uint) uint;
+	def intrinsic_bit_or(a: uint, b: uint) uint;
+	def intrinsic_bit_and(a: uint, b: uint) uint;
+	def intrinsic_bit_xor(a: uint, b: uint) uint;
 }

@@ -1,6 +1,6 @@
 // #unsafe(no_mangle)
 #no_mangle
-fn _start() never {
+def _start() never {
     main();
     exit(0)
 }

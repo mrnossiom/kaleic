@@ -1,6 +1,6 @@
 #link{name = "c"}
 unsafe extern {
-	fn putchar(c: uint);
-	// fn puts(c: *u8);
-	fn exit(status: uint) never;
+	def putchar(c: uint);
+	// def puts(c: *u8);
+	def exit(status: uint) never;
 }

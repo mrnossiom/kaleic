@@ -673,7 +673,7 @@ impl Parser<'_> {
 
 		let mut attrs = self.parse_attrs(AttrKind::Next)?;
 
-		let kind = if self.eat_kw(kw::Fn) {
+		let kind = if self.eat_kw(kw::Def) {
 			self.parse_function()?
 		} else if self.eat_kw(kw::Unsafe) {
 			self.parse_item_unsafe_extern()?
@@ -712,7 +712,7 @@ impl Parser<'_> {
 	}
 
 	fn parse_function(&mut self) -> Result<ItemKind> {
-		debug_assert_eq!(self.last_token.kind, Kw(kw::Fn));
+		debug_assert_eq!(self.last_token.kind, Kw(kw::Def));
 
 		let name = self.expect_ident()?;
 		let generics = self.parse_generics()?;
