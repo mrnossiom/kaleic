@@ -10,3 +10,7 @@ The most interesting pages are:
 
 - *[Pipeline](./compiler/pipeline.md) (Compiler)* to see what does the current compiler pipeline looks like.
 - *[Future](./lang/future.md) (Language)* to check out some syntax/language ideas I would like to try.
+
+<a href="https://grebedoc.dev">
+  <img src="https://grebedoc.dev/88x31.gif" alt="served by Grebedoc" style="image-rendering: pixelated">
+</a>

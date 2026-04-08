@@ -130,6 +130,8 @@
             kalei = lpkgs.tree-sitter-kalei;
             rust = pkgs.tree-sitter-grammars.tree-sitter-rust;
           };
+
+          git-pages-cli = pkgs.git-pages-cli;
         }
       );
 
