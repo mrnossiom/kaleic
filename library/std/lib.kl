@@ -1,4 +1,4 @@
-extern use core;
+// extern use core;
 
 mod libc;
 mod rt;

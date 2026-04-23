@@ -8,14 +8,17 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast::{self, BinaryOp},
+	ast,
+	ast::BinaryOp,
 	bug,
 	codegen::{Backend, CodeGenBackend, JitBackend, ObjectBackend},
 	collect::DefId,
-	hir::{self, Enum, ExprId, Function, Struct},
+	hir,
+	hir::{Enum, ExprId, Function, Struct},
 	session::{ArtefactKind, ScxHandle, SessionCtx},
 	symbols::Symbol,
-	ty::{self, LateTy, TyCtx, TyKind},
+	ty,
+	ty::{LateTy, TyCtx, TyKind},
 };
 
 type Result<T> = std::result::Result<T, &'static str>;

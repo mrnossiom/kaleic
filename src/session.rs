@@ -4,9 +4,10 @@ use std::{
 	cell::Cell,
 	cmp,
 	collections::HashSet,
-	fmt, fs,
-	io::{self, Write as _},
-	ops::{self, Sub},
+	fmt, fs, io,
+	io::Write as _,
+	ops,
+	ops::Sub,
 	path::{Path, PathBuf},
 	process,
 	rc::Rc,
@@ -20,8 +21,9 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast, bug,
 	codegen::{Backend, Linker},
-	collect::{DefId, LangItem, ModuleId, NameEnvironment},
+	collect::{DefId, LangItem, ModuleId, PerNamespace},
 	hir,
+	imports::ImportBundle,
 	resolve::PartialRes,
 	symbols::{Symbol, SymbolInterner},
 	ty::Put,
@@ -110,11 +112,12 @@ pub struct SessionCtx {
 	pub(crate) source_map: Rc<RwLock<SourceMap>>,
 
 	// collect
-	pub(crate) name_env: Put<NameEnvironment>,
+	pub(crate) name_env: Put<PerNamespace<FxHashMap<(ModuleId, Symbol), DefId>>>,
 	pub(crate) lang_items: Put<FxHashMap<LangItem, DefId>>,
 	pub(crate) node_id_to_def_id: Put<FxHashMap<ast::NodeId, DefId>>,
 	pub(crate) modules: Put<FxHashMap<(ModuleId, Symbol), ModuleId>>,
 	// resolve
+	pub(crate) import_bundles: Put<FxHashMap<ModuleId, ImportBundle>>,
 	pub(crate) resolutions: Put<FxHashMap<ast::NodeId, PartialRes>>,
 	// lower
 	pub(crate) node_id_to_hir_id: Put<FxHashMap<ast::NodeId, hir::NodeId>>,
@@ -135,6 +138,7 @@ impl SessionCtx {
 			lang_items: Put::default(),
 			node_id_to_def_id: Put::default(),
 			modules: Put::default(),
+			import_bundles: Put::default(),
 			resolutions: Put::default(),
 			node_id_to_hir_id: Put::default(),
 		}

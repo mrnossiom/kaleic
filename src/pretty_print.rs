@@ -5,7 +5,7 @@
 
 #![expect(unused_variables, clippy::todo)]
 
-use std::fmt::{self, Write as _};
+use std::{fmt, fmt::Write as _};
 
 use crate::{ast, symbols};
 
@@ -573,6 +573,13 @@ mod ast_pp {
 	}
 
 	impl PrettyPrint for ast::ImportTree {
+		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
+			let Self { kind, span: _ } = &self;
+			kind.pprint(f)
+		}
+	}
+
+	impl PrettyPrint for ast::ImportTreeKind {
 		fn pprint(&self, f: &mut PrettyFormatter) -> fmt::Result {
 			match self {
 				Self::Branches(branches) => pp!(f, "{", [branches, ", "], "}"),

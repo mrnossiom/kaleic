@@ -5,10 +5,12 @@
 //! Entrypoint to parsing is [`parse_root`].
 
 use std::{
-	fmt::{self, Write},
+	fmt,
+	fmt::Write,
 	mem,
 	ops::ControlFlow,
-	path::{self, PathBuf},
+	path,
+	path::PathBuf,
 	sync::atomic::{AtomicU32, Ordering},
 };
 
@@ -22,9 +24,9 @@ use crate::lexer::TokenKind::*;
 use crate::{
 	ast::{
 		self, Attr, AttrKind, AttrMeta, AttrPath, BinaryOp, Block, Expr, ExprKind, FieldDef,
-		FnDecl, Function, GenericParams, Generics, Ident as Id, ImportTree, Item, ItemKind, Param,
-		Path, PathSegment, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, Ty, TyKind, TypeAlias,
-		UnaryOp, Variant, VariantKind,
+		FnDecl, Function, GenericParams, Generics, Ident as Id, ImportTree, ImportTreeKind, Item,
+		ItemKind, Param, Path, PathSegment, Root, ShortCircuitOp, Spanned, Stmt, StmtKind, Ty,
+		TyKind, TypeAlias, UnaryOp, Variant, VariantKind,
 	},
 	attrs::{ModPath, NoCore, NoStd, try_parse_attr},
 	lexer::{Lexer, Token, TokenKind},
@@ -767,20 +769,30 @@ impl Parser<'_> {
 	}
 
 	fn parse_import_tree(&mut self) -> Result<ImportTree> {
-		if self.eat(Star) {
-			Ok(ImportTree::Glob)
-		} else if self.check(OpenBrace) {
-			Ok(ImportTree::Branches(todo!()))
+		let lo = self.token.span;
+
+		let kind = if self.eat(Star) {
+			ImportTreeKind::Glob
+		} else if self.eat(OpenBrace) {
+			let branches =
+				self.parse_seq_rest(OpenBrace, CloseBrace, Comma, Self::parse_import_tree)?;
+			ImportTreeKind::Branches(branches)
 		} else {
 			let name = self.expect_ident()?;
 
 			if self.eat(ColonColon) {
 				let subtree = self.parse_import_tree()?;
-				Ok(ImportTree::Module(name, Box::new(subtree)))
+				ImportTreeKind::Module(name, Box::new(subtree))
 			} else {
-				Ok(ImportTree::Item(name))
+				// TODO: support renaming imports?
+				ImportTreeKind::Item(name)
 			}
-		}
+		};
+
+		Ok(ImportTree {
+			kind,
+			span: self.close_span(lo),
+		})
 	}
 
 	fn parse_item_mod(&mut self, attrs: &mut Vec<Attr>) -> Result<ItemKind> {

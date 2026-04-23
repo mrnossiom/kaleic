@@ -3,7 +3,7 @@ use std::{fs, process::Command};
 use ariadne::ReportKind;
 
 use crate::{
-	codegen, collect, inference, lowerer, parser, resolve,
+	codegen, collect, imports, inference, lowerer, parser, resolve,
 	session::{DcxHandle, Diagnostic, Report, SessionCtx, Span},
 	ty,
 };
@@ -33,6 +33,7 @@ pub fn pipeline(scx: &SessionCtx) {
 	scx.dcx().check_sane_or_exit();
 
 	collect::collect_root(scx, &ast);
+	imports::resolve_imports_root(scx, &ast);
 	resolve::resolve_root(scx, &ast);
 	let hir = lowerer::lower_root(scx, &ast);
 	scx.dcx().check_sane_or_exit();

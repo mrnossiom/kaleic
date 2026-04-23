@@ -1,21 +1,28 @@
-use std::{
-	collections::hash_map::Entry,
-	fmt::{self, Write},
-	num::NonZero,
-	ops,
-};
+use std::{collections::hash_map::Entry, fmt, fmt::Write, num::NonZero, ops};
 
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast::{self, NodeId, Visitor, visit},
+	ast,
+	ast::{NodeId, Visitor, visit},
 	attrs::{RegisterLangItem, try_parse_attr},
 	session::{ArtefactKind, DcxHandle, SessionCtx},
 	symbols::{Symbol, sym},
 };
 
 pub(crate) fn collect_root(scx: &SessionCtx, ast: &ast::Root) {
-	let mut collector = Collector::new(scx);
+	let mut collector = Collector {
+		scx,
+
+		name_env: PerNamespace::default(),
+		lang_items: FxHashMap::default(),
+		node_id_to_def_id: FxHashMap::default(),
+		modules: FxHashMap::default(),
+
+		next_local_def_id: NonZero::new(1).unwrap(),
+		next_module_id: NonZero::new(1).unwrap(),
+		current_module: ModuleId::ROOT,
+	};
 	collector.visit_root(ast);
 
 	let Collector {
@@ -70,13 +77,22 @@ impl fmt::Display for Namespace {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct NameEnvironment {
-	types: FxHashMap<(ModuleId, Symbol), DefId>,
-	values: FxHashMap<(ModuleId, Symbol), DefId>,
+pub(crate) struct PerNamespace<T> {
+	types: T,
+	values: T,
 }
 
-impl ops::Index<Namespace> for NameEnvironment {
-	type Output = FxHashMap<(ModuleId, Symbol), DefId>;
+impl<T> PerNamespace<T> {
+	pub(crate) fn map_all_ns<U>(&self, f: impl Fn(&T) -> U) -> PerNamespace<U> {
+		PerNamespace {
+			types: f(&self.types),
+			values: f(&self.values),
+		}
+	}
+}
+
+impl<T> ops::Index<Namespace> for PerNamespace<T> {
+	type Output = T;
 	fn index(&self, index: Namespace) -> &Self::Output {
 		match index {
 			Namespace::Type => &self.types,
@@ -85,7 +101,7 @@ impl ops::Index<Namespace> for NameEnvironment {
 	}
 }
 
-impl ops::IndexMut<Namespace> for NameEnvironment {
+impl<T> ops::IndexMut<Namespace> for PerNamespace<T> {
 	fn index_mut(&mut self, index: Namespace) -> &mut Self::Output {
 		match index {
 			Namespace::Type => &mut self.types,
@@ -98,7 +114,7 @@ impl ops::IndexMut<Namespace> for NameEnvironment {
 struct Collector<'scx> {
 	scx: &'scx SessionCtx,
 
-	pub(crate) name_env: NameEnvironment,
+	pub(crate) name_env: PerNamespace<FxHashMap<(ModuleId, Symbol), DefId>>,
 	pub(crate) lang_items: FxHashMap<LangItem, DefId>,
 	pub(crate) node_id_to_def_id: FxHashMap<ast::NodeId, DefId>,
 	// TODO: make module resolution flat? intern entire paths?
@@ -107,24 +123,6 @@ struct Collector<'scx> {
 	next_local_def_id: NonZero<u32>,
 	next_module_id: NonZero<u32>,
 	current_module: ModuleId,
-}
-
-impl<'scx> Collector<'scx> {
-	#[must_use]
-	pub(crate) fn new(scx: &'scx SessionCtx) -> Self {
-		Self {
-			scx,
-
-			name_env: NameEnvironment::default(),
-			lang_items: FxHashMap::default(),
-			node_id_to_def_id: FxHashMap::default(),
-			modules: FxHashMap::default(),
-
-			next_local_def_id: NonZero::new(1).unwrap(),
-			next_module_id: NonZero::new(1).unwrap(),
-			current_module: ModuleId::ROOT,
-		}
-	}
 }
 
 impl Collector<'_> {
@@ -200,7 +198,8 @@ impl visit::Visitor for Collector<'_> {
 				)
 			}
 			ast::ItemKind::Import { tree } => {
-				todo!()
+				// TODO: register re-exports?
+				// everything else is handled during import resolution
 			}
 
 			ast::ItemKind::Module {

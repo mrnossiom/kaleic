@@ -1,3 +1,5 @@
+use crate::core::primitive::*;
+
 #link{name = "c"}
 unsafe extern {
 	def putchar(c: uint);

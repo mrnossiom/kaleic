@@ -56,7 +56,6 @@ define_symbols! {
 		And: "and",
 		Break: "break",
 		Continue: "continue",
-		Crate: "crate",
 		Def: "def",
 		Else: "else",
 		Enum: "enum",
@@ -80,7 +79,9 @@ define_symbols! {
 		Use: "use",
 		While: "while",
 
+		Crate: "crate", // TODO: replace with `tube`?
 		SelfTy: "Self",
+		SelfValue: "self", // TODO: do we keep this as a kw, or do we allow to shadow it
 		Underscore: "_",
 	},
 	symbols {

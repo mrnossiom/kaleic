@@ -4,10 +4,11 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	ast::{self, UnaryOp},
-	collect::{DefId, NameEnvironment},
+	collect::{DefId, ModuleId, PerNamespace},
 	hir::{self, ExprId, ExprKind, Function, Visitor},
 	resolve::Res,
 	session::{DcxHandle, Span},
+	symbols::Symbol,
 	ty::{self, Infer, InferExprTy, InferKind, LateTy, Param, PrimitiveKind, TyCtx, TyKind},
 };
 
@@ -20,7 +21,7 @@ pub(crate) struct TypeVarId(u32);
 #[derive(Debug)]
 pub(crate) struct Inferer<'tcx> {
 	pub(crate) tcx: &'tcx TyCtx<'tcx>,
-	pub(crate) name_env: &'tcx NameEnvironment,
+	pub(crate) name_env: &'tcx PerNamespace<FxHashMap<(ModuleId, Symbol), DefId>>,
 	pub(crate) type_env: &'tcx FxHashMap<DefId, Rc<LateTy>>,
 
 	pub(crate) expr_tys: FxHashMap<ExprId, InferExprTy>,
@@ -43,7 +44,7 @@ impl<'tcx> Inferer<'tcx> {
 		tcx: &'tcx TyCtx,
 		decl: &'tcx ty::FnDecl<LateTy>,
 		body: &'tcx hir::Block,
-		name_env: &'tcx NameEnvironment,
+		name_env: &'tcx PerNamespace<FxHashMap<(ModuleId, Symbol), DefId>>,
 		type_env: &'tcx FxHashMap<DefId, Rc<LateTy>>,
 	) -> Self {
 		Self {

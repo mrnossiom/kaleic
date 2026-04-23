@@ -1,6 +1,7 @@
 use std::{
 	cell::{Ref, RefCell},
-	fmt::{self, Write},
+	fmt,
+	fmt::Write,
 	rc::Rc,
 };
 
@@ -9,12 +10,12 @@ use rustc_hash::FxHashMap;
 use crate::{
 	ast::Ident,
 	bug,
-	collect::{DefId, LangItem, ModuleId, NameEnvironment, Namespace, TypeLangItem},
+	collect::{DefId, LangItem, ModuleId, Namespace, PerNamespace, TypeLangItem},
 	hir::{self, ExprId, Visitor, visit},
 	inference::TypeVarId,
 	resolve::Res,
 	session::{ArtefactKind, DcxHandle, ScxHandle, SessionCtx, Span},
-	symbols::sym,
+	symbols::{Symbol, sym},
 };
 
 #[derive(Debug)]
@@ -90,7 +91,7 @@ impl<K: Eq + std::hash::Hash, V> PutMap<K, V> {
 pub(crate) struct TyCtx<'scx> {
 	scx: &'scx SessionCtx,
 
-	pub(crate) name_env: &'scx NameEnvironment,
+	pub(crate) name_env: &'scx PerNamespace<FxHashMap<(ModuleId, Symbol), DefId>>,
 	lang_items: &'scx FxHashMap<LangItem, DefId>,
 
 	pub(crate) main_fn_id: Put<DefId>,
@@ -119,7 +120,7 @@ impl<'scx> TyCtx<'scx> {
 	#[must_use]
 	pub(crate) fn new(
 		scx: &'scx SessionCtx,
-		name_env: &'scx NameEnvironment,
+		name_env: &'scx PerNamespace<FxHashMap<(ModuleId, Symbol), DefId>>,
 		lang_items: &'scx FxHashMap<LangItem, DefId>,
 	) -> Self {
 		Self {

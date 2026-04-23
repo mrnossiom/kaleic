@@ -505,9 +505,15 @@ pub(crate) enum StmtKind {
 }
 
 #[derive(Debug)]
-pub(crate) enum ImportTree {
-	Branches(Vec<Self>),
-	Module(Ident, Box<Self>),
+pub(crate) struct ImportTree {
+	pub(crate) kind: ImportTreeKind,
+	pub(crate) span: Span,
+}
+
+#[derive(Debug)]
+pub(crate) enum ImportTreeKind {
+	Branches(Vec<ImportTree>),
+	Module(Ident, Box<ImportTree>),
 	Item(Ident),
 	Glob,
 }

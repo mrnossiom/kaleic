@@ -12,6 +12,7 @@ pub mod parser;
 
 pub mod collect;
 pub mod hir;
+pub mod imports;
 pub mod lowerer;
 pub mod resolve;
 
@@ -30,3 +31,5 @@ macro_rules! bug {
 		panic!("ICE: {}", format_args!($msg))
 	};
 }
+
+mod hello {}

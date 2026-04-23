@@ -5,9 +5,11 @@ use std::{fmt::Write, num::NonZero};
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast::{self, Spanned},
+	ast,
+	ast::Spanned,
 	collect::{DefId, LangItem},
-	hir::{self, Path, PathSegment},
+	hir,
+	hir::{Path, PathSegment},
 	pretty_print,
 	resolve::{PartialRes, Res},
 	session::{ArtefactKind, DcxHandle, Diagnostic, DiagnosticCtx, SessionCtx, Span},

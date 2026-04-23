@@ -1,9 +1,10 @@
 use rustc_hash::FxHashMap;
 
 use crate::{
-	ast::{self, Visitor, visit},
-	collect::{DefId, ModuleId, NameEnvironment, Namespace},
+	ast::{self, PathSegment, Visitor, visit},
+	collect::{self, DefId, ModuleId, Namespace, PerNamespace},
 	hir,
+	imports::ImportBundle,
 	session::{DcxHandle, SessionCtx},
 	symbols::{Symbol, kw},
 };
@@ -11,8 +12,17 @@ use crate::{
 pub(crate) fn resolve_root(scx: &SessionCtx, ast: &ast::Root) {
 	let name_env = scx.name_env.borrow();
 	let modules = scx.modules.borrow();
+	let import_bundles = scx.import_bundles.borrow();
 
-	let mut resolver = Resolver::new(scx, &name_env, &modules);
+	let mut resolver = Resolver {
+		scx,
+		name_env: &name_env,
+		modules: &modules,
+		import_bundles: &import_bundles,
+		layers: Vec::default(),
+		resolutions: FxHashMap::default(),
+		current_module: ModuleId::ROOT,
+	};
 	resolver.visit_root(ast);
 
 	let Resolver { resolutions, .. } = resolver;
@@ -83,31 +93,14 @@ impl PartialRes {
 struct Resolver<'scx> {
 	scx: &'scx SessionCtx,
 
-	name_env: &'scx NameEnvironment,
+	name_env: &'scx PerNamespace<FxHashMap<(ModuleId, Symbol), DefId>>,
 	modules: &'scx FxHashMap<(ModuleId, Symbol), ModuleId>,
+	import_bundles: &'scx FxHashMap<ModuleId, ImportBundle>,
 
 	layers: Vec<(LayerKind, FxHashMap<Symbol, ast::NodeId>)>,
 	resolutions: FxHashMap<ast::NodeId, PartialRes>,
 
 	current_module: ModuleId,
-}
-
-impl<'scx> Resolver<'scx> {
-	#[must_use]
-	pub(crate) fn new(
-		scx: &'scx SessionCtx,
-		name_env: &'scx NameEnvironment,
-		modules: &'scx FxHashMap<(ModuleId, Symbol), ModuleId>,
-	) -> Self {
-		Self {
-			scx,
-			name_env,
-			modules,
-			layers: Vec::default(),
-			resolutions: FxHashMap::default(),
-			current_module: ModuleId::ROOT,
-		}
-	}
 }
 
 impl Resolver<'_> {
@@ -158,21 +151,33 @@ impl Resolver<'_> {
 
 		let (base, rest) = path.segments.split_first().unwrap();
 
-		let res = if base.name.sym == kw::SelfTy {
-			PartialRes::new_self(rest.len())
-		} else if rest.is_empty() {
-			// search layers and module ctx
-			self.resolve_local(ns, &base.name)
-		} else {
+		let partial_res = 'res: {
+			if base.name.sym == kw::SelfTy {
+				break 'res PartialRes::new_self(rest.len());
+			}
+
+			// search local layers, if applicable
+			if rest.is_empty() // only one segment path
+				&& let Some(res) = self.resolve_local(ns, &base.name)
+			{
+				break 'res res;
+			}
+
 			// resolve all module segments then search module or relative res
-			self.resolve_long_path(path)
+			if let Some(res) = self.resolve_def(ns, path) {
+				break 'res res;
+			}
+
+			let report = errors::not_in_scope(ns, path.span);
+			self.scx.dcx().emit_build(report);
+			PartialRes::new_full(Res::Error)
 		};
 
-		let before = self.resolutions.insert(path.id, res);
+		let before = self.resolutions.insert(path.id, partial_res);
 		assert!(before.is_none());
 	}
 
-	fn resolve_local(&self, ns: Namespace, local: &ast::Ident) -> PartialRes {
+	fn resolve_local(&self, ns: Namespace, local: &ast::Ident) -> Option<PartialRes> {
 		let relevant_layers = self
 			.layers
 			.iter()
@@ -192,22 +197,66 @@ impl Resolver<'_> {
 			}
 		}
 
-		if let Some(local_res) = local_res {
-			PartialRes::new_full(local_res)
-		} else if let Some(def_res) = self.name_env[ns].get(&(self.current_module, local.sym)) {
-			PartialRes::new_full(Res::Def(*def_res))
-		} else {
-			let report = errors::not_in_scope(ns, local.span);
-			self.scx.dcx().emit_build(report);
-			PartialRes::new_full(Res::Error)
-		}
+		local_res.map(PartialRes::new_full)
 	}
 
-	fn resolve_long_path(&mut self, path: &ast::Path) -> PartialRes {
-		// TODO: resolve full path taking module import into account
-		todo!()
+	// resolve_long_path
+	fn resolve_def(&mut self, ns: Namespace, path: &ast::Path) -> Option<PartialRes> {
+		let bundle = self.import_bundles.get(&self.current_module).unwrap();
+		let mut search_root = self.current_module;
 
-		// TODO: stop and do partial res at type
+		let mut segments_iter = path.segments.iter().enumerate().peekable();
+
+		// resolve the maximum amount of modules
+		while let Some((i, PathSegment { name, .. })) = segments_iter.peek() {
+			if *i == 0
+				&& let Some(module_id) = bundle.modules.get(&name.sym)
+			{
+				search_root = *module_id;
+				segments_iter.next();
+				continue;
+			}
+
+			if let Some(module_id) = self.modules.get(&(search_root, name.sym)) {
+				search_root = *module_id;
+				segments_iter.next();
+			} else {
+				break;
+			}
+		}
+
+		let (i, segment) = segments_iter.next().unwrap();
+
+		if let Some(def_res) = self.name_env[ns].get(&(search_root, segment.name.sym)) {
+			return Some(PartialRes::new_full(Res::Def(*def_res)));
+		}
+
+		// if no module segments were resolved, we can search for globs and precise imports
+		if i == 0 {
+			if let Some(bindings) = bundle.items.get(&segment.name.sym)
+				&& let Some(def_id) = bindings[ns]
+			{
+				return Some(PartialRes::new_full(Res::Def(def_id)));
+			}
+
+			let glob_candidates = bundle
+				.globs
+				.iter()
+				.filter_map(|module_id| self.name_env[ns].get(&(*module_id, segment.name.sym)))
+				.collect::<Vec<_>>();
+
+			match glob_candidates.as_slice() {
+				[] => {}
+				[single] => return Some(PartialRes::new_full(Res::Def(**single))),
+				[..] => todo!("multiple glob imports candidate  for {:?}", path),
+			}
+		}
+
+		// TODO: module system is bad, revamp for better name clash check,
+		//       ambig import check and uniformize the whole to no have 100 edgecases
+		//       e.g. how do we handle enum constructors `my::path::Enum::Variant`
+
+		None
 	}
 }
 
@@ -228,12 +277,10 @@ impl visit::Visitor for Resolver<'_> {
 				inline,
 			} => {
 				self.with_module(name.sym, |this| {
-					this.visit_items(items);
+					this.with_layer(LayerKind::Module, FxHashMap::default(), |this| {
+						this.visit_items(items);
+					});
 				});
-			}
-			ast::ItemKind::Import { tree } => {
-				todo!()
-				// noop?
 			}
 			ast::ItemKind::Function(ast::Function {
 				decl,
@@ -265,6 +312,8 @@ impl visit::Visitor for Resolver<'_> {
 			| ast::ItemKind::TypeAlias(..)
 			| ast::ItemKind::TraitImpl { .. }
 			| ast::ItemKind::ForeignMod { .. } => visit::visit_item(self, item),
+
+			ast::ItemKind::Import { .. } => {}
 		}
 	}
 
