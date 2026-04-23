@@ -368,3 +368,29 @@ fields.$let
 ### Exhaustive patterns in `match`
 
 See <https://arxiv.org/abs/2504.18920v3>
+
+### Zig style formatter
+
+Last comma in struct style constructs defines if we should align it
+
+```kalei
+{ a , b , c }
+// becomes (why would struct have whitespace when literally every other construct doesn't)
+{a, b, c}
+
+{ a , b , c , }
+// becomes
+{
+  a,
+  b,
+  c,
+}
+
+{ loooooooooooooooong_names, that_make_the_construct_go_wayyyyyyyyyyyyy, over_the_limit_zzzzzzzzzzzzzzzzzzz }
+// is forced to be formatted flattened
+{
+  loooooooooooooooong_names,
+  that_make_the_construct_go_wayyyyyyyyyyyyy,
+  over_the_limit_zzzzzzzzzzzzzzzzzzz,
+}
+```
