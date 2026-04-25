@@ -9,3 +9,7 @@ languages = [
   "kalei",
   "rust",
 ]
+
+[output.html]
+git-repository-url = "https://github.com/mrnossiom/kaleic/tree/main/docs"
+edit-url-template = "https://github.com/mrnossiom/kaleic/edit/main/docs/{path}"

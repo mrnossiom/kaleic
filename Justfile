@@ -20,5 +20,5 @@ exec program *args:
 	just compile {{program}} $compiler_flags
 	.cache/kaleic/binary.elf $program_args
 
-serve-docs:
-	mdbook serve docs
+serve-docs *args:
+	mdbook serve docs {{args}}

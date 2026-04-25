@@ -1,10 +1,12 @@
 # Introduction
 
-Welcome to the docs of Kalei.
+Welcome to the docs of *Kalei*.
 A toy language named after [*Kaleidoscope*](https://llvm.org/docs/tutorial/MyFirstLanguageFrontend/LangImpl01.html).
 
+The code is available on [GitHub](https://github.com/mrnossiom/kalei).
+
 These docs are a way to publicly store language ideas, compiler implementation details or keep links to articles that concern both.
-Right now, you may find many pages empty or not clearly organized.
+Right now, you may find many pages not clearly organized.
 
 The most interesting pages are:
 

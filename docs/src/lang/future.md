@@ -375,7 +375,7 @@ Last comma in struct style constructs defines if we should align it
 
 ```kalei
 { a , b , c }
-// becomes (why would struct have whitespace when literally every other construct doesn't)
+// becomes (why would struct have extra whitespace around the braces when literally every other construct doesn't)
 {a, b, c}
 
 { a , b , c , }

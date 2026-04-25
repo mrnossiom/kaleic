@@ -131,7 +131,9 @@
             rust = pkgs.tree-sitter-grammars.tree-sitter-rust;
           };
 
-          git-pages-cli = pkgs.git-pages-cli;
+          inherit (pkgs)
+            git-pages-cli
+            ;
         }
       );
 

@@ -12,18 +12,16 @@ Current front-end compiler pipeline looks like the following:
 
 2. *AST* -> **Item Collection**, **Item Resolution** => *NameEnvironment*, *ResolutionMap*
 
-    Go through each item and associate names of items to `ast::NodeId`s.
+    We first construct the reachable environment and generate `DefId`s for each item.
+    Then we go through all the `Path`s and attach meaning to them, i.e. the item or local binding they refer to.
 
-    It makes sense to collect before **AST Lowering** because
-
-    - this information can be used during the lowering for path resolution
-    - it is used to provide diagnostics to user code, AST is closer to what the user wrote
+    It makes sense to collect on the AST as it is used to provide diagnostics to
+    user code and AST is closer to what the user wrote.
 
 3. *AST*, *ResolutionMap* -> **AST Lowering** => *HIR*
 
-    We lower the *AST* to a flat structure (soon™) that is the *HIR*.
-
-    HIR is much more usable in the context of a compiler.
+    We lower the *AST* to a flat structure that is the *HIR*. HIR doesn't care
+    about structure and is much more convenient further down the (pipe)line.
 
 4. *HIR* -> **Type Collection** => *TypeEnvironment*
 

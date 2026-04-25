@@ -1,43 +1,45 @@
 # Summary
 
-- [Introduction](./intro.md)
+- [Introduction](intro.md)
 
 # Language
 
-- [Syntax](./lang/syntax.md)
+- [Syntax]()
+  <!-- - [Syntax](lang/syntax.md) -->
 
-  - [Expressions](./lang/syntax/expressions.md)
+  - [Expressions](lang/syntax/expressions.md)
 
-  - [Structs](./lang/syntax/structs.md)
+  - [Structs](lang/syntax/structs.md)
 
-  - [Traits](./lang/syntax/traits.md)
+  - [Traits](lang/syntax/traits.md)
 
-  - [Match](./lang/syntax/match.md)
+  - [Match](lang/syntax/match.md)
 
-  - [Attributes](./lang/syntax/attributes.md)
+  - [Attributes](lang/syntax/attributes.md)
 
-- [Future](./lang/future.md)
+- [Future](lang/future.md)
 
-  - [Effects](./lang/future/effects.md)
+  - [Effects](lang/future/effects.md)
 
-  - [Capabilities](./lang/future/capabilities.md)
+  - [Capabilities](lang/future/capabilities.md)
 
-  - [Metaprogramming](./lang/future/metaprogramming.md)
+  - [Metaprogramming](lang/future/metaprogramming.md)
 
 # Compiler
 
-- [Pipeline](./compiler/pipeline.md)
+- [Pipeline](compiler/pipeline.md)
 
-  - [Glossary](./compiler/glossary.md)
+  - [Glossary](compiler/glossary.md)
 
-  - [Parsing](./compiler/pipeline/parsing.md)
+  - [Parsing](compiler/pipeline/parsing.md)
 
-  - [Type Checking](./compiler/pipeline/type-checking.md)
+  - [Type Checking](compiler/pipeline/type-checking.md)
 
-  - [Code Generation](./compiler/pipeline/code-generation.md)
+  - [Code Generation]()
+    <!-- - [Code Generation](compiler/pipeline/code-generation.md) -->
 
-- [Future](./compiler/future.md)
+- [Future](compiler/future.md)
 
 # Appendices
 
-- [Extra references](./references.md)
+- [Extra references](references.md)
